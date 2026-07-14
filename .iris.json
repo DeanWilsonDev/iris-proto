@@ -1,0 +1,7 @@
+{
+    "target": "penumbra",
+    "version": "0.1.0",
+    "searchPaths": [
+        "demo"
+    ]
+}
