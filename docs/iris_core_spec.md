@@ -675,6 +675,26 @@ tree-builder targets it.
 None of the remaining carried-forward items block starting Stage 1 implementation, and Stage 2
 now has a real target for every Core primitive except `<Grid>` (deferred by decision, §3.1).
 
+**New, surfaced during Stage 1 implementation (the `RenderBlockParser` element-tree parser) —
+unlike the items above, these two *do* block the next slice of work, not just distant stages:**
+
+- **`IrisProps`'s concrete runtime representation.** §2.5 gives `IrisComponent`'s struct shape
+  but not what `IrisProps` concretely is. Prop values are heterogeneous by nature (a string for
+  `class`, an int for a numeric prop, a `std::function<void()>` for an event prop), so it can't
+  be a simple `map<string, string>`. Blocks two separate pieces of work: Stage 1 codegen in
+  `iris` (turning a parsed `ElementNode` into `.cpp` that constructs real `IrisComponent`
+  values needs a concrete target type to emit against) and Stage 2's backend-mapping walker in
+  `iris-penumbra-backend` (reading prop values back out to call `Box::Builder().className(...)`
+  etc. needs to know how they're stored). Candidates worth weighing in a short decision doc
+  before either downstream piece is implemented: a type-erased map (`unordered_map<string,
+  any>`), a closed variant covering the known prop-value kinds, or something narrower scoped to
+  just what Core primitives currently need. See `docs/iris_next_steps.md`.
+- **How `.iris.json` gets parsed.** `import` resolution (§1.2) needs to read `.iris.json`'s
+  `searchPaths`, but no JSON parser is vendored in `iris` yet. Small, independent decision —
+  hand-roll a minimal parser scoped to `.iris.json`'s fixed three-field schema (`target`,
+  `version`, `searchPaths`), or vendor a real JSON library (e.g. nlohmann/json). Doesn't depend
+  on the `IrisProps` question above and can be resolved in parallel with it.
+
 ---
 
 ## 9. Ported-example self-check (Stage 0 exit criterion)
@@ -889,13 +909,14 @@ map to that document for whoever implements Stage 3, not a restatement. All ten 
   loop. Reconciliation happens only inside `Tick()` — signals set from any thread mark `<Slot>`s
   dirty but never mutate the widget tree directly; only the main thread, only inside `Tick()`,
   ever does (decision doc §7).
-- **Lifecycle hooks: `IWidgetLifecycle`** (`OnMount`/`OnUnmount`/`OnTick`) — **does not exist in
-  Penumbra yet**, verified directly against the pinned submodule commit while incorporating this
-  decision (no `include/Penumbra/IWidgetLifecycle.h`, no matching file anywhere in the tree).
-  This is a real, unmet Penumbra-side prerequisite for Stage 3's lifecycle feature specifically —
-  not documentation lag, an actual gap, the same category as Stage 2's `<Image>` gap was before
-  it got fixed. Everything else Stage 3 needs from Penumbra (structural mutation, tree walking)
-  is already there (decision doc §8, §10).
+- **Lifecycle hooks: `IWidgetLifecycle`** (`OnMount`/`OnUnmount`/`OnTick`) — **resolved.** Was a
+  real, unmet Penumbra-side prerequisite (verified absent against the then-pinned submodule
+  commit while incorporating this decision), the same category as Stage 2's `<Image>` gap was
+  before it got fixed. `penumbra-proto` commit `663fece` ("Add IWidgetLifecycle interface and
+  Application lifecycle host") landed `include/Penumbra/IWidgetLifecycle.h`
+  (`OnMount`/`OnUnmount`/`OnTick(TickInfo)`) plus an `Application` host dispatching `OnTick`,
+  matching this decision's shape exactly. Everything Stage 3 needs from Penumbra (structural
+  mutation, tree walking, lifecycle) is now there (decision doc §8, §10).
 - **No cross-component state-sharing mechanism** — props drilling only, deliberately, forever
   (decision doc §9).
 - **`IWidget`, `IrisPropDiff`, and `IWidgetLifecycle`/`TickInfo` all live in Penumbra
@@ -909,4 +930,7 @@ instruction not to trust decision-doc prose alone): re-confirmed directly agains
 `SplitPanel`'s `GetChildCount`/`GetChildAt` overrides are all present as claimed. `Box`'s own
 `GetChildCount`/`GetChildAt`, and the prop-mutation fields (`ClassName`, `Text`, `Checked`,
 `OnPressed`/etc.) were already verified in earlier Stage 2 grounding and remain valid at this
-commit. `IWidgetLifecycle` was checked and confirmed absent, per above.
+commit. `IWidgetLifecycle` was checked and confirmed absent at commit `f008666`; as of
+`penumbra-proto` commit `663fece` it exists and matches this decision's shape — see above.
+Stage 3 now has every documented Penumbra-side prerequisite it needs; nothing left blocking
+implementation from the Penumbra side.

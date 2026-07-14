@@ -447,8 +447,12 @@ the same way Stage 2's `<Image>` gap was caught.
   every widget/prop combination Stage 3 will need. Check all.
 
 **Lifecycle — required for `OnMount`/`OnUnmount`/`OnTick`:**
-- `IWidgetLifecycle` interface exists at `include/Penumbra/IWidgetLifecycle.h`
-- Penumbra's application loop calls `OnTick` before `iris::Tick()`
+- [x] `IWidgetLifecycle` interface exists at `include/Penumbra/IWidgetLifecycle.h` — landed in
+      `penumbra-proto` commit `663fece`, matching this shape exactly.
+- [x] Penumbra has an application loop that calls `OnTick` — `Application::Tick(float)`
+      dispatches to every registered `IWidgetLifecycle`, meant to be called before
+      `iris::Tick()` (same commit). `iris::Tick()` itself doesn't exist yet (Stage 3
+      implementation work, not a Penumbra-side prerequisite).
 
 **Tree walking — required for the reconciler:**
 - `GetChildCount` on `WidgetBase`

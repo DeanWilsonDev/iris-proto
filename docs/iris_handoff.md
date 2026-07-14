@@ -122,19 +122,21 @@ These are hard parts of Iris itself — no backend choice avoids them:
   `docs/penumbra_image_widget_requirements.md`. See `docs/iris_core_spec.md` §3.1, §9.4 for
   full detail, including two implementation divergences from other primitives worth knowing
   (narrower `Builder`, explicit `LoadFrom` step).
-- **New, real gap found during Stage 3 scoping, not resolved:** Stage 3's lifecycle hooks
+- **Gap found during Stage 3 scoping, since resolved:** Stage 3's lifecycle hooks
   (`OnMount`/`OnUnmount`/`OnTick`) depend on an `IWidgetLifecycle` interface at
   `include/Penumbra/IWidgetLifecycle.h` — verified at the time directly against the pinned
   `vendor/penumbra` submodule commit (a path that existed in the `iris` repo then; the
   Penumbra checkout this now refers to lives in `iris-penumbra-backend`'s own submodule —
   repo/build integration was corrected after this was written, see
-  `docs/iris_stage2_decision_doc.md`'s correction note), and it doesn't exist anywhere in
-  Penumbra yet, no matching file, no partial implementation. Unlike the child-mutation API
-  (which landed ahead of schedule), this is a genuine unmet prerequisite for Stage 3's
-  lifecycle feature specifically — everything else Stage 3 needs from Penumbra (structural
-  mutation, tree walking, prop-level mutable fields) is already there. See
-  `docs/iris_core_spec.md` §10 and `docs/iris_stage3_decision_doc.md` §8, §10 for the exact
-  interface shape needed.
+  `docs/iris_stage2_decision_doc.md`'s correction note) and confirmed absent at that commit
+  (`f008666`). Unlike the child-mutation API (which landed ahead of schedule), this was a
+  genuine unmet prerequisite for Stage 3's lifecycle feature specifically. `penumbra-proto`
+  commit `663fece` ("Add IWidgetLifecycle interface and Application lifecycle host") has since
+  landed it, matching the shape `docs/iris_stage3_decision_doc.md` §8 specified
+  (`OnMount`/`OnUnmount`/`OnTick(TickInfo)`, plus an `Application` host dispatching `OnTick`).
+  Everything Stage 3 needs from Penumbra (structural mutation, tree walking, prop-level mutable
+  fields, lifecycle) is now there. See `docs/iris_core_spec.md` §10 and
+  `docs/iris_stage3_decision_doc.md` §8, §10 for the exact interface shape.
 
 ## 6. Proposed phased roadmap
 
@@ -143,7 +145,7 @@ These are hard parts of Iris itself — no backend choice avoids them:
 | 0 | Formalize the Iris Core language spec. *(Done — see `docs/iris_core_spec.md`. Post-pivot, scope narrowed to: `render`-block element-tree grammar, `import` resolution, the `key`/`class` reserved props, and backend-capability tagging; component/props/state/event model is host-language, not Iris-defined.)* |
 | 1 | Front end: a preprocessor that detects `render { }` blocks in host-language (C++23) source, parses the element-tree grammar and `{ }` escape hatches inside them, and rewrites the file to valid host-language output — passthrough for everything outside `render { }`. Open questions being scoped in `docs/iris_stage1_open_questions.md`. |
 | 2 | Penumbra backend, static slice first: build a real Penumbra widget tree once from a parsed, props-resolved `IrisComponent` IR tree via Penumbra's `Builder` API, no state/re-render yet. Implemented in the separate `iris-penumbra-backend` repo (depends on both `iris` and `penumbra-proto`), not in this repo — `iris` itself only ever produces the backend-agnostic IR. *(Scoped — see `docs/iris_stage2_decision_doc.md` for all ten planning decisions and `docs/iris_core_spec.md` §2.5–§2.6, §3 for what they mean for the language/primitive reference. Two Penumbra-side prerequisites — generic `WidgetBase` callbacks, `InlineContainer` — already landed; `<Image>`'s decode-from-path pipeline has not, see §8 there.)* |
-| 3 | Reactive runtime: state, re-render triggers, the reconciler (diff + minimal mutation), consuming Penumbra's child-mutation API. *(Fully scoped — see `docs/iris_stage3_decision_doc.md` for the complete architecture: `<Slot>`-scoped diffing, `IWidget`/`IrisPropDiff` as the backend-agnostic update boundary, minimal-move keyed list diffing, batched `iris::Tick()` frame-loop integration, `IWidgetLifecycle` hooks. Structural mutation and tree-walking prerequisites already landed in `penumbra-proto` ahead of this stage; `IWidgetLifecycle` has not and is a real, verified gap — see `docs/iris_core_spec.md` §10 and §5 above.)* |
+| 3 | Reactive runtime: state, re-render triggers, the reconciler (diff + minimal mutation), consuming Penumbra's child-mutation API. *(Fully scoped — see `docs/iris_stage3_decision_doc.md` for the complete architecture: `<Slot>`-scoped diffing, `IWidget`/`IrisPropDiff` as the backend-agnostic update boundary, minimal-move keyed list diffing, batched `iris::Tick()` frame-loop integration, `IWidgetLifecycle` hooks. All Penumbra-side prerequisites — structural mutation, tree-walking, and (as of `penumbra-proto` commit `663fece`) `IWidgetLifecycle` — have landed; see `docs/iris_core_spec.md` §10 and §5 above. Nothing known is blocking Stage 3 implementation from the Penumbra side.)* |
 | 4 | Lustre-lite: global + component-scoped style resolution mapped onto Penumbra's `BoxStyle`/`ButtonStyle`/etc. and its gradient/shadow/blend-mode primitives. |
 | 5 | First real consumer: port a real slice of Pharos (or a new Dawn panel) to Iris — validates the pipeline against real UI, not a toy demo. |
 | 6 (deferred) | Umbra Engine/Nyx backend, `model3d`, engine-driven routing — gated behind the Stage 0 capability system from day one so nothing in Stages 0–5 accidentally depends on it. |

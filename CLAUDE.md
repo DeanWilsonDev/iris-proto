@@ -83,10 +83,10 @@ a task belongs to before assuming a later stage's concepts (reconciler, styling,
 hooks) already exist in code — most of the architecture described in the docs is still design,
 not implementation.
 
-Known open gap as of Stage 3 scoping: Penumbra lacks an `IWidgetLifecycle` interface needed for
-`OnMount`/`OnUnmount`/`OnTick` hooks (`docs/iris_core_spec.md` §10) — this affects
-`penumbra-proto` and the `iris-penumbra-backend` bridge repo, not this repo, but blocks Stage 3
-lifecycle work until resolved there.
+Resolved as of `penumbra-proto` commit `663fece`: Penumbra now has an `IWidgetLifecycle`
+interface (`OnMount`/`OnUnmount`/`OnTick`) and an `Application` host dispatching `OnTick`,
+matching what `docs/iris_core_spec.md` §10 / `docs/iris_stage3_decision_doc.md` §8 specified —
+this was the last known Penumbra-side blocker for Stage 3 lifecycle work.
 
 Stage 2 (the Penumbra backend itself: tree-builder, widget mapping, the `key`→`IWidget*`
 identity map) is implemented in `iris-penumbra-backend`, not here — this repo only ever

@@ -2,10 +2,10 @@
 
 > **Status:** Fully closed. `docs/iris_stage3_decision_doc.md` closed all ten questions below
 > plus the foundational one. One real, unmet Penumbra-side gap was found while verifying the
-> decision against actual shipped code (`IWidgetLifecycle` doesn't exist) — flagged at the
-> bottom, not closed. Kept as a historical record — `docs/iris_core_spec.md` §10 is the current
-> index into the Stage 3 architecture, and `docs/iris_stage3_decision_doc.md` is the full
-> reference with exact interfaces, not this doc.
+> decision against actual shipped code (`IWidgetLifecycle` didn't exist at the time) — flagged
+> at the bottom; since closed by `penumbra-proto` commit `663fece`. Kept as a historical
+> record — `docs/iris_core_spec.md` §10 is the current index into the Stage 3 architecture, and
+> `docs/iris_stage3_decision_doc.md` is the full reference with exact interfaces, not this doc.
 >
 > The `vendor/penumbra` path referenced below no longer exists in this repo — Iris's
 > repo/build integration was corrected after this was written (see
@@ -41,7 +41,7 @@ Per `docs/iris_stage3_decision_doc.md`:
 | 5 | `<Image>` update path | Two props: `src` (synchronous re-decode, accepted cost) and new `handle` (`iris::TextureHandle`, zero-cost swap, for animation). |
 | 6 | Batching | Every event handler invocation auto-wrapped in begin/end batch; one reconciliation pass per handler, not per `.set()`. |
 | 7 | Frame-loop integration | Explicit `iris::Tick()`, called once per frame by the host. Reconciliation only happens inside it. |
-| 8 | Lifecycle hooks | `IWidgetLifecycle` (`OnMount`/`OnUnmount`/`OnTick`) — **see verification gap below, not yet buildable.** |
+| 8 | Lifecycle hooks | `IWidgetLifecycle` (`OnMount`/`OnUnmount`/`OnTick`) — **verification gap below is now closed, buildable.** |
 | 9 | Cross-component state sharing | No formal mechanism. Props drilling only, deliberately. |
 | 10 | Penumbra API verification | Verification task — performed while incorporating this decision, see below. |
 
@@ -57,11 +57,12 @@ Checked directly against `vendor/penumbra` (git submodule, pinned at commit `f00
   `OnHovered`/`OnFocused`/`OnChanged` all confirmed public and mutable (verified during Stage 2
   grounding, reconfirmed still valid at this commit). Not exhaustively checked for every
   widget/prop combination Stage 3 might eventually need — only what `IrisPropDiff` names today.
-- ❌ **Lifecycle — real gap, not resolved.** `IWidgetLifecycle` does not exist anywhere in
-  `penumbra-proto` — no `include/Penumbra/IWidgetLifecycle.h`, no matching file anywhere in the
-  tree. This is a genuine unmet Penumbra-side prerequisite, the same category as Stage 2's
-  `<Image>` gap was before it got fixed — not documentation lag. See
-  `docs/iris_handoff.md` §5 and `docs/iris_core_spec.md` §10.
+- ✅ **Lifecycle — resolved.** Was a genuine unmet Penumbra-side prerequisite (no
+  `include/Penumbra/IWidgetLifecycle.h`, no matching file anywhere in the tree, at the
+  `f008666` commit this was originally checked against) — the same category as Stage 2's
+  `<Image>` gap was before it got fixed. `penumbra-proto` commit `663fece` landed
+  `IWidgetLifecycle` (`OnMount`/`OnUnmount`/`OnTick(TickInfo)`) plus an `Application` host
+  dispatching `OnTick`. See `docs/iris_handoff.md` §5 and `docs/iris_core_spec.md` §10.
 
 ---
 
