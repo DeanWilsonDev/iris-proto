@@ -14,6 +14,15 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # ---------------------------------------------------------------------------
+# Amanuensis — zero-dependency first-party JSON library, vendored as a git
+# submodule under libs/ (its own recommended integration path) rather than
+# hand-rolling `.iris.json` parsing. This is a plain utility dependency, not a
+# backend — unlike the earlier penumbra-proto submodule this repo doesn't
+# vendor, using it doesn't couple Iris's core to any backend.
+# ---------------------------------------------------------------------------
+add_subdirectory(libs/amanuensis)
+
+# ---------------------------------------------------------------------------
 # Iris preprocessor/runtime — static library. Nothing in here references
 # demo/ or tests/, and nothing in here references Penumbra or any other
 # backend — Iris's core is backend-agnostic by design (docs/iris_core_spec.md
@@ -23,10 +32,13 @@ endif()
 # ---------------------------------------------------------------------------
 add_library(iris STATIC
     src/Iris/CppTokenizer.cpp
-    src/Iris/RenderBlockParser.cpp)
+    src/Iris/RenderBlockParser.cpp
+    src/Iris/IrisConfig.cpp
+    src/Iris/ImportResolver.cpp)
 
 target_include_directories(iris PUBLIC include)
 target_compile_features(iris PUBLIC cxx_std_23)
+target_link_libraries(iris PUBLIC amanuensis)
 
 # ---------------------------------------------------------------------------
 # Tests — smoke-test executable for now. Cimmerian (the ecosystem's own test
@@ -37,7 +49,9 @@ target_compile_features(iris PUBLIC cxx_std_23)
 # ---------------------------------------------------------------------------
 add_executable(iris_tests
     tests/CppTokenizerTests.cpp
-    tests/RenderBlockParserTests.cpp)
+    tests/RenderBlockParserTests.cpp
+    tests/IrisConfigTests.cpp
+    tests/ImportResolverTests.cpp)
 
 target_link_libraries(iris_tests PRIVATE iris)
 set_target_properties(iris_tests PROPERTIES

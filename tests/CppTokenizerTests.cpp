@@ -126,6 +126,8 @@ void TestEndOfFileIsStableOnRepeatedCalls() {
 } // namespace
 
 void RunRenderBlockParserTests(); // tests/RenderBlockParserTests.cpp — no auto-registration, see CLAUDE.md
+void RunIrisConfigTests();        // tests/IrisConfigTests.cpp — no auto-registration, see CLAUDE.md
+void RunImportResolverTests();    // tests/ImportResolverTests.cpp — no auto-registration, see CLAUDE.md
 
 int main() {
     TestBasicRenderBlockDetection();
@@ -138,6 +140,8 @@ int main() {
     TestEndOfFileIsStableOnRepeatedCalls();
 
     RunRenderBlockParserTests();
+    RunIrisConfigTests();
+    RunImportResolverTests();
 
     std::printf("\n%d failure(s)\n", Failures);
     return Failures == 0 ? 0 : 1;

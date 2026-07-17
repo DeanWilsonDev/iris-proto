@@ -14,7 +14,13 @@
     elements, `{ }` escape hatches, literal text, comment stripping, single-root enforcement) —
     done, tested against the spec §9 worked example end-to-end.
   - Codegen (`ElementNode` AST → compilable `.cpp`) — **not started**, blocked (see below).
-  - `import` / `.iris.json` resolution — **not started**, blocked (see below).
+  - `import` / `.iris.json` resolution — **done**. `IrisConfig` (parses `target`/`version`/
+    `searchPaths` via the newly-vendored `libs/amanuensis` — a zero-dependency first-party JSON
+    library, git-submoduled rather than hand-rolled, see below) and `ImportResolver`
+    (`ScanImports` + `ResolveImports`, `.iris`/`.irisx` extension chosen by `target`) both landed
+    with tests (`tests/IrisConfigTests.cpp`, `tests/ImportResolverTests.cpp`). Not yet wired into
+    an actual preprocessor driver/CLI — there isn't one yet — and the semantic pass that uses
+    resolved imports to validate element tags is still separate, blocked (see below).
   - Semantic validation (Core-primitive vs. imported-component resolution, backend-gated
     primitive checks, the `<Text font=...>` and inline-style errors) — **not started**, depends
     on import resolution to know what's in scope.
@@ -67,24 +73,24 @@ Recommend treating this the way every other Stage decision in this project has b
 short decision doc (candidates worth weighing — a type-erased map like
 `unordered_map<string, any>`, a closed variant type covering the known prop value kinds, or
 something narrower scoped to just what Core primitives currently need) before either downstream
-piece gets implemented, rather than deciding it as a side effect of writing codegen. Now
-formally tracked in `docs/iris_core_spec.md` §8's open-questions list, alongside the
-`.iris.json` JSON-parsing question below, so neither gets lost.
+piece gets implemented, rather than deciding it as a side effect of writing codegen. Formally
+tracked in `docs/iris_core_spec.md` §8's open-questions list. (The `.iris.json` JSON-parsing
+question that used to sit alongside it there is resolved now — see above.)
 
 ## Suggested order
 
-Starting from what's actually left (docs sync is done — see above):
+Starting from what's actually left (docs sync is done — see above; `import`/`.iris.json`
+resolution is now also done — see above):
 
-1. `import` / `.iris.json` resolution in `iris` — independent of the `IrisProps` decision, can
-   happen in parallel with it. Needs its own small call: hand-roll a minimal parser scoped to
-   `.iris.json`'s fixed three-field schema, or vendor a real JSON library (e.g. nlohmann/json).
-2. Decide `IrisProps`'s runtime representation (decision doc).
-3. Stage 1 codegen in `iris`, targeting the type decided in (2).
-4. Semantic validation pass in `iris` (needs (1) done to know what's in scope).
-5. Stage 2 walker in `iris-penumbra-backend`, targeting the type decided in (2) and consuming
-   codegen'd output from (3).
-6. Stage 3 reactive runtime — already fully spec'd, largest remaining implementation chunk.
+1. Decide `IrisProps`'s runtime representation (decision doc) — the one remaining blocker for
+   the next two items.
+2. Stage 1 codegen in `iris`, targeting the type decided in (1).
+3. Semantic validation pass in `iris` (element-tag resolution against Core primitives and the
+   now-implemented `import` resolution).
+4. Stage 2 walker in `iris-penumbra-backend`, targeting the type decided in (1) and consuming
+   codegen'd output from (2).
+5. Stage 3 reactive runtime — already fully spec'd, largest remaining implementation chunk.
    Unblocked on the Penumbra side now that `IWidgetLifecycle` has landed.
-7. Stage 4 (Lustre) — needs its own design pass first, nothing to implement yet.
-8. Stage 5 — validate against one of the real consuming projects once (2)–(6) produce something
+6. Stage 4 (Lustre) — needs its own design pass first, nothing to implement yet.
+7. Stage 5 — validate against one of the real consuming projects once (1)–(5) produce something
    an actual `.iris` file can round-trip through.

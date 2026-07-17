@@ -689,11 +689,21 @@ unlike the items above, these two *do* block the next slice of work, not just di
   before either downstream piece is implemented: a type-erased map (`unordered_map<string,
   any>`), a closed variant covering the known prop-value kinds, or something narrower scoped to
   just what Core primitives currently need. See `docs/iris_next_steps.md`.
-- **How `.iris.json` gets parsed.** `import` resolution (§1.2) needs to read `.iris.json`'s
-  `searchPaths`, but no JSON parser is vendored in `iris` yet. Small, independent decision —
-  hand-roll a minimal parser scoped to `.iris.json`'s fixed three-field schema (`target`,
-  `version`, `searchPaths`), or vendor a real JSON library (e.g. nlohmann/json). Doesn't depend
-  on the `IrisProps` question above and can be resolved in parallel with it.
+
+**Resolved:** How `.iris.json` gets parsed and how `import` resolves to a file. Decided in
+favor of vendoring Amanuensis (`libs/amanuensis`, a zero-dependency first-party JSON library,
+git-submoduled per its own recommended `add_subdirectory` integration path) rather than
+hand-rolling a parser scoped to the three-field schema — a real (if minimal) JSON library was
+already available and free of transitive dependencies, so there was no reason to duplicate one.
+`IrisConfig` (`include/Iris/IrisConfig.h`) uses `Amanuensis::Reader`/`Amanuensis::Value` to parse
+`target`/`version`/`searchPaths` with the exact error messages §6's catalogue specifies.
+`ImportResolver` (`include/Iris/ImportResolver.h`) scans a source file for `import Name`
+statements via `CppTokenizer` and resolves each to `Name.iris` (`target: "penumbra"`) or
+`Name.irisx` (`target: "umbra-engine"`), searched across `searchPaths` in declaration order.
+Still open: wiring this into an actual preprocessor driver/CLI, and the semantic pass that uses
+resolved imports to validate element tags in a `render { }` block (§6's "unresolved/unimported
+component reference" error) — both deferred until codegen exists, since there's no driver
+binary yet to wire them into.
 
 ---
 

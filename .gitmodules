@@ -1,0 +1,3 @@
+[submodule "libs/amanuensis"]
+	path = libs/amanuensis
+	url = https://github.com/DeanWilsonDev/amanuensis.git

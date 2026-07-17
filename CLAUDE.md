@@ -61,6 +61,11 @@ or grep the printed `[PASS]`/`[FAIL]` lines — there's no test filtering flag.
   (`../iris-penumbra-backend`), which vendors both this repo and `penumbra-proto` as
   submodules. Neither Iris nor Penumbra depends on the other, or on that bridge repo; real
   consumer projects depend on the bridge repo (and transitively get both).
+- **`libs/amanuensis`** (git submodule, `github.com/DeanWilsonDev/amanuensis`) is the one
+  vendored dependency — a zero-dependency first-party JSON library, used by `IrisConfig` to
+  parse `.iris.json`. This doesn't conflict with the backend-agnostic rule above: it's a plain
+  utility library with no knowledge of Iris, Penumbra, or any backend, added via its own
+  documented `add_subdirectory` integration path rather than hand-rolling a JSON parser.
 - **`.iris.json`** (project root) declares the compile target (`"target": "penumbra"`) and
   module `searchPaths` for `import` resolution. This is project-level, not per-file — a
   project is either a Penumbra tool or an Umbra Engine game UI, never both.
