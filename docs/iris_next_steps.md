@@ -13,15 +13,21 @@
   - `RenderBlockParser` (`render{ }` → `ElementNode` AST: tags, props, `key`/`class`, nested
     elements, `{ }` escape hatches, literal text, comment stripping, single-root enforcement) —
     done, tested against the spec §9 worked example end-to-end.
-  - Codegen (`ElementNode` AST → compilable `.cpp`) — **done, for a single (non-nested) `render`
-    block**. `docs/iris_props_decision.md` (the `IrisProps`/`IrisPropValue` runtime shape) and
-    `docs/iris_stage1_codegen_decision.md` (two follow-on gaps that decision left open — see
-    below) both closed. `Codegen.h`/`GenerateComponentExpression()` walks an `ElementNode` and
-    emits a C++23 expression constructing `Iris::IrisComponent` — Core primitives (including
-    `<Slot>` via `Iris::MakeSlotCallable`), the `<Name>Props` component-invocation convention,
-    text/interpolation-child concatenation, and the closed prop-name lookup table are all
-    tested (`tests/CodegenTests.cpp`). The JSX-inside-escape-hatch gap is now resolved by
-    decision — see below.
+  - Codegen (`ElementNode` AST → compilable `.cpp`) — **done, including nested JSX inside
+    `<Slot>`/escape hatches**. `docs/iris_props_decision.md` (the `IrisProps`/`IrisPropValue`
+    runtime shape), `docs/iris_stage1_codegen_decision.md` (two follow-on gaps that decision
+    left open), and `docs/iris_escape_hatch_decision.md` (the `!{ }` JSX-transform escape
+    hatch — see below) are all closed and implemented. `Codegen.h`/`GenerateComponentExpression()`
+    walks an `ElementNode` and emits a C++23 expression constructing `Iris::IrisComponent` —
+    Core primitives (including `<Slot>` via `Iris::MakeSlotCallable`), the `<Name>Props`
+    component-invocation convention, text/interpolation-child concatenation, the closed
+    prop-name lookup table, and `!{ }`-transformed nested JSX are all tested
+    (`tests/CodegenTests.cpp`). The full spec §9 `PartyScreen` example, written with `!{ }` on
+    both `<Slot>`s, was manually verified to generate output that actually host-compiles as
+    real C++23 — the one thing it surfaced that's still open is unrelated to escape hatches:
+    `IrisComponent` has no `nullptr_t` constructor, so the spec's own `return nullptr;` inside
+    an `-> IrisComponent` lambda doesn't compile as written (now tracked in
+    `docs/iris_core_spec.md` §8).
   - `import` / `.iris.json` resolution — **done**. `IrisConfig` (parses `target`/`version`/
     `searchPaths` via the newly-vendored `libs/amanuensis` — a zero-dependency first-party JSON
     library, git-submoduled rather than hand-rolled, see below) and `ImportResolver`
@@ -76,61 +82,47 @@ both closed in `docs/iris_stage1_codegen_decision.md`:
 Both `IrisComponent`'s revised shape (`include/Iris/IrisComponent.h`) and `Codegen.h` are
 implemented and tested.
 
-## Resolved: JSX inside escape hatches (`!{}` transform escape hatch)
+## Resolved and implemented: JSX inside escape hatches (`!{ }` transform escape hatch)
 
 The gap surfaced during codegen testing: `RenderBlockParser` treats `{ }` escape hatch contents
 as fully opaque verbatim text (§1.4), but `<Slot>` is used throughout the spec with JSX inside
 its escape hatch body — conditional and list rendering both rely on this pattern. That JSX was
 never being transformed, producing uncompilable output.
 
-**Decision:** introduce a second escape hatch sigil, `!{}`, meaning "C++ that may contain JSX —
-recursively transform it." The existing `{ }` form is unchanged and stays fully opaque.
+Full decision, implementation notes, and verification writeup are in
+`docs/iris_escape_hatch_decision.md`. Summary: a second escape-hatch sigil, `!{ }`, means
+"host-language code that may contain JSX — recursively transform it"; the existing `{ }` form is
+unchanged and stays fully opaque; nesting (`!{ }` inside `!{ }`, `{ }` inside `!{ }`) composes
+normally. Implemented in `RenderBlockParser::ParseJsxEscapeHatch`
+(`src/Iris/RenderBlockParser.cpp`) and `Codegen.cpp`'s `EmitEscapeHatchExpression`, tested in
+both `tests/RenderBlockParserTests.cpp` and `tests/CodegenTests.cpp` — including an end-to-end
+test against the full spec §9 `PartyScreen` example (both `<Slot>`s, two levels of nesting,
+`std::vector<IrisComponent>` correctly *not* misread as a JSX element) whose generated output
+was manually confirmed to host-compile as real C++23.
 
-Rules:
-- `{ }` — regular escape hatch. Opaque. Contents pass through verbatim. No change to existing
-  behaviour.
-- `!{ }` — JSX-transform escape hatch. Parser enters recursive transform mode. Any `<Tag>`
-  expressions inside are transformed to `Iris::IrisComponent`-constructing expressions. Closes
-  on the matching `}`. Valid anywhere a regular `{ }` is valid — prop values, child positions,
-  lambda bodies.
-- Once inside `!{}`, nested `{ }` props and children follow normal rules (opaque unless also
-  marked `!{}`). A nested `!{}` is valid if a second level of JSX-transform is genuinely needed,
-  but the spec has no examples requiring this.
-- `!{` is not valid C++ in a child or prop-value position, so the token is unambiguous at the
-  lexer level. No heuristic detection required.
-
-The `<Slot>` pattern from the spec becomes:
-
-```cpp
-<Slot>
-    !{[&]() -> IrisComponent {
-        if (settingsOpen.get()) {
-            return <SettingsPage onClose={[&]() { settingsOpen.set(false); }} />;
-        }
-        return nullptr;
-    }}
-</Slot>
-```
-
-`onClose` uses a regular `{ }` — its lambda body has no JSX — and stays opaque. Only the outer
-block needs `!{}`. A formal decision doc (`docs/iris_escape_hatch_decision.md`) should be written
-before implementation, following the same format as `iris_props_decision.md`.
+One implementation wrinkle worth knowing: `std::vector<IrisComponent>` (a real return type used
+in the spec's own list-rendering `<Slot>`) has the exact same `< Identifier >` shape as an
+attribute-less JSX opening tag. Disambiguated by requiring whitespace immediately before the
+`<` for it to count as a JSX start — true of every JSX use in the spec, never true of a template
+argument list. See the decision doc for the one known edge case this doesn't cover
+(whitespace-free JSX like `push_back(<Frame/>)`), deliberately deferred since nothing in the
+spec needs it.
 
 ## Suggested order
 
 Starting from what's actually left:
 
-1. **Write `docs/iris_escape_hatch_decision.md`** — capture the `!{}` decision formally before
-   implementing. Same format as `iris_props_decision.md`.
-2. **Implement `!{}` in `RenderBlockParser`** — the one gap that stops Stage 1 codegen's output
-   from compiling for any component that uses `<Slot>`.
-3. **Semantic validation pass in `iris`** — element-tag resolution against Core primitives and
+1. **Semantic validation pass in `iris`** — element-tag resolution against Core primitives and
    the now-implemented import resolution. Backend-gated primitive checks and prop-level
    validation (`<Text font=...>`, inline-style errors) per the spec.
-4. **Stage 2 walker in `iris-penumbra-backend`** — consuming codegen's `Iris::IrisComponent`-
-   constructing output.
-5. **Stage 3 reactive runtime** — already fully spec'd, largest remaining implementation chunk.
+2. **Stage 2 walker in `iris-penumbra-backend`** — consuming codegen's `Iris::IrisComponent`-
+   constructing output, now confirmed to include correctly-transformed `<Slot>` bodies.
+3. **Stage 3 reactive runtime** — already fully spec'd, largest remaining implementation chunk.
    Unblocked on the Penumbra side now that `IWidgetLifecycle` has landed.
-6. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
-7. **Stage 5** — validate against one of the real consuming projects once (1)–(5) produce
+4. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
+5. **Stage 5** — validate against one of the real consuming projects once (1)–(4) produce
    something an actual `.iris` file can round-trip through.
+
+Separately, not blocking the order above: `IrisComponent` needs a `nullptr_t` constructor (or
+the spec's "render nothing" convention needs to change) — see `docs/iris_core_spec.md` §8 and
+`docs/iris_escape_hatch_decision.md`'s Verification section for how this surfaced.

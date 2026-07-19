@@ -9,29 +9,51 @@
 
 namespace Iris {
 
-// A prop's (or `<Slot>` child's) value, per docs/iris_core_spec.md §1.4: either
-// a string literal or a `{ }` escape hatch. `Text` is the raw inner text with
-// the surrounding quotes/braces already stripped — for an escape hatch this is
-// verbatim host-language source, captured character-for-character from the
-// original file and never parsed or validated; that's the host compiler's job
-// once the rewritten file reaches it.
+struct ElementNode;
+
+// One piece of a `!{ }` JSX-transform escape hatch's body (docs/iris_next_steps.md,
+// "Resolved: JSX inside escape hatches"): either a run of ordinary host-language
+// text (reconstructed token-for-token, not necessarily byte-identical to the
+// original source — whitespace is normalized the same way literal element text
+// is elsewhere) or a nested `<Tag>` element that was recursively parsed out of
+// the escape hatch body and needs its own codegen pass spliced back in.
+enum class JsxSegmentKind {
+    RawText,
+    Element,
+};
+
+struct JsxSegment {
+    JsxSegmentKind                Kind{JsxSegmentKind::RawText};
+    std::string                   Text;    // meaningful when Kind == RawText
+    std::unique_ptr<ElementNode>  Element; // meaningful when Kind == Element
+};
+
+// A prop's (or `<Slot>` child's) value, per docs/iris_core_spec.md §1.4: a string
+// literal, an opaque `{ }` escape hatch, or a `!{ }` JSX-transform escape hatch.
+// `Text` is the raw inner text with the surrounding quotes/braces already
+// stripped — for an `EscapeHatch` this is verbatim host-language source,
+// captured character-for-character from the original file and never parsed or
+// validated; that's the host compiler's job once the rewritten file reaches it.
+// A `JsxEscapeHatch` instead carries `JsxSegments`: its body was scanned for
+// `<Tag>` runs and recursively parsed, so codegen can transform those runs
+// too, but `Text` itself is left empty for this kind.
 enum class PropValueKind {
     StringLiteral,
     EscapeHatch,
+    JsxEscapeHatch,
 };
 
 struct PropValue {
-    PropValueKind  Kind{PropValueKind::StringLiteral};
-    std::string    Text;
-    SourceLocation Location;
+    PropValueKind            Kind{PropValueKind::StringLiteral};
+    std::string               Text;
+    std::vector<JsxSegment>   JsxSegments; // meaningful when Kind == JsxEscapeHatch
+    SourceLocation             Location;
 };
 
 struct Prop {
     std::string Name;
     PropValue   Value;
 };
-
-struct ElementNode;
 
 // A single child position inside an element (docs/iris_core_spec.md §1.4,
 // §3.1): a nested element, a `{ }` escape hatch (event handlers, `<Slot>`'s

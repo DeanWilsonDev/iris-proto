@@ -119,6 +119,75 @@ void TestEscapeHatchContainingAngleBracketsIsOpaque() {
            "Slot's single child is one escape hatch");
 }
 
+void TestJsxTransformEscapeHatchRecursivelyParsesNestedElements() {
+    // `!{ }` — unlike the opaque `{ }` form above — recursively parses `<Tag>`
+    // runs inside it (docs/iris_next_steps.md, "Resolved: JSX inside escape
+    // hatches"). `onClose`'s own body has no JSX, so it stays a regular,
+    // opaque `{ }` escape hatch even though it's nested inside a `!{ }`.
+    const auto Result = ParseSource(
+        R"(render {
+            <Slot>
+                !{[&]() -> IrisComponent {
+                    if (settingsOpen.get()) {
+                        return <SettingsPage onClose={[&]() { settingsOpen.set(false); }} />;
+                    }
+                    return nullptr;
+                }}
+            </Slot>
+        })");
+    Expect(Result.Errors.empty(), "<Slot> with a !{ } JSX-transform escape hatch body parses with no errors");
+    if (Result.Blocks.empty()) {
+        return;
+    }
+    const auto& Root = Result.Blocks[0].Root;
+    Expect(Root.Tag == "Slot" && Root.Children.size() == 1 &&
+               Root.Children[0].Kind == Iris::ElementChildKind::EscapeHatch,
+           "Slot's single child is one escape hatch");
+    const Iris::PropValue& Value = *Root.Children[0].EscapeHatch;
+    Expect(Value.Kind == Iris::PropValueKind::JsxEscapeHatch, "the escape hatch is the JSX-transform kind");
+
+    bool FoundSettingsPageElement = false;
+    for (const Iris::JsxSegment& Segment : Value.JsxSegments) {
+        if (Segment.Kind == Iris::JsxSegmentKind::Element) {
+            Expect(!FoundSettingsPageElement, "exactly one nested element segment is found");
+            FoundSettingsPageElement = true;
+            Expect(Segment.Element != nullptr && Segment.Element->Tag == "SettingsPage",
+                   "the nested element is a parsed <SettingsPage> node, not opaque text");
+            const auto* OnClose = FindProp(*Segment.Element, "onClose");
+            Expect(OnClose != nullptr && OnClose->Value.Kind == Iris::PropValueKind::EscapeHatch,
+                   "SettingsPage's onClose stays a regular opaque { } escape hatch, not JSX-transformed");
+        }
+    }
+    Expect(FoundSettingsPageElement, "the !{ } body's JSX run was recursively parsed into an element segment");
+}
+
+void TestJsxTransformEscapeHatchDoesNotMisreadTemplateAnglesAsJsx() {
+    // `std::vector<IrisComponent>` has exactly the same `< Identifier >` shape as
+    // an attribute-less opening tag, but with no whitespace before the `<` — the
+    // signal ParseJsxEscapeHatch uses to tell a template argument list apart from
+    // a real JSX element start (every JSX use in the spec has a space or newline
+    // before its `<`).
+    const auto Result = ParseSource(
+        R"(render {
+            <Slot>
+                !{[&]() -> std::vector<IrisComponent> {
+                    std::vector<IrisComponent> rows;
+                    return rows;
+                }}
+            </Slot>
+        })");
+    Expect(Result.Errors.empty(),
+           "a !{ } body containing std::vector<IrisComponent> parses with no errors");
+    if (Result.Blocks.empty()) {
+        return;
+    }
+    const Iris::PropValue& Value = *Result.Blocks[0].Root.Children[0].EscapeHatch;
+    for (const Iris::JsxSegment& Segment : Value.JsxSegments) {
+        Expect(Segment.Kind == Iris::JsxSegmentKind::RawText,
+               "no segment is misread as an element — std::vector<IrisComponent> stays raw text");
+    }
+}
+
 void TestLiteralTextChildIsCapturedWithCollapsedWhitespace() {
     const auto Result = ParseSource(R"(render { <Text>Hello   World</Text> })");
     Expect(Result.Errors.empty(), "literal text child parses with no errors");
@@ -223,6 +292,8 @@ void RunRenderBlockParserTests() {
     TestKeyPropIsExtractedNotLeftInProps();
     TestEscapeHatchPropIsCapturedVerbatimWithNestedBraces();
     TestEscapeHatchContainingAngleBracketsIsOpaque();
+    TestJsxTransformEscapeHatchRecursivelyParsesNestedElements();
+    TestJsxTransformEscapeHatchDoesNotMisreadTemplateAnglesAsJsx();
     TestLiteralTextChildIsCapturedWithCollapsedWhitespace();
     TestMixedTextAndEscapeHatchChildren();
     TestCommentsInsideRenderBlockAreStrippedSilently();

@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <deque>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -70,15 +71,18 @@ private:
         bool           PrecededByWhitespace{false};
     };
 
-    Token PullRawToken();
-    void  Advance(); // fills Current_ with the next GToken
-    bool  IsPunct(char C) const;
+    Token   PullRawToken();
+    void    Advance(); // fills Current_ with the next GToken
+    GToken  PeekNext(); // the GToken after Current_, without consuming it
+    bool    IsPunct(char C) const;
+    bool    IsJsxEscapeHatchStart(); // Current_ == '!' immediately followed by '{'
 
     ElementNode              ParseElement();
     ElementNode              ParseElementAfterLAngle(SourceLocation LAngleLocation);
     std::vector<ElementChild> ParseChildren(const std::string& OpenTag);
     PropValue                ParsePropValue();
     PropValue                ParseEscapeHatch();
+    PropValue                ParseJsxEscapeHatch();
     void                     ParseRenderBlock(SourceLocation BlockLocation);
     void                     RecoverToBlockEnd();
 
@@ -87,9 +91,10 @@ private:
     CppTokenizer      Tokenizer_;
     std::size_t       RawOffset_{0};
 
-    GToken               Current_;
-    std::deque<GToken>   Pending_;
-    bool                 PendingWhitespace_{false};
+    GToken                 Current_;
+    std::deque<GToken>     Pending_;
+    bool                   PendingWhitespace_{false};
+    std::optional<GToken>  Lookahead_; // one-token peek buffer, ahead of Current_
 
     std::vector<ParsedBlock> Blocks_;
     std::vector<ParseError>  Errors_;

@@ -105,7 +105,7 @@ IrisComponent StartMenu() {
         <Frame class="start-menu">
             <Button label="Settings" onPress={[&]() { settingsOpen.set(true); }} />
             <Slot>
-                {[&]() -> IrisComponent {
+                !{[&]() -> IrisComponent {
                     if (settingsOpen.get()) {
                         return <SettingsPage onClose={[&]() { settingsOpen.set(false); }} />;
                     }
@@ -166,7 +166,7 @@ possible without extra infrastructure.
 single-root `Box` tree model. A `render` block yielding more than one top-level sibling is a
 preprocessor-level compile error (§7).
 
-### 1.4 Elements, props, and the `{ }` escape hatch
+### 1.4 Elements, props, and the `{ }` / `!{ }` escape hatches
 
 ```cpp
 <Frame class="button" onPress={[&]() { props.onPress(); }}>
@@ -196,6 +196,15 @@ preprocessor-level compile error (§7).
   event-handler grammar — v1's
   single-assignment/single-call limitation on event handlers is gone; any valid C++23 lambda
   works.
+- **`!{ }` — the JSX-transform escape hatch** (`docs/iris_escape_hatch_decision.md`): identical
+  to `{ }` except that its contents are *not* opaque — the preprocessor recursively parses any
+  `<Tag>` run inside it (whitespace-preceded, to tell a real element start apart from a template
+  argument list like `std::vector<IrisComponent>`) back into the same element-tree grammar this
+  section describes, and codegen transforms it the same way it would a top-level element. This
+  is required inside `<Slot>` (§1.5), whose whole purpose is conditional/list rendering via
+  nested JSX — a plain `{ }` there would leave that nested JSX as unparsed, uncompilable text. A
+  nested `{ }` or `!{ }` inside a `!{ }` body (e.g. an event handler prop on a JSX-transformed
+  element) follows the normal rule for whichever sigil it uses.
 
 ### 1.5 Dynamic regions — `<Slot>`
 
@@ -212,7 +221,7 @@ re-run it. `<Slot>` is the one construct where re-invocation happens:
 ```cpp
 // Conditional rendering
 <Slot>
-    {[&]() -> IrisComponent {
+    !{[&]() -> IrisComponent {
         if (settingsOpen.get()) {
             return <SettingsPage onClose={[&]() { settingsOpen.set(false); }} />;
         }
@@ -222,7 +231,7 @@ re-run it. `<Slot>` is the one construct where re-invocation happens:
 
 // List rendering
 <Slot>
-    {[&]() -> std::vector<IrisComponent> {
+    !{[&]() -> std::vector<IrisComponent> {
         std::vector<IrisComponent> result;
         for (auto& item : props.items) {
             result.push_back(<Item key={item.id} label={item.name} />);
@@ -232,13 +241,17 @@ re-run it. `<Slot>` is the one construct where re-invocation happens:
 </Slot>
 ```
 
-**`<Slot>`'s single child is a `{ }` escape hatch like any other** (§1.4) — balanced-brace
-matched, emitted verbatim. The preprocessor needs no special case for it: `<Slot>` is a Core
-primitive tag (§3.1) parsed exactly like `<Frame>` or `<Text>`. What's different is what the
-escape hatch's content *is*: not an evaluated value, but a **callable** — note there's no
-trailing `()` after the lambda, unlike the old IIFE pattern this replaces. The lambda itself is
-what the escape hatch evaluates to; the Iris runtime holds onto it and invokes it — once at
-mount, and again every time a signal it captures fires.
+**`<Slot>`'s single child is a `!{ }` JSX-transform escape hatch** — the callable's body always
+contains the nested `<Tag>` JSX that conditional/list rendering exists to produce, so `{ }`
+(opaque) would leave that JSX unparsed and uncompilable; `!{ }` (§1.4,
+`docs/iris_escape_hatch_decision.md`) recursively transforms it. Structurally it's still parsed
+exactly like any other child position on a Core primitive tag (§3.1) parsed like `<Frame>` or
+`<Text>` — `<Slot>` gets no special-cased grammar. What's different is what the escape hatch's
+content *is*: not an evaluated value, but a **callable** — note there's no trailing `()` after
+the lambda, unlike the old IIFE pattern this replaces. The lambda itself is what the escape
+hatch evaluates to; the Iris runtime holds onto it and invokes it — once at mount, and again
+every time a signal it captures fires. A `<Slot>` whose body needs no nested JSX (rare, but not
+disallowed) may still use plain `{ }`.
 
 The runtime, not the preprocessor, enforces: `<Slot>` must have exactly one child; that child
 must be a callable returning `IrisComponent` or `std::vector<IrisComponent>`; anything else
@@ -662,6 +675,13 @@ remains open is unrelated to Stage 1 and was never expected to block it:
   `onFocus`, `onChange`) extensible by component authors, or a closed list?
 - **Implicit children forwarding.** No mechanism specified for a generic wrapper component to
   forward arbitrary children it wasn't handed as a named prop.
+- **`IrisComponent` has no `nullptr_t` constructor**, but every conditional-rendering example in
+  this spec (§1.5, §9) writes `return nullptr;` inside a `<Slot>` lambda declared to return
+  `IrisComponent` — surfaced by manually host-compiling the §9 `PartyScreen` example's generated
+  output while verifying `docs/iris_escape_hatch_decision.md` (that decision itself is
+  unaffected; this is an `IrisComponent`-shape gap, not an escape-hatch one). Needs either a
+  `nullptr_t`-accepting constructor/converting constructor on `IrisComponent`, or the spec's
+  "return nothing" convention to change to something else entirely.
 
 `<Image>`'s asset-pipeline gap and content-prop-name question — both flagged in the previous
 revision of this document as real, unresolved gaps despite `docs/iris_stage2_decision_doc.md`
@@ -686,20 +706,16 @@ gaps neither that document nor §2.5's `IrisComponent` shape actually covered �
 node). `Codegen.h`/`GenerateComponentExpression()` implements and tests all of this
 (`tests/CodegenTests.cpp`).
 
-**New, surfaced by that same work — genuinely blocks a `<Slot>`-using component's generated
-`.cpp` from compiling, not just a distant stage:**
-
-- **Nested JSX inside an escape hatch is never transformed.** `RenderBlockParser` captures a
-  `<Slot>` child (or any escape hatch) as fully opaque verbatim text, by design (§1.4, directly
-  tested by `tests/RenderBlockParserTests.cpp`'s
-  `TestEscapeHatchContainingAngleBracketsIsOpaque`) — but every conditional/list-rendering
-  example in this spec (§1.1, §1.5, §9) writes a `<Tag ... />` JSX expression *inside* that
-  escape hatch (`return <SettingsPage onClose={...} />;`). Since that text is never re-parsed,
-  it passes straight through to generated `.cpp` as literal `<`/`>` tokens, which doesn't
-  compile. Not previously flagged anywhere — it's only visible once codegen actually tries to
-  emit a `<Slot>` body. See `docs/iris_next_steps.md` for the fix sketch (recursive re-parsing of
-  JSX-shaped runs inside escape hatches) — needs its own short decision doc before
-  implementation, same pattern as the two resolutions above.
+**Resolved:** Nested JSX inside an escape hatch is now transformed via a second escape-hatch
+sigil, `!{ }` (§1.4, `docs/iris_escape_hatch_decision.md`). The opaque `{ }` form is unchanged;
+`!{ }` recursively re-parses any whitespace-preceded `<Tag>` run inside it back into the element
+grammar this document describes, and codegen transforms each such run the same way it would a
+top-level element, splicing the generated expression back into the surrounding verbatim text.
+`<Slot>`'s examples throughout this spec (§1.1, §1.5, §9) now use `!{ }`. Implemented in
+`RenderBlockParser::ParseJsxEscapeHatch` and `Codegen.h`'s `EmitEscapeHatchExpression`, tested
+end-to-end against the full §9 `PartyScreen` example (`tests/CodegenTests.cpp`'s
+`TestPartyScreenFullyCodegensWithJsxTransformEscapeHatches`), including verifying the generated
+output actually compiles as real C++23.
 
 **Resolved:** How `.iris.json` gets parsed and how `import` resolves to a file. Decided in
 favor of vendoring Amanuensis (`libs/amanuensis`, a zero-dependency first-party JSON library,
@@ -738,11 +754,11 @@ IrisComponent PartyScreen(PartyScreenProps props) {
         <Frame class="party-screen">
             <Button label="Details" onPress={[&]() { detailsOpen.set(true); }} />
             <Slot>
-                {[&]() -> IrisComponent {
+                !{[&]() -> IrisComponent {
                     if (!detailsOpen.get()) return nullptr;
                     return <Frame class="details-panel">
                         <Slot>
-                            {[&]() -> std::vector<IrisComponent> {
+                            !{[&]() -> std::vector<IrisComponent> {
                                 std::vector<IrisComponent> rows;
                                 for (auto& member : props.members) {
                                     rows.push_back(

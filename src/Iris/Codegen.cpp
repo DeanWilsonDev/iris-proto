@@ -51,17 +51,6 @@ std::string QuoteLiteral(std::string_view Text) { return "\"" + EscapeStringLite
 
 std::string TagToIrisElementTag(const std::string& Tag) { return "Iris::IrisElementTag::" + Tag; }
 
-// One prop value, whichever form the parser captured, as a bare C++ expression —
-// no `IrisPropValue` wrapping. Used both for primitive props (wrapped by the caller
-// via `in_place_type`) and component-invocation props (used as-is against whatever
-// type the real `<Name>Props` field declares — §2.6, host-compiler-checked).
-std::string EmitBarePropValue(const PropValue& Value) {
-    if (Value.Kind == PropValueKind::StringLiteral) {
-        return QuoteLiteral(Value.Text);
-    }
-    return Value.Text; // EscapeHatch — verbatim, unparsed
-}
-
 class ComponentEmitter {
 public:
     explicit ComponentEmitter(std::vector<CodegenError>& Errors) : Errors_(Errors) {}
@@ -84,6 +73,38 @@ private:
         Errors_.push_back(CodegenError{std::move(Message), std::move(Location)});
     }
 
+    // An escape hatch's contents as a bare C++ expression: an opaque `{ }` passes
+    // through verbatim and unparsed, same as everywhere else in the preprocessor;
+    // a `!{ }` JSX-transform escape hatch splices each nested element's own
+    // generated expression back into the surrounding verbatim text
+    // (docs/iris_next_steps.md, "Resolved: JSX inside escape hatches").
+    std::string EmitEscapeHatchExpression(const PropValue& Value) {
+        if (Value.Kind != PropValueKind::JsxEscapeHatch) {
+            return Value.Text; // EscapeHatch — verbatim, unparsed
+        }
+        std::string Result;
+        for (const JsxSegment& Segment : Value.JsxSegments) {
+            if (Segment.Kind == JsxSegmentKind::RawText) {
+                Result += Segment.Text;
+            } else {
+                Result += Emit(*Segment.Element);
+            }
+        }
+        return Result;
+    }
+
+    // One prop value, whichever form the parser captured, as a bare C++ expression —
+    // no `IrisPropValue` wrapping. Used both for primitive props (wrapped by the
+    // caller via `in_place_type`) and component-invocation props (used as-is against
+    // whatever type the real `<Name>Props` field declares — §2.6, host-compiler-
+    // checked).
+    std::string EmitPropValueExpression(const PropValue& Value) {
+        if (Value.Kind == PropValueKind::StringLiteral) {
+            return QuoteLiteral(Value.Text);
+        }
+        return EmitEscapeHatchExpression(Value);
+    }
+
     // Builds `Iris::IrisProps{ {"name", Iris::IrisPropValue{std::in_place_type<T>, expr}}, ... }`
     // for a primitive's own declared props (never called for component invocations,
     // which pass prop values straight through to `<Name>Props` instead).
@@ -101,7 +122,7 @@ private:
             }
             First = false;
             Result += "{\"" + P.Name + "\", Iris::IrisPropValue{std::in_place_type<" + It->second + ">, " +
-                      EmitBarePropValue(P.Value) + "}}";
+                      EmitPropValueExpression(P.Value) + "}}";
         }
         Result += "}";
         return Result;
@@ -112,7 +133,7 @@ private:
     // (docs/iris_stage1_codegen_decision.md, Gap 2).
     std::string EmitSyntheticTextNode(const ElementChild& Child) {
         const std::string Expr =
-            Child.Kind == ElementChildKind::Text ? QuoteLiteral(Child.Text) : Child.EscapeHatch->Text;
+            Child.Kind == ElementChildKind::Text ? QuoteLiteral(Child.Text) : EmitEscapeHatchExpression(*Child.EscapeHatch);
         return "Iris::IrisComponent{Iris::IrisElementTag::Text, "
                "Iris::IrisProps{{\"text\", Iris::IrisPropValue{std::in_place_type<std::string>, " +
                Expr + "}}}, {}, nullptr}";
@@ -165,7 +186,8 @@ private:
                 AddError("<Text> cannot contain nested elements", Node.Location);
                 continue;
             }
-            Pieces.push_back(Child.Kind == ElementChildKind::Text ? QuoteLiteral(Child.Text) : Child.EscapeHatch->Text);
+            Pieces.push_back(Child.Kind == ElementChildKind::Text ? QuoteLiteral(Child.Text)
+                                                    : EmitEscapeHatchExpression(*Child.EscapeHatch));
         }
 
         std::string TextExpr;
@@ -187,7 +209,7 @@ private:
                 continue;
             }
             Props += "{\"" + P.Name + "\", Iris::IrisPropValue{std::in_place_type<" + It->second + ">, " +
-                     EmitBarePropValue(P.Value) + "}}, ";
+                     EmitPropValueExpression(P.Value) + "}}, ";
             First = false;
         }
         (void)First;
@@ -208,7 +230,7 @@ private:
             AddError("<Slot> must have exactly one { } escape-hatch child", Node.Location);
             return "Iris::IrisComponent{Iris::IrisElementTag::Slot, Iris::IrisProps{}, {}, nullptr}";
         }
-        const std::string& Lambda = Node.Children[0].EscapeHatch->Text;
+        const std::string Lambda = EmitEscapeHatchExpression(*Node.Children[0].EscapeHatch);
         return "Iris::IrisComponent{Iris::IrisElementTag::Slot, Iris::IrisProps{}, {}, Iris::MakeSlotCallable(" +
                Lambda + ")}";
     }
@@ -230,7 +252,7 @@ private:
                 Initializer += ", ";
             }
             First = false;
-            Initializer += "." + P.Name + " = " + EmitBarePropValue(P.Value);
+            Initializer += "." + P.Name + " = " + EmitPropValueExpression(P.Value);
         }
         Initializer += "}";
 

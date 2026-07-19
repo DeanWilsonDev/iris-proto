@@ -33,7 +33,26 @@ bool RenderBlockParser::IsPunct(char C) const {
     return Current_.Kind == GKind::Punct && Current_.Text.size() == 1 && Current_.Text[0] == C;
 }
 
+bool RenderBlockParser::IsJsxEscapeHatchStart() {
+    return IsPunct('!') && PeekNext().Kind == GKind::OpenBrace;
+}
+
+RenderBlockParser::GToken RenderBlockParser::PeekNext() {
+    if (!Lookahead_.has_value()) {
+        const GToken Saved = Current_;
+        Advance();
+        Lookahead_ = Current_;
+        Current_ = Saved;
+    }
+    return *Lookahead_;
+}
+
 void RenderBlockParser::Advance() {
+    if (Lookahead_.has_value()) {
+        Current_ = *Lookahead_;
+        Lookahead_.reset();
+        return;
+    }
     if (!Pending_.empty()) {
         Current_ = Pending_.front();
         Pending_.pop_front();
@@ -230,14 +249,24 @@ PropValue RenderBlockParser::ParsePropValue() {
         const std::string&   Raw = Current_.Text; // includes surrounding quotes
         const std::string    Inner = Raw.size() >= 2 ? Raw.substr(1, Raw.size() - 2) : "";
         Advance();
-        return PropValue{PropValueKind::StringLiteral, Inner, Location};
+        PropValue Value;
+        Value.Kind = PropValueKind::StringLiteral;
+        Value.Text = Inner;
+        Value.Location = Location;
+        return Value;
+    }
+    if (IsJsxEscapeHatchStart()) {
+        return ParseJsxEscapeHatch();
     }
     if (Current_.Kind == GKind::OpenBrace) {
         return ParseEscapeHatch();
     }
 
     Errors_.push_back({"expected a string literal or '{' for a prop value", Current_.Location});
-    return PropValue{PropValueKind::EscapeHatch, "", Current_.Location};
+    PropValue Value;
+    Value.Kind = PropValueKind::EscapeHatch;
+    Value.Location = Current_.Location;
+    return Value;
 }
 
 PropValue RenderBlockParser::ParseEscapeHatch() {
@@ -268,7 +297,107 @@ PropValue RenderBlockParser::ParseEscapeHatch() {
 
     const std::string Text = Trim(Source_.substr(BodyStart, BodyEndExclusive - BodyStart));
     Advance(); // refill Current_ with whatever follows the escape hatch
-    return PropValue{PropValueKind::EscapeHatch, Text, Location};
+    PropValue Value;
+    Value.Kind = PropValueKind::EscapeHatch;
+    Value.Text = Text;
+    Value.Location = Location;
+    return Value;
+}
+
+// `!{ }` — the JSX-transform escape hatch (docs/iris_next_steps.md, "Resolved: JSX
+// inside escape hatches"). Unlike the opaque `{ }` form, this one is walked at the
+// structured GToken level rather than scanned as a raw byte span: a `<Identifier`
+// run is recursively parsed as a nested element via the ordinary
+// ParseElementAfterLAngle path (so its own props/children keep following normal
+// rules — `{ }` stays opaque, a nested `!{ }` recurses again), and everything else
+// is reconstructed as verbatim host-language text between those element runs. The
+// reconstructed text is token-for-token, not byte-for-byte — whitespace is
+// normalized the same way literal element text is elsewhere in this parser — which
+// is fine because only the JSX runs need transforming; ordinary C++ doesn't care
+// about incidental whitespace.
+PropValue RenderBlockParser::ParseJsxEscapeHatch() {
+    const SourceLocation Location = Current_.Location; // Current_ == '!'
+    Advance();                                          // consume '!'
+    Advance();                                          // consume '{'
+
+    std::vector<JsxSegment> Segments;
+    std::string              TextBuffer;
+
+    auto AppendText = [&](const std::string& Text, bool PrecededByWhitespace) {
+        if (!TextBuffer.empty() && PrecededByWhitespace) {
+            TextBuffer += ' ';
+        }
+        TextBuffer += Text;
+    };
+    auto FlushText = [&]() {
+        if (!TextBuffer.empty()) {
+            JsxSegment Segment;
+            Segment.Kind = JsxSegmentKind::RawText;
+            Segment.Text = TextBuffer;
+            Segments.push_back(std::move(Segment));
+            TextBuffer.clear();
+        }
+    };
+
+    int Depth = 1; // already inside the '!{' itself
+    for (;;) {
+        if (Current_.Kind == GKind::EndOfFile) {
+            Errors_.push_back({"unterminated '!{' JSX-transform escape hatch", Location});
+            FlushText();
+            break;
+        }
+
+        if (Current_.Kind == GKind::OpenBrace) {
+            ++Depth;
+            AppendText("{", Current_.PrecededByWhitespace);
+            Advance();
+            continue;
+        }
+        if (Current_.Kind == GKind::CloseBrace) {
+            --Depth;
+            if (Depth == 0) {
+                FlushText();
+                Advance(); // consume the closing '}'
+                break;
+            }
+            AppendText("}", Current_.PrecededByWhitespace);
+            Advance();
+            continue;
+        }
+
+        // A JSX element start is disambiguated from a template angle bracket
+        // (`std::vector<IrisComponent>` has exactly the same `< Identifier >`
+        // shape as an attribute-less opening tag) by requiring whitespace
+        // before the `<` — every JSX use in the spec is written with a space
+        // or newline before it (`return <Frame ...`, `push_back(\n <Frame
+        // ...`), while a template argument list never has one.
+        if (IsPunct('<') && Current_.PrecededByWhitespace && PeekNext().Kind == GKind::Identifier) {
+            TextBuffer += ' ';
+            FlushText();
+            const SourceLocation LAngleLocation = Current_.Location;
+            Advance(); // consume '<'
+            JsxSegment Segment;
+            Segment.Kind = JsxSegmentKind::Element;
+            Segment.Element = std::make_unique<ElementNode>(ParseElementAfterLAngle(LAngleLocation));
+            Segments.push_back(std::move(Segment));
+            continue;
+        }
+
+        if (Current_.Kind == GKind::StringLiteral || Current_.Kind == GKind::CharLiteral) {
+            AppendText(Current_.Text, Current_.PrecededByWhitespace); // already includes quotes
+            Advance();
+            continue;
+        }
+
+        AppendText(Current_.Text, Current_.PrecededByWhitespace);
+        Advance();
+    }
+
+    PropValue Value;
+    Value.Kind = PropValueKind::JsxEscapeHatch;
+    Value.JsxSegments = std::move(Segments);
+    Value.Location = Location;
+    return Value;
 }
 
 std::vector<ElementChild> RenderBlockParser::ParseChildren(const std::string& OpenTag) {
@@ -319,6 +448,12 @@ std::vector<ElementChild> RenderBlockParser::ParseChildren(const std::string& Op
 
             FlushText();
             Children.push_back(ElementChild::MakeElement(ParseElementAfterLAngle(LAngleLocation)));
+            continue;
+        }
+
+        if (IsJsxEscapeHatchStart()) {
+            FlushText();
+            Children.push_back(ElementChild::MakeEscapeHatch(ParseJsxEscapeHatch()));
             continue;
         }
 

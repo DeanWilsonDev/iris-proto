@@ -159,6 +159,78 @@ void TestPartyScreenOuterLevelCodegens() {
            "the Slot's escape-hatch body — JSX and all — passes through verbatim, unparsed");
 }
 
+void TestJsxTransformEscapeHatchSplicesGeneratedNestedElement() {
+    // Same shape as TestPartyScreenOuterLevelCodegens, but with `!{ }` instead of
+    // `{ }` — this time the nested <Frame> JSX must actually be transformed into
+    // a real Iris::IrisComponent-constructing expression and spliced back into
+    // the surrounding lambda text (docs/iris_next_steps.md, "Resolved: JSX inside
+    // escape hatches"), not passed through verbatim.
+    const auto Result = Generate(R"(render {
+        <Slot>
+            !{[&]() -> IrisComponent {
+                if (!detailsOpen.get()) return nullptr;
+                return <Frame class="details-panel"></Frame>;
+            }}
+        </Slot>
+    })");
+    Expect(Result.Errors.empty(), "<Slot> with a !{ } JSX-transform escape hatch codegens with no errors");
+    Expect(Contains(Result.Source, "Iris::MakeSlotCallable"), "the Slot is emitted with MakeSlotCallable");
+    Expect(!Contains(Result.Source, "<Frame"), "the raw <Frame ...> JSX text is gone from the generated source");
+    Expect(Contains(Result.Source, "Iris::IrisComponent{Iris::IrisElementTag::Frame"),
+           "the nested <Frame> was transformed into a real Iris::IrisComponent-constructing expression");
+    Expect(Contains(Result.Source, "if (!detailsOpen.get()) return nullptr;") &&
+               Contains(Result.Source, "return Iris::IrisComponent{Iris::IrisElementTag::Frame"),
+           "the surrounding lambda text is preserved around the spliced-in expression");
+}
+
+void TestPartyScreenFullyCodegensWithJsxTransformEscapeHatches() {
+    // The full spec §9 PartyScreen example, this time written with `!{ }` instead
+    // of `{ }` for both <Slot>s (docs/iris_escape_hatch_decision.md) — unlike
+    // TestPartyScreenOuterLevelCodegens, every nested <Frame>/<HealthBar> is
+    // expected to be actually transformed, not passed through as raw JSX text.
+    const auto Result = Generate(R"(render {
+        <Frame class="party-screen">
+            <Button label="Details" onPress={[&]() { detailsOpen.set(true); }} />
+            <Slot>
+                !{[&]() -> IrisComponent {
+                    if (!detailsOpen.get()) return nullptr;
+                    return <Frame class="details-panel">
+                        <Slot>
+                            !{[&]() -> std::vector<IrisComponent> {
+                                std::vector<IrisComponent> rows;
+                                for (auto& member : props.members) {
+                                    rows.push_back(
+                                        <Frame key={member.id} class="party-row">
+                                            <HealthBar current={member.hp} max={member.maxHp} label={member.name} />
+                                        </Frame>
+                                    );
+                                }
+                                return rows;
+                            }}
+                        </Slot>
+                    </Frame>;
+                }}
+            </Slot>
+        </Frame>
+    })");
+    Expect(Result.Errors.empty(), "the two-level !{ } PartyScreen example codegens with no errors");
+    Expect(!Contains(Result.Source, "<Frame") && !Contains(Result.Source, "<HealthBar") &&
+               !Contains(Result.Source, "<Slot"),
+           "no raw JSX text survives anywhere in the output, including the nested list-rendering Slot");
+    Expect(Contains(Result.Source, "HealthBar(HealthBarProps{"),
+           "the innermost <HealthBar> component invocation was generated");
+    // Every <Frame> in the source (root, details-panel, and the per-row Frame
+    // inside the list) must have become a real IrisComponent-constructing
+    // expression, not opaque text.
+    std::size_t FrameExpressionCount = 0;
+    std::size_t SearchPos = 0;
+    while ((SearchPos = Result.Source.find("Iris::IrisElementTag::Frame", SearchPos)) != std::string::npos) {
+        ++FrameExpressionCount;
+        SearchPos += 1;
+    }
+    Expect(FrameExpressionCount == 3, "all three <Frame> elements (root, details-panel, party-row) were transformed");
+}
+
 } // namespace
 
 void RunCodegenTests() {
@@ -176,4 +248,6 @@ void RunCodegenTests() {
     TestComponentInvocationEmitsNamePropsConvention();
     TestComponentInvocationWithChildrenIsAnError();
     TestPartyScreenOuterLevelCodegens();
+    TestJsxTransformEscapeHatchSplicesGeneratedNestedElement();
+    TestPartyScreenFullyCodegensWithJsxTransformEscapeHatches();
 }
