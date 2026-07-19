@@ -5,6 +5,9 @@
 #include "Iris/SemanticValidator.h"
 
 #include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace Iris {
@@ -41,6 +44,28 @@ std::string EscapePathForLineDirective(std::string_view Path) {
     }
     return Result;
 }
+
+// The byte offset one past the end of an `import Name` statement, given where `import`
+// itself starts. Skips plain whitespace between the two identifiers, then `Name`'s own
+// length — matches every `import` statement in the spec and this codebase. A comment
+// between `import` and `Name` (e.g. `import /* x */ Button`) would break this, same class
+// of documented, accepted limitation as CppTokenizer.h's own heuristics elsewhere in this
+// preprocessor.
+std::size_t ImportStatementEndOffset(std::string_view Source, std::size_t ImportKeywordOffset,
+                                      std::string_view Name) {
+    std::size_t Offset = ImportKeywordOffset + 6; // strlen("import")
+    while (Offset < Source.size() && std::isspace(static_cast<unsigned char>(Source[Offset])) != 0) {
+        ++Offset;
+    }
+    return Offset + Name.size();
+}
+
+// docs/iris_import_header_decision.md: every `.iris`/`.irisx` file generates one
+// self-contained header (source path + `.h`, e.g. `Button.iris.h`) rather than a
+// declaration/definition pair — Iris never parses struct or function signatures
+// (docs/iris_core_spec.md §2.1), so it has no way to synthesize a real forward
+// declaration for either `<Name>Props` or `<Name>` itself.
+std::string ToHeaderPath(const std::string& SourcePath) { return SourcePath + ".h"; }
 
 // One byte-range replacement (or, when StartOffset == EndOffset, a pure insertion) to
 // apply to the original source. Edits never overlap: `import` statements never appear
@@ -98,16 +123,27 @@ DriverResult CompileFile(std::string_view Source, std::string FilePath, const Ir
 
     const std::string EscapedFilePath = EscapePathForLineDirective(FilePath);
 
+    // Every import resolved successfully by this point — an unresolved one is a
+    // Diagnostics entry above, which already returned early.
+    std::unordered_map<std::string, std::string> ResolvedPathByName;
+    for (const ResolvedImport& R : ResolvedImports.Resolved) {
+        ResolvedPathByName[R.Name] = R.ResolvedPath;
+    }
+
     std::vector<Edit> Edits;
     Edits.reserve(Imports.size() + ParseResult.Blocks.size());
 
-    // `import Name` isn't valid C++23 — commented out in place rather than passed through
-    // or guessed at (see Driver.h's doc comment for why). A pure insertion right before
-    // the `import` keyword turns the rest of its line into a `//` comment without
-    // disturbing line count or leading indentation.
+    // `import Name` isn't valid C++23 — replaced with an `#include` of the imported
+    // component's generated header (docs/iris_import_header_decision.md), resolved
+    // relative to ProjectRoot so it lines up with a `-I <ProjectRoot>` build convention
+    // (the same root `searchPaths` are already relative to).
     for (const ImportStatement& Import : Imports) {
-        const std::size_t Offset = LocationToOffset(Source, Import.Location);
-        Edits.push_back(Edit{Offset, Offset, "// "});
+        const std::size_t StartOffset = LocationToOffset(Source, Import.Location);
+        const std::size_t EndOffset = ImportStatementEndOffset(Source, StartOffset, Import.Name);
+        const std::string HeaderPath = ToHeaderPath(ResolvedPathByName.at(Import.Name));
+        const std::filesystem::path IncludePath = std::filesystem::relative(HeaderPath, ProjectRoot);
+
+        Edits.push_back(Edit{StartOffset, EndOffset, "#include \"" + IncludePath.generic_string() + "\""});
     }
 
     // Each render{ } block becomes `return <expr>;` (Codegen.h's documented wrapping
@@ -126,9 +162,11 @@ DriverResult CompileFile(std::string_view Source, std::string FilePath, const Ir
     std::sort(Edits.begin(), Edits.end(),
               [](const Edit& A, const Edit& B) { return A.StartOffset < B.StartOffset; });
 
+    // `#pragma once` up front — every generated file is a self-contained header now
+    // (docs/iris_import_header_decision.md), included by every file that imports it.
     std::string Output;
     Output.reserve(Source.size());
-    Output += "#line 1 \"" + EscapedFilePath + "\"\n";
+    Output += "#pragma once\n#line 1 \"" + EscapedFilePath + "\"\n";
     std::size_t Cursor = 0;
     for (const Edit& E : Edits) {
         Output.append(Source.substr(Cursor, E.StartOffset - Cursor));

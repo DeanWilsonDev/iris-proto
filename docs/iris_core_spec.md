@@ -755,9 +755,18 @@ drift apart on what counts as a primitive. Tested in `tests/SemanticValidatorTes
 full per-file pipeline and splices each `render { }` block's generated expression back into the
 original source as `return <expr>;`, with `#line` directives resyncing line numbers after every
 splice (this section's requirement, above). `tools/IrisCc.cpp` wraps it as the `iris_cc` CLI
-binary. See `docs/iris_next_steps.md` for the one open question this surfaced: what `import
-Name` (not valid C++23) should become in generated output — currently commented out in place
-rather than guessed at, pending a header-generation strategy decision.
+binary.
+
+**Resolved:** what `import Name` (not valid C++23) becomes in generated output —
+`docs/iris_import_header_decision.md`. Real forward-declaration headers turned out to be
+unreachable without Iris parsing struct/function signatures, which §2.1 explicitly rules out, so
+every `.iris`/`.irisx` file instead compiles to one self-contained, `#pragma once` header
+(`<original-path>.h`) with its full definition inline — nothing split into declaration vs.
+definition. `import Name` becomes `#include` of that resolved import's own generated header. A
+component's function needs `inline` to stay ODR-safe once its header is included by more than
+one translation unit; Iris doesn't inject this itself (same reasoning — it would mean parsing
+the signature), so it's an author-applied convention. Verified against a real multi-file, three-
+component fixture that host-compiles end to end via nothing but generated `#include`s.
 
 ---
 

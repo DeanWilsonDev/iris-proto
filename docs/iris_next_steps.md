@@ -8,7 +8,7 @@
 ## Where things stand
 
 - **Stage 0 (spec)** — done. `docs/iris_core_spec.md` v2 is authoritative.
-- **Stage 1 (preprocessor front end)** — partially done:
+- **Stage 1 (preprocessor front end)** — done, end to end (tokenizer through a working CLI):
   - `CppTokenizer` (`IHostLanguageTokenizer` for C++23) — done.
   - `RenderBlockParser` (`render{ }` → `ElementNode` AST: tags, props, `key`/`class`, nested
     elements, `{ }` escape hatches, literal text, comment stripping, single-root enforcement) —
@@ -162,12 +162,12 @@ Tested end-to-end in `tests/SemanticValidatorTests.cpp`, including the full spec
 `PartyScreen` example (with `Button`/`HealthBar` correctly `import`ed) validating cleanly, and
 a case confirming an unimported tag nested inside a `!{ }` body is still caught.
 
-## Done: preprocessor driver/CLI
+## Done: preprocessor driver/CLI, and the header-generation decision it surfaced
 
 `include/Iris/Driver.h`'s `Iris::CompileFile(Source, FilePath, Config, ProjectRoot)` is the full
-pipeline connecting every Stage 1 piece into an actual `.iris`/`.irisx` → `.cpp` transform, and
-`tools/IrisCc.cpp` wraps it as an `iris_cc` CLI binary
-(`iris_cc <input.iris> [-o <output.cpp>] [--project-root <dir>]`, project root auto-resolved by
+pipeline connecting every Stage 1 piece into an actual `.iris`/`.irisx` → generated-header
+transform, and `tools/IrisCc.cpp` wraps it as an `iris_cc` CLI binary
+(`iris_cc <input.iris> [-o <output.h>] [--project-root <dir>]`, project root auto-resolved by
 walking up from the input file for the nearest `.iris.json`, tsconfig-style).
 
 Per file: `ScanImports`, `RenderBlockParser::Parse()`, then for every parsed block
@@ -181,39 +181,42 @@ convention), with a `#line` directive inserted after every splice to resync line
 render block usually spans multiple lines and always collapses to one, so everything after it
 would otherwise report at the wrong line to a host-compiler error.
 
-**One thing left genuinely undecided, called out rather than guessed at:** `import Name` is not
-valid C++23 and can't survive unchanged into the generated `.cpp`, but what it *should* become
-(a `#include`, a forward declaration, something else) depends on a header-generation strategy
-this repo hasn't designed yet. Until that exists, `CompileFile` comments the line out in place
-(`// import Name`) rather than inventing unfounded `#include` behavior — semantic validation
-still works correctly regardless (it only needs the *names* `ScanImports` found, not what
-becomes of the line), but making an imported component's declaration actually visible to the
-generated `.cpp` is still the caller's problem. Worth its own short decision doc before Stage 2
-needs it for real.
+**The `import Name` gap this first version left open is now closed** —
+`docs/iris_import_header_decision.md`. Short version: the obvious answer (generate a `.h`/`.cpp`
+pair per component, forward-declaring `NameProps`/`Name()`) turns out to be unreachable without
+Iris parsing struct/function signatures, which `docs/iris_core_spec.md` §2.1 explicitly rules
+out. The actual decision: every `.iris`/`.irisx` file compiles to **one self-contained header**
+(`<original-path>.h`, e.g. `Button.iris.h`) rather than a declaration/definition pair —
+`#pragma once`, full definition inline in the header, nothing split. `import Name` becomes
+`#include "<path-relative-to-ProjectRoot>"`. The tradeoff: a component's function needs `inline`
+to stay ODR-safe once included by more than one translation unit — Iris doesn't inject this
+(would mean parsing the signature it's committed not to touch); it's a convention the author
+applies themselves, documented in the decision doc.
 
 `RenderBlockParser::ParsedBlock` gained an `EndLocation` field (one character past the block's
-closing `}`) to make this possible — previously it only exposed where `render` itself starts,
-not where the block ends, which isn't enough to know the span to splice out.
+closing `}`) to make the render-block splicing possible — previously it only exposed where
+`render` itself starts, not where the block ends.
 
-Verified two ways: `tests/DriverTests.cpp` (including the full spec §9 `PartyScreen` example
-compiling with no diagnostics), and manually running `iris_cc` against an on-disk
-`StartMenu.iris` + `Button.iris`/`SettingsPage.iris` fixture and host-compiling the result — the
-first time output from the CLI binary itself, not just a library call in a test, was confirmed
-to produce real, compilable C++23.
+Verified three ways: `tests/DriverTests.cpp` (including the full spec §9 `PartyScreen` example
+compiling with no diagnostics, `#include`/`#pragma once` shape asserted directly), running
+`iris_cc` three times against an on-disk `StartMenu.iris` + `Button.iris`/`SettingsPage.iris`
+fixture (each marked `inline` per the convention) to produce three real `.iris.h` files, and
+host-compiling a `main.cpp` that only `#include`s the top-level generated header — no manual
+glue, no hand-written declarations, confirmed to compile with `g++ -std=c++23`. First time a
+*multi-file* Iris project has been shown to actually build end-to-end.
 
 ## Suggested order
 
 Starting from what's actually left:
 
-1. **Header-generation decision** — what `import Name` should become in generated output (see
-   above). Blocks a real multi-file project from actually compiling via `iris_cc`, even though
-   every individual file's own `render { }` transform is correct.
-2. **Stage 2 walker in `iris-penumbra-backend`** — consuming codegen's `Iris::IrisComponent`-
-   constructing output, now confirmed to include correctly-transformed `<Slot>` bodies and a
-   compilable `nullptr`/`None` convention for "render nothing". The walker needs to treat
-   `IrisElementTag::None` as "unmount, mount nothing" per the note above.
-3. **Stage 3 reactive runtime** — already fully spec'd, largest remaining implementation chunk.
+1. **Stage 2 walker in `iris-penumbra-backend`** — consuming codegen's `Iris::IrisComponent`-
+   constructing output, now confirmed reachable via a real multi-file build (not just a
+   single-file library call), including correctly-transformed `<Slot>` bodies and a compilable
+   `nullptr`/`None` convention for "render nothing". The walker needs to treat
+   `IrisElementTag::None` as "unmount, mount nothing" — deferred to that Stage 3 design pass
+   rather than formalized now, per the user's own call when asked.
+2. **Stage 3 reactive runtime** — already fully spec'd, largest remaining implementation chunk.
    Unblocked on the Penumbra side now that `IWidgetLifecycle` has landed.
-4. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
-5. **Stage 5** — validate against one of the real consuming projects once (1)–(4) produce
+3. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
+4. **Stage 5** — validate against one of the real consuming projects once (1)–(3) produce
    something an actual `.iris` file can round-trip through.

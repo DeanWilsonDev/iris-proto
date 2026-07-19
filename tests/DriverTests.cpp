@@ -79,7 +79,7 @@ void TestOutputHasLineDirectives() {
            "a resync #line directive follows the replaced render block, at the line its closing '}' was on");
 }
 
-void TestImportLineIsCommentedOutNotPassedThrough() {
+void TestImportLineBecomesIncludeOfGeneratedHeader() {
     TempProject Project;
     Project.WriteComponent("Button");
 
@@ -87,7 +87,12 @@ void TestImportLineIsCommentedOutNotPassedThrough() {
         Iris::CompileFile("import Button\nIrisComponent Foo() {\n    render { <Button label=\"x\" /> }\n}\n",
                            "test.iris", PenumbraConfig(), Project.RootPath());
     Expect(Result.Diagnostics.empty(), "a render block using an imported component compiles with no diagnostics");
-    Expect(Contains(Result.Output, "// import Button"), "the import line is commented out, not passed through");
+    Expect(!Contains(Result.Output, "import Button"),
+           "the literal 'import Button' text is gone, not just commented out");
+    Expect(Contains(Result.Output, "#include \"components/Button.iris.h\""),
+           "it becomes an #include of the resolved import's generated header, relative to ProjectRoot");
+    Expect(Contains(Result.Output, "#pragma once"),
+           "every generated file is a self-contained, include-guarded header");
     Expect(Contains(Result.Output, "Button(ButtonProps{"),
            "the imported component is emitted as an ordinary function call");
 }
@@ -166,8 +171,9 @@ IrisComponent PartyScreen(PartyScreenProps props) {
     Expect(!Contains(Result.Output, "render {"), "no render{ } text survives in the output");
     Expect(!Contains(Result.Output, "<Frame") && !Contains(Result.Output, "<HealthBar"),
            "no raw JSX text survives anywhere, including inside the nested !{ } bodies");
-    Expect(Contains(Result.Output, "// import HealthBar") && Contains(Result.Output, "// import Button"),
-           "both import lines are commented out");
+    Expect(Contains(Result.Output, "#include \"components/HealthBar.iris.h\"") &&
+               Contains(Result.Output, "#include \"components/Button.iris.h\""),
+           "both import lines become #includes of their resolved generated headers");
 }
 
 } // namespace
@@ -175,7 +181,7 @@ IrisComponent PartyScreen(PartyScreenProps props) {
 void RunDriverTests() {
     TestSimpleRenderBlockCompiles();
     TestOutputHasLineDirectives();
-    TestImportLineIsCommentedOutNotPassedThrough();
+    TestImportLineBecomesIncludeOfGeneratedHeader();
     TestUnresolvedImportIsADiagnosticAndBlocksOutput();
     TestUnimportedComponentReferenceIsADiagnostic();
     TestParseErrorIsADiagnosticAndBlocksOutput();
