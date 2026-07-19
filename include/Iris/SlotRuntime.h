@@ -72,15 +72,43 @@ public:
     // inside a signal's `set()`).
     void MarkDirty();
 
+    // Attaches this slot's output to a specific position within `Parent`'s own real
+    // children, rather than a standalone widget this `SlotState` owns privately — used
+    // when a `<Slot>` is found nested inside an otherwise-static tree
+    // (`SlotResolution.h`'s `ResolveSlots`). Every subsequent `Reconcile()` call —
+    // including ones triggered automatically by `IrisRuntime::ReconcileDirtySlots()`
+    // (e.g. via `iris::Tick()`) — updates `Parent`'s child at `Index` in place instead
+    // of this `SlotState`'s own private storage: `Parent->RemoveChildAt(Index)` right
+    // before invoking the callable (only if something is currently there — see below),
+    // `ReconcileWidget` as usual, `Parent->InsertChildAt(Index, ...)` right after (only
+    // if the new output isn't `None`). Must be called before the first `Reconcile()`,
+    // and only supports the single-`IrisComponent`-returning callable shape — a
+    // list-returning `<Slot>` attached this way would need `Index` (and every static
+    // sibling after it) to shift as the list grows/shrinks, which `ResolveSlots`
+    // deliberately doesn't attempt (see its own doc comment).
+    void AttachAt(Umbra::IWidget* Parent, std::size_t Index);
+
+    // True if this slot's most recent render produced a real widget (its callable
+    // didn't return `nullptr`/`IrisElementTag::None`) — meaningful only for the
+    // single-`IrisComponent`-returning callable shape (`SlotResolution.h`'s
+    // `ResolveSlots` uses this to know whether a subsequent static sibling's real
+    // child index needs to account for this slot's own contribution).
+    bool HasMountedContent() const;
+
 private:
     std::shared_ptr<Iris::IrisSlotCallable> Callable_;
     MountFn                                  Mount_;
     bool                                      Mounted_{false};
     bool                                      Dirty_{false};
 
+    Umbra::IWidget* AttachedParent_{nullptr};
+    std::size_t      AttachedIndex_{0};
+
     // Exactly one of these two pairs is meaningful, matching which alternative
     // `Callable_->Callable` holds — mirrors `IrisSlotCallable`'s own variant shape
-    // rather than introducing a parallel one.
+    // rather than introducing a parallel one. In attached mode (`AttachedParent_ !=
+    // nullptr`), `SingleWidget_` stays unused — the live widget lives inside
+    // `AttachedParent_`'s own children between `Reconcile()` calls, never here.
     Iris::IrisComponent                          PreviousSingle_{nullptr}; // starts at IrisElementTag::None — "nothing was here"
     std::unique_ptr<Umbra::IWidget>              SingleWidget_;
     std::vector<Iris::IrisComponent>             PreviousList_;

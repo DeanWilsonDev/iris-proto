@@ -305,14 +305,44 @@ One required, mechanical syntax change for every component author: `iris::Signal
 → `IRIS_SIGNAL(T, Name, v)`. Every code sample in `docs/iris_core_spec.md` has been updated;
 historical decision-record docs were deliberately left showing the old syntax.
 
+## Done: wired `<Slot>` into the Stage 2 walker
+
+Full writeup: `docs/iris_slot_stage2_wiring_decision.md`. Summary: `BuildWidgetTree` now
+treats `IrisElementTag::Slot` exactly like `None` during the static build (contributes
+nothing, no more assert) — a new `iris::ResolveSlots(Widget, Node, Mount)`
+(`include/Iris/SlotResolution.h`) then walks the just-built widget tree and the original
+`IrisComponent` tree in lockstep, and for each `<Slot>` found, constructs a `SlotState`,
+tells it exactly where it lives (`SlotState::AttachAt(Parent, Index)`, a new "attached"
+mode alongside the existing standalone one), and performs its initial mount — splicing
+its render into the parent's real children at that position. Every subsequent
+`Reconcile()` (including ones `iris::Tick()` triggers automatically) updates that same
+real position in place, via `ReconcileWidget` completely unchanged — it never knew or
+cared where its `unique_ptr<Umbra::IWidget>&` actually lived. `ResolveSlots`/`AttachAt`
+are pure `Umbra::IWidget` — entirely backend-agnostic, living in `iris`'s own runtime;
+the only change needed in `iris-penumbra-backend` was a one-line change to
+`BuildWidgetTree`'s own `Slot` case.
+
+Verified against a mock (`tests/SlotResolutionTests.cpp`) and, more importantly, against
+**real** `Penumbra::Widgets::Box`/`Label` objects
+(`iris-penumbra-backend/tests/SlotWiringTests.cpp`) — a live `iris::Signal` update
+reaching all the way through `IrisRuntime`/`iris::Tick()`/`SlotState`/the reconciler/
+`PenumbraWidget` to a real Penumbra `Box::Children` vector, confirmed by inspecting that
+vector directly.
+
+**Deliberately deferred, not solved here** (see the decision doc's own section for
+why): list-returning `<Slot>`s (attaching at a stable index doesn't hold once list
+length can change), two sibling `<Slot>`s under one parent where an earlier one toggles
+to/from `None` (the later one's attached index can go stale), and nested-`<Slot>`
+discovery (unchanged from before — `ResolveSlots` only walks the *static* tree, never a
+`<Slot>`'s own dynamically-produced output).
+
 ## Suggested order
 
 Starting from what's actually left:
 
-1. **Wiring `<Slot>` into the Stage 2 walker** — nothing yet constructs a `SlotState` when
-   `BuildWidgetTree` encounters a `<Slot>` tag; it still asserts on one. Both the `Umbra::IWidget`
-   adapter and the signal-lifetime fix it needs to be safe are now ready; the wiring itself isn't
-   done.
+1. **List-returning `<Slot>` wiring** — the natural next increment on top of the
+   single-`IrisComponent` case just closed; needs a design for how a static sibling's
+   position shifts as the list's own length changes across re-renders.
 2. **Nested `<Slot>` discovery** — finding and giving each nested `<Slot>` its own `SlotState`
    within an arbitrary tree, rather than assuming a slot's own output is always already fully
    resolved.

@@ -49,7 +49,8 @@ add_library(iris STATIC
     src/Iris/SemanticValidator.cpp
     src/Iris/Driver.cpp
     src/Iris/SlotRuntime.cpp
-    src/Iris/Reconciler.cpp)
+    src/Iris/Reconciler.cpp
+    src/Iris/SlotResolution.cpp)
 
 target_include_directories(iris PUBLIC include)
 target_compile_features(iris PUBLIC cxx_std_23)
@@ -82,7 +83,8 @@ add_executable(iris_tests
     tests/DriverTests.cpp
     tests/ReconcilerTests.cpp
     tests/SlotRuntimeTests.cpp
-    tests/ComponentInstanceTests.cpp)
+    tests/ComponentInstanceTests.cpp
+    tests/SlotResolutionTests.cpp)
 
 target_link_libraries(iris_tests PRIVATE iris)
 set_target_properties(iris_tests PROPERTIES

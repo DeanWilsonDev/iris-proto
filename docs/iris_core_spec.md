@@ -1052,7 +1052,10 @@ were dangling-reference UB as originally specified — see §8's resolved notes)
 `Umbra::IWidget` adapter is also implemented and tested against actual `Penumbra::Widgets::Box`/
 `Label` objects, not just a mock (`iris-penumbra-backend`'s
 `docs/iris_penumbra_backend_adapter_decision.md`). Full writeups:
-`docs/iris_stage3_implementation_decision.md` (the reconciler/runtime core) and
-`docs/iris_signal_lifetime_decision.md` (the signal-lifetime fix). Not yet done: wiring the
-Stage 2 walker (`iris-penumbra-backend`) to resolve `<Slot>` into a `SlotState` rather than
-asserting on it, and nested-`<Slot>` discovery.
+`docs/iris_stage3_implementation_decision.md` (the reconciler/runtime core),
+`docs/iris_signal_lifetime_decision.md` (the signal-lifetime fix), and
+`docs/iris_slot_stage2_wiring_decision.md` (wiring `<Slot>` into the Stage 2 walker, for the
+single-`IrisComponent`-returning case — verified against real Penumbra `Box`/`Label` objects,
+a live `iris::Signal` update reaching a real `Box::Children` vector end to end). Not yet done:
+list-returning `<Slot>` wiring, nested-`<Slot>` discovery, and LIS-based minimal-move list
+diffing.

@@ -135,6 +135,7 @@ void RunDriverTests();            // tests/DriverTests.cpp — no auto-registrat
 void RunReconcilerTests();        // tests/ReconcilerTests.cpp — no auto-registration, see CLAUDE.md
 void RunSlotRuntimeTests();       // tests/SlotRuntimeTests.cpp — no auto-registration, see CLAUDE.md
 void RunComponentInstanceTests(); // tests/ComponentInstanceTests.cpp — no auto-registration, see CLAUDE.md
+void RunSlotResolutionTests();    // tests/SlotResolutionTests.cpp — no auto-registration, see CLAUDE.md
 
 int main() {
     TestBasicRenderBlockDetection();
@@ -156,6 +157,7 @@ int main() {
     RunReconcilerTests();
     RunSlotRuntimeTests();
     RunComponentInstanceTests();
+    RunSlotResolutionTests();
 
     std::printf("\n%d failure(s)\n", Failures);
     return Failures == 0 ? 0 : 1;

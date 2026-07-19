@@ -103,9 +103,9 @@ this was the last known Penumbra-side blocker for Stage 3 lifecycle work.
 Stage 2 (the Penumbra backend itself: `IrisPenumbraBackend::BuildWidgetTree()`, walking a single
 `IrisComponent` node and building the equivalent real Penumbra widget tree via each Core
 primitive's own fluent `Builder`) is implemented in `iris-penumbra-backend`, not here — this
-repo only ever produces the backend-agnostic `IrisComponent` IR. It's a one-shot tree build
-only, no diffing or identity tracking — that's Stage 3's reconciler, layered on top, not part
-of the walker itself.
+repo only ever produces the backend-agnostic `IrisComponent` IR. It's a one-shot static build —
+`<Slot>` contributes nothing during it (same as `IrisElementTag::None`); `iris::ResolveSlots`
+(below) splices real content in afterward.
 
 Stage 3's core engine (`iris::Signal<T>`, ambient dependency tracking, batching, `iris::Tick()`,
 the reconciler) is implemented here — see `docs/iris_stage3_implementation_decision.md`. `key`
@@ -122,7 +122,15 @@ pattern) becomes a dangling reference the instant the declaring component functi
 which it always does immediately — confirmed with AddressSanitizer, not a corner case. Fixed
 per `docs/iris_signal_lifetime_decision.md`: the macro binds `Name` to a reference into a
 heap-allocated `iris::ComponentInstance` tied to that component's own mounted lifetime, so
-`[&]` capture stays exactly as safe as every example assumes. Not yet done: wiring the Stage 2
-walker (above) to actually resolve `<Slot>` into a `SlotState` instead of asserting on it, and
-nested-`<Slot>` discovery — both still open, tracked in `docs/iris_stage3_implementation_
-decision.md`.
+`[&]` capture stays exactly as safe as every example assumes.
+
+**`<Slot>` is now wired into the Stage 2 walker**, for the single-`IrisComponent`-returning
+case (`docs/iris_slot_stage2_wiring_decision.md`): `iris::ResolveSlots()` (`include/Iris/
+SlotResolution.h`) walks a just-built static widget tree and its source `IrisComponent` tree in
+lockstep, constructs a `SlotState` for each `<Slot>` found, and attaches it to its exact
+position (`SlotState::AttachAt`) — every subsequent `Reconcile()`, including ones `iris::Tick()`
+triggers automatically, updates that real position in place. Verified against real Penumbra
+`Box`/`Label` objects, not just a mock: a live `iris::Signal` update reaching a real
+`Box::Children` vector end to end. Still open: list-returning `<Slot>` wiring (attaching at a
+stable index doesn't hold once list length changes) and nested-`<Slot>` discovery (a `<Slot>`
+inside another `<Slot>`'s own dynamic output) — both tracked in that decision doc.

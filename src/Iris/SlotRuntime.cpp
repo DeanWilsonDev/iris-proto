@@ -62,12 +62,26 @@ SlotState::SlotState(std::shared_ptr<Iris::IrisSlotCallable> Callable, MountFn M
 SlotState::~SlotState() {
     SignalRegistry::Instance().ClearSlot(this);
     IrisRuntime::Instance().UnregisterSlot(this);
+
+    // Attached mode: whatever this slot last rendered lives inside AttachedParent_'s
+    // own children, not in SingleWidget_ — remove and drop it so the parent doesn't
+    // keep displaying content nothing manages anymore.
+    if (AttachedParent_ != nullptr && PreviousSingle_.Tag != Iris::IrisElementTag::None) {
+        AttachedParent_->RemoveChildAt(AttachedIndex_);
+    }
 }
 
 void SlotState::MarkDirty() {
     Dirty_ = true;
     IrisRuntime::Instance().RegisterDirtySlot(this);
 }
+
+void SlotState::AttachAt(Umbra::IWidget* Parent, std::size_t Index) {
+    AttachedParent_ = Parent;
+    AttachedIndex_ = Index;
+}
+
+bool SlotState::HasMountedContent() const { return PreviousSingle_.Tag != Iris::IrisElementTag::None; }
 
 void SlotState::Reconcile() {
     if (Mounted_ && !Dirty_) {
@@ -83,7 +97,22 @@ void SlotState::Reconcile() {
         Iris::IrisComponent NewOutput = std::get<std::function<Iris::IrisComponent()>>(Callable_->Callable)();
         IrisRuntime::Instance().PopActiveSlot();
 
-        ReconcileWidget(SingleWidget_, PreviousSingle_, NewOutput, Mount_);
+        if (AttachedParent_ != nullptr) {
+            // Only pull the current widget back out if something is actually there —
+            // a previous None output means AttachedIndex_ has no corresponding entry
+            // in AttachedParent_'s children at all (None contributes nothing, same as
+            // everywhere else in the reconciler).
+            std::unique_ptr<Umbra::IWidget> Current;
+            if (PreviousSingle_.Tag != Iris::IrisElementTag::None) {
+                Current = AttachedParent_->RemoveChildAt(AttachedIndex_);
+            }
+            ReconcileWidget(Current, PreviousSingle_, NewOutput, Mount_);
+            if (Current != nullptr) {
+                AttachedParent_->InsertChildAt(AttachedIndex_, std::move(Current));
+            }
+        } else {
+            ReconcileWidget(SingleWidget_, PreviousSingle_, NewOutput, Mount_);
+        }
         PreviousSingle_ = std::move(NewOutput);
     } else {
         std::vector<Iris::IrisComponent> NewOutput =
