@@ -160,8 +160,12 @@ void RenderBlockParser::ParseRenderBlock(SourceLocation BlockLocation) {
     ElementNode Root = ParseElement();
 
     if (Current_.Kind == GKind::CloseBrace) {
+        // '}' is always a single character, so one column past its own start is one
+        // character past the block's end — no need to peek the next token for this.
+        SourceLocation EndLocation = Current_.Location;
+        EndLocation.Column += 1;
         Advance(); // consume the render block's own closing '}'
-        Blocks_.push_back(ParsedBlock{std::move(Root), BlockLocation});
+        Blocks_.push_back(ParsedBlock{std::move(Root), BlockLocation, EndLocation});
         return;
     }
 

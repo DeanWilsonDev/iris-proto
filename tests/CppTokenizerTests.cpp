@@ -131,6 +131,7 @@ void RunImportResolverTests();    // tests/ImportResolverTests.cpp — no auto-r
 void RunCodegenTests();           // tests/CodegenTests.cpp — no auto-registration, see CLAUDE.md
 void RunIrisComponentTests();     // tests/IrisComponentTests.cpp — no auto-registration, see CLAUDE.md
 void RunSemanticValidatorTests(); // tests/SemanticValidatorTests.cpp — no auto-registration, see CLAUDE.md
+void RunDriverTests();            // tests/DriverTests.cpp — no auto-registration, see CLAUDE.md
 
 int main() {
     TestBasicRenderBlockDetection();
@@ -148,6 +149,7 @@ int main() {
     RunCodegenTests();
     RunIrisComponentTests();
     RunSemanticValidatorTests();
+    RunDriverTests();
 
     std::printf("\n%d failure(s)\n", Failures);
     return Failures == 0 ? 0 : 1;

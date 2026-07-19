@@ -25,7 +25,11 @@ public:
     // One parsed `render { }` block.
     struct ParsedBlock {
         ElementNode    Root;
-        SourceLocation Location; // where the `render` keyword itself starts
+        SourceLocation Location;    // where the `render` keyword itself starts
+        SourceLocation EndLocation; // one character past the block's closing '}' —
+                                     // a driver splicing codegen output back into the
+                                     // original source (docs/iris_next_steps.md) needs
+                                     // both ends to know the exact span to replace.
     };
 
     struct ParseError {

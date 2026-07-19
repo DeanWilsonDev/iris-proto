@@ -750,9 +750,14 @@ reference. Recurses into elements nested inside a `!{ }` JSX-transform escape ha
 now lives in a shared `include/Iris/CorePrimitives.h` so `Codegen.cpp` and the validator can't
 drift apart on what counts as a primitive. Tested in `tests/SemanticValidatorTests.cpp`.
 
-Still open: wiring `RenderBlockParser`, `ImportResolver`, `SemanticValidator`, and `Codegen`
-together into an actual preprocessor driver/CLI — there still isn't one; all four are only ever
-exercised directly by their own tests today.
+**Resolved:** the preprocessor driver/CLI wiring `RenderBlockParser`, `ImportResolver`,
+`SemanticValidator`, and `Codegen` together. `include/Iris/Driver.h`'s `CompileFile()` runs the
+full per-file pipeline and splices each `render { }` block's generated expression back into the
+original source as `return <expr>;`, with `#line` directives resyncing line numbers after every
+splice (this section's requirement, above). `tools/IrisCc.cpp` wraps it as the `iris_cc` CLI
+binary. See `docs/iris_next_steps.md` for the one open question this surfaced: what `import
+Name` (not valid C++23) should become in generated output — currently commented out in place
+rather than guessed at, pending a header-generation strategy decision.
 
 ---
 

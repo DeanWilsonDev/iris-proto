@@ -37,11 +37,21 @@ add_library(iris STATIC
     src/Iris/ImportResolver.cpp
     src/Iris/CorePrimitives.cpp
     src/Iris/Codegen.cpp
-    src/Iris/SemanticValidator.cpp)
+    src/Iris/SemanticValidator.cpp
+    src/Iris/Driver.cpp)
 
 target_include_directories(iris PUBLIC include)
 target_compile_features(iris PUBLIC cxx_std_23)
 target_link_libraries(iris PUBLIC amanuensis)
+
+# ---------------------------------------------------------------------------
+# iris_cc — the preprocessor CLI (tools/IrisCc.cpp), wrapping Iris::CompileFile
+# (include/Iris/Driver.h). Ties RenderBlockParser, ImportResolver,
+# SemanticValidator, and Codegen together into an actual .iris -> .cpp
+# pipeline — see tools/IrisCc.cpp's header comment for invocation.
+# ---------------------------------------------------------------------------
+add_executable(iris_cc tools/IrisCc.cpp)
+target_link_libraries(iris_cc PRIVATE iris)
 
 # ---------------------------------------------------------------------------
 # Tests — smoke-test executable for now. Cimmerian (the ecosystem's own test
@@ -57,7 +67,8 @@ add_executable(iris_tests
     tests/ImportResolverTests.cpp
     tests/CodegenTests.cpp
     tests/IrisComponentTests.cpp
-    tests/SemanticValidatorTests.cpp)
+    tests/SemanticValidatorTests.cpp
+    tests/DriverTests.cpp)
 
 target_link_libraries(iris_tests PRIVATE iris)
 set_target_properties(iris_tests PROPERTIES

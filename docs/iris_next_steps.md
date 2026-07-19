@@ -30,10 +30,10 @@
     `searchPaths` via the newly-vendored `libs/amanuensis` — a zero-dependency first-party JSON
     library, git-submoduled rather than hand-rolled, see below) and `ImportResolver`
     (`ScanImports` + `ResolveImports`, `.iris`/`.irisx` extension chosen by `target`) both landed
-    with tests (`tests/IrisConfigTests.cpp`, `tests/ImportResolverTests.cpp`). Not yet wired into
-    an actual preprocessor driver/CLI — there isn't one yet.
+    with tests (`tests/IrisConfigTests.cpp`, `tests/ImportResolverTests.cpp`).
   - Semantic validation (Core-primitive vs. imported-component resolution, backend-gated
     primitive checks, the `<Text font=...>` and inline-style errors) — **done**. See below.
+  - Preprocessor driver/CLI — **done**. See below.
 - **Stage 2 (Penumbra backend)** — repo/build wiring only. `iris-penumbra-backend` vendors both
   `iris` and `penumbra-proto` and links an `iris_penumbra_backend` interface target against
   both; the actual `IrisComponent`-IR-to-widget-tree walker has no sources yet.
@@ -162,17 +162,52 @@ Tested end-to-end in `tests/SemanticValidatorTests.cpp`, including the full spec
 `PartyScreen` example (with `Button`/`HealthBar` correctly `import`ed) validating cleanly, and
 a case confirming an unimported tag nested inside a `!{ }` body is still caught.
 
-Still open: wiring `RenderBlockParser` + `ImportResolver` + `SemanticValidator` + `Codegen`
-together into an actual preprocessor driver/CLI — none of the four are connected end-to-end by
-a binary yet, each is only exercised directly by its own tests.
+## Done: preprocessor driver/CLI
+
+`include/Iris/Driver.h`'s `Iris::CompileFile(Source, FilePath, Config, ProjectRoot)` is the full
+pipeline connecting every Stage 1 piece into an actual `.iris`/`.irisx` → `.cpp` transform, and
+`tools/IrisCc.cpp` wraps it as an `iris_cc` CLI binary
+(`iris_cc <input.iris> [-o <output.cpp>] [--project-root <dir>]`, project root auto-resolved by
+walking up from the input file for the nearest `.iris.json`, tsconfig-style).
+
+Per file: `ScanImports`, `RenderBlockParser::Parse()`, then for every parsed block
+`ValidateElementTree()` (against `Config.Target` and the scanned import names) and
+`GenerateComponentExpression()`. All diagnostics — `ImportResolver`'s unresolved-import errors,
+parse errors, semantic errors, codegen errors — are collected into one list; if any are present,
+no output is produced at all (matches `CodegenResult`'s existing "empty `Source` whenever
+`Errors` is non-empty" convention). On success, each `render { }` block is spliced out of the
+original source and replaced with `return <expr>;` (`Codegen.h`'s own documented wrapping
+convention), with a `#line` directive inserted after every splice to resync line numbers — a
+render block usually spans multiple lines and always collapses to one, so everything after it
+would otherwise report at the wrong line to a host-compiler error.
+
+**One thing left genuinely undecided, called out rather than guessed at:** `import Name` is not
+valid C++23 and can't survive unchanged into the generated `.cpp`, but what it *should* become
+(a `#include`, a forward declaration, something else) depends on a header-generation strategy
+this repo hasn't designed yet. Until that exists, `CompileFile` comments the line out in place
+(`// import Name`) rather than inventing unfounded `#include` behavior — semantic validation
+still works correctly regardless (it only needs the *names* `ScanImports` found, not what
+becomes of the line), but making an imported component's declaration actually visible to the
+generated `.cpp` is still the caller's problem. Worth its own short decision doc before Stage 2
+needs it for real.
+
+`RenderBlockParser::ParsedBlock` gained an `EndLocation` field (one character past the block's
+closing `}`) to make this possible — previously it only exposed where `render` itself starts,
+not where the block ends, which isn't enough to know the span to splice out.
+
+Verified two ways: `tests/DriverTests.cpp` (including the full spec §9 `PartyScreen` example
+compiling with no diagnostics), and manually running `iris_cc` against an on-disk
+`StartMenu.iris` + `Button.iris`/`SettingsPage.iris` fixture and host-compiling the result — the
+first time output from the CLI binary itself, not just a library call in a test, was confirmed
+to produce real, compilable C++23.
 
 ## Suggested order
 
 Starting from what's actually left:
 
-1. **Preprocessor driver/CLI** — the one piece connecting `RenderBlockParser` →
-   `ImportResolver`/`SemanticValidator` → `Codegen` into an actual `.iris` → `.cpp` pipeline.
-   Nothing currently wires these together; each is only ever driven directly by its own tests.
+1. **Header-generation decision** — what `import Name` should become in generated output (see
+   above). Blocks a real multi-file project from actually compiling via `iris_cc`, even though
+   every individual file's own `render { }` transform is correct.
 2. **Stage 2 walker in `iris-penumbra-backend`** — consuming codegen's `Iris::IrisComponent`-
    constructing output, now confirmed to include correctly-transformed `<Slot>` bodies and a
    compilable `nullptr`/`None` convention for "render nothing". The walker needs to treat
