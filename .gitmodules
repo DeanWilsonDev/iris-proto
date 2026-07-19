@@ -4,3 +4,6 @@
 [submodule "libs/umbra-interfaces"]
 	path = libs/umbra-interfaces
 	url = https://github.com/DeanWilsonDev/umbra-interfaces.git
+[submodule "libs/cimmerian"]
+	path = libs/cimmerian
+	url = https://github.com/DeanWilsonDev/cimmerian.git

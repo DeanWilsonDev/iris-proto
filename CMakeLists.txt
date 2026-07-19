@@ -32,6 +32,18 @@ add_subdirectory(libs/amanuensis)
 add_subdirectory(libs/umbra-interfaces)
 
 # ---------------------------------------------------------------------------
+# Cimmerian — the ecosystem's own BDD-style test framework
+# (docs/iris_stage2_decision_doc.md §7), vendored the same way as Amanuensis
+# and umbra-interfaces. Forced to CIMMERIAN_VISUAL_PLATFORM=None *before*
+# add_subdirectory: Cimmerian's own CMakeLists only sets that cache variable
+# if it isn't already set, and its default on Linux is X11, which pulls in
+# find_package(X11 REQUIRED) + libXtst — a new system dependency Iris's own
+# tests have no need for (no screenshot/visual-regression testing here).
+# ---------------------------------------------------------------------------
+set(CIMMERIAN_VISUAL_PLATFORM "None" CACHE STRING "" FORCE)
+add_subdirectory(libs/cimmerian)
+
+# ---------------------------------------------------------------------------
 # Iris preprocessor/runtime — static library. Nothing in here references
 # demo/ or tests/, and nothing in here references Penumbra or any other
 # backend — Iris's core is backend-agnostic by design (docs/iris_core_spec.md
@@ -66,11 +78,10 @@ add_executable(iris_cc tools/IrisCc.cpp)
 target_link_libraries(iris_cc PRIVATE iris)
 
 # ---------------------------------------------------------------------------
-# Tests — smoke-test executable for now. Cimmerian (the ecosystem's own test
-# framework, see /Users/deanwilson/development/projects/cimmerian) is the
-# intended long-term tool per docs/iris_stage2_decision_doc.md §7, but isn't
-# vendored yet — this is a plain executable asserting via a handful of
-# hand-rolled checks until it is.
+# Tests — plain executable asserting via a handful of hand-rolled checks
+# (each TestXxx() function calls Expect(condition, description), no
+# auto-registration; see CLAUDE.md's "Build and test" section). Predates
+# Cimmerian being vendored; left as-is rather than migrated wholesale.
 # ---------------------------------------------------------------------------
 add_executable(iris_tests
     tests/CppTokenizerTests.cpp
@@ -88,4 +99,18 @@ add_executable(iris_tests
 
 target_link_libraries(iris_tests PRIVATE iris)
 set_target_properties(iris_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+
+# ---------------------------------------------------------------------------
+# Cimmerian-based tests — a separate executable, not merged into iris_tests:
+# Cimmerian's auto-registration + single TestRunner::RunAll() model doesn't
+# mesh with iris_tests' hand-rolled RunXTests()-called-from-one-main()
+# pattern. New BDD-style tests go here going forward.
+# ---------------------------------------------------------------------------
+add_executable(iris_cimmerian_tests
+    tests/cimmerian/CimmerianTestMain.cpp
+    tests/cimmerian/SlotSiblingGroupTests.cpp)
+
+target_link_libraries(iris_cimmerian_tests PRIVATE iris cimmerian)
+set_target_properties(iris_cimmerian_tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")

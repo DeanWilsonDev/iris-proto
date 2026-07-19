@@ -23,17 +23,23 @@ read the spec first.
 cmake -S . -B build
 cmake --build build
 ./build/tests/iris_tests
+./build/tests/iris_cimmerian_tests
 ```
 
-There is no test framework wired in yet. `tests/CppTokenizerTests.cpp` is a plain executable:
-each `TestXxx()` function calls a hand-rolled `Expect(condition, description)`, prints
-`[PASS]`/`[FAIL]` per assertion, and the binary exits non-zero if any assertion failed. To add
-a test, add a new `TestXxx()` function and call it from `main()` — there's no auto-registration.
-Cimmerian (the ecosystem's own test framework) is the intended long-term tool per
-`docs/iris_stage2_decision_doc.md` §7, but isn't vendored yet.
+There are two test executables. `iris_tests` predates Cimmerian being vendored and is a plain
+executable: each `TestXxx()` function (across ~13 files, e.g. `tests/CppTokenizerTests.cpp`)
+calls a hand-rolled `Expect(condition, description)`, prints `[PASS]`/`[FAIL]` per assertion,
+and the binary exits non-zero if any assertion failed. To add a test here, add a new
+`TestXxx()` function and call it from `main()` — there's no auto-registration. To run a single
+check, either comment out the other `TestXxx()` calls in `main()` temporarily, or grep the
+printed `[PASS]`/`[FAIL]` lines — there's no test filtering flag.
 
-To run a single check, either comment out the other `TestXxx()` calls in `main()` temporarily,
-or grep the printed `[PASS]`/`[FAIL]` lines — there's no test filtering flag.
+`iris_cimmerian_tests` (`tests/cimmerian/`) uses Cimmerian (`libs/cimmerian`, a git submodule,
+`CIMMERIAN_VISUAL_PLATFORM` forced to `None` in `CMakeLists.txt` to avoid its default X11/
+libXtst dependency — see the comment there) — `DESCRIBE`/`IT`/`ASSERT_EQUAL` BDD-style tests,
+auto-registered, with its own `TestRunner::RunAll()` entry point
+(`tests/cimmerian/CimmerianTestMain.cpp`). This is the intended tool for new tests going
+forward (`docs/iris_stage2_decision_doc.md` §7); `iris_tests`' existing tests weren't migrated.
 
 ## Architecture
 
