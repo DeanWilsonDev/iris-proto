@@ -34,11 +34,22 @@
   - Semantic validation (Core-primitive vs. imported-component resolution, backend-gated
     primitive checks, the `<Text font=...>` and inline-style errors) — **done**. See below.
   - Preprocessor driver/CLI — **done**. See below.
-- **Stage 2 (Penumbra backend)** — repo/build wiring only. `iris-penumbra-backend` vendors both
-  `iris` and `penumbra-proto` and links an `iris_penumbra_backend` interface target against
-  both; the actual `IrisComponent`-IR-to-widget-tree walker has no sources yet.
+- **Stage 2 (Penumbra backend)** — **done**, in the sibling `iris-penumbra-backend` repo (not
+  this one). `IrisPenumbraBackend::BuildWidgetTree()` walks a single `IrisComponent` node and
+  recursively builds the equivalent real Penumbra widget tree via each Core primitive's own
+  fluent `Builder` (`Frame`→`Box`, `Inline`→`InlineContainer`, `Grid`→`Box` stub, `Image`→
+  `ImageWidget`, `Text`→`Label`; `Slot` never reaches it, `None` builds to `nullptr` and is
+  skipped as a child). One-shot tree build only — no diffing, no identity tracking, since `key`
+  never reaches `IrisComponent` in the first place (Stage 3's concern, layered on top). Verified
+  against the full pipeline: a real `.iris` component compiled through this repo's own `iris_cc`,
+  `#include`d, called, and the resulting `IrisComponent` fed through `BuildWidgetTree` produced a
+  real `Box`/`Label` tree with correct class name, child count, and interpolated text — first
+  time output has been traced from `.iris` source all the way to a real Penumbra widget.
+  `iris-penumbra-backend`'s vendored `iris` submodule was also bumped from this repo's very
+  first commit (which predates `IrisComponent` having its current shape) to current `main`.
 - **Stage 3 (reactive runtime)** — fully spec'd (`docs/iris_stage3_decision_doc.md`), not
-  implemented. Its last known real blocker just closed — see below.
+  implemented. Its last known real blocker (Penumbra-side) closed a while back — see below —
+  and Stage 2 (above) is now a real target to reconcile against, not just a stub.
 - **Stage 4 (Lustre-lite styling)** — not scoped yet.
 - **Stage 5 (first real consumer)** — not started. You mentioned real consuming projects already
   exist, which is why the repo-dependency direction got fixed now rather than later.
@@ -209,14 +220,12 @@ glue, no hand-written declarations, confirmed to compile with `g++ -std=c++23`. 
 
 Starting from what's actually left:
 
-1. **Stage 2 walker in `iris-penumbra-backend`** — consuming codegen's `Iris::IrisComponent`-
-   constructing output, now confirmed reachable via a real multi-file build (not just a
-   single-file library call), including correctly-transformed `<Slot>` bodies and a compilable
-   `nullptr`/`None` convention for "render nothing". The walker needs to treat
-   `IrisElementTag::None` as "unmount, mount nothing" — deferred to that Stage 3 design pass
-   rather than formalized now, per the user's own call when asked.
-2. **Stage 3 reactive runtime** — already fully spec'd, largest remaining implementation chunk.
-   Unblocked on the Penumbra side now that `IWidgetLifecycle` has landed.
-3. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
-4. **Stage 5** — validate against one of the real consuming projects once (1)–(3) produce
-   something an actual `.iris` file can round-trip through.
+1. **Stage 3 reactive runtime** (`iris`, this repo) — already fully spec'd, largest remaining
+   implementation chunk. Unblocked on the Penumbra side now that `IWidgetLifecycle` has landed,
+   and now has a real Stage 2 walker in `iris-penumbra-backend` to reconcile against instead of
+   a stub. Its own design pass still needs to formalize `IrisElementTag::None`'s exact
+   reconciler contract (how "unmount, mount nothing" interacts with keys/diffing) — deliberately
+   deferred to this point rather than formalized early, per the user's own call when asked.
+2. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
+3. **Stage 5** — validate against one of the real consuming projects once (1)–(2) produce
+   something an actual `.iris` file can round-trip through, mount, and reconcile.

@@ -93,6 +93,10 @@ interface (`OnMount`/`OnUnmount`/`OnTick`) and an `Application` host dispatching
 matching what `docs/iris_core_spec.md` §10 / `docs/iris_stage3_decision_doc.md` §8 specified —
 this was the last known Penumbra-side blocker for Stage 3 lifecycle work.
 
-Stage 2 (the Penumbra backend itself: tree-builder, widget mapping, the `key`→`IWidget*`
-identity map) is implemented in `iris-penumbra-backend`, not here — this repo only ever
-produces the backend-agnostic `IrisComponent` IR.
+Stage 2 (the Penumbra backend itself: `IrisPenumbraBackend::BuildWidgetTree()`, walking a single
+`IrisComponent` node and building the equivalent real Penumbra widget tree via each Core
+primitive's own fluent `Builder`) is implemented in `iris-penumbra-backend`, not here — this
+repo only ever produces the backend-agnostic `IrisComponent` IR. It's a one-shot tree build
+only, no diffing or identity tracking: `key` is stripped by this repo's preprocessor before
+codegen and never reaches `IrisComponent` at all, so the `key`→`IWidget*` live-widget identity
+map belongs to Stage 3's reconciler, not Stage 2's walker.
