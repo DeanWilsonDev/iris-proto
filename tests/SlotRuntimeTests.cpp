@@ -60,6 +60,15 @@ Iris::IrisComponent MakeFrame(const std::string& ClassName) {
     return Iris::IrisComponent(Iris::IrisElementTag::Frame, Props, {}, nullptr);
 }
 
+void TestSignalSupportsCopyInitializationSyntax() {
+    // docs/iris_core_spec.md §2.2 writes `iris::Signal<bool> settingsOpen = false;` —
+    // copy-initialization, not `Signal<bool> settingsOpen(false);`. An `explicit`
+    // constructor would reject this outright; caught once by an end-to-end test
+    // compiling real generated .iris output using this exact syntax.
+    iris::Signal<bool> Flag = false;
+    Expect(!Flag.get(), "iris::Signal<T> supports the spec's own copy-initialization syntax");
+}
+
 void TestReconcileMountsOnFirstCallOnly() {
     int         MountCount = 0;
     iris::MountFn Mount = StubMount(&MountCount);
@@ -167,6 +176,7 @@ void TestEventBatchCollapsesMultipleSetsIntoOneReconcile() {
 } // namespace
 
 void RunSlotRuntimeTests() {
+    TestSignalSupportsCopyInitializationSyntax();
     TestReconcileMountsOnFirstCallOnly();
     TestSignalGetDuringSlotInvocationRegistersDependency();
     TestTickReconcilesDirtySlotsAutomatically();

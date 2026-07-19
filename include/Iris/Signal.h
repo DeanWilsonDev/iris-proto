@@ -31,7 +31,11 @@ namespace iris {
 template <typename T>
 class Signal {
 public:
-    explicit Signal(T InitialValue) : Value_(std::move(InitialValue)) {}
+    // Deliberately not `explicit` — every example in docs/iris_core_spec.md §2.2 writes
+    // `iris::Signal<bool> settingsOpen = false;`, copy-initialization syntax that
+    // `explicit` would reject outright. Caught by an end-to-end test compiling real
+    // generated `.iris` output; this constructor was `explicit` until then.
+    Signal(T InitialValue) : Value_(std::move(InitialValue)) {}
 
     const T& get() const {
         TrackSignalDependency(this);
