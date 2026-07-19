@@ -129,6 +129,7 @@ void RunRenderBlockParserTests(); // tests/RenderBlockParserTests.cpp — no aut
 void RunIrisConfigTests();        // tests/IrisConfigTests.cpp — no auto-registration, see CLAUDE.md
 void RunImportResolverTests();    // tests/ImportResolverTests.cpp — no auto-registration, see CLAUDE.md
 void RunCodegenTests();           // tests/CodegenTests.cpp — no auto-registration, see CLAUDE.md
+void RunIrisComponentTests();     // tests/IrisComponentTests.cpp — no auto-registration, see CLAUDE.md
 
 int main() {
     TestBasicRenderBlockDetection();
@@ -144,6 +145,7 @@ int main() {
     RunIrisConfigTests();
     RunImportResolverTests();
     RunCodegenTests();
+    RunIrisComponentTests();
 
     std::printf("\n%d failure(s)\n", Failures);
     return Failures == 0 ? 0 : 1;

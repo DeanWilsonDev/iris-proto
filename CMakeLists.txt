@@ -53,7 +53,8 @@ add_executable(iris_tests
     tests/RenderBlockParserTests.cpp
     tests/IrisConfigTests.cpp
     tests/ImportResolverTests.cpp
-    tests/CodegenTests.cpp)
+    tests/CodegenTests.cpp
+    tests/IrisComponentTests.cpp)
 
 target_link_libraries(iris_tests PRIVATE iris)
 set_target_properties(iris_tests PROPERTIES

@@ -24,10 +24,8 @@
     prop-name lookup table, and `!{ }`-transformed nested JSX are all tested
     (`tests/CodegenTests.cpp`). The full spec §9 `PartyScreen` example, written with `!{ }` on
     both `<Slot>`s, was manually verified to generate output that actually host-compiles as
-    real C++23 — the one thing it surfaced that's still open is unrelated to escape hatches:
-    `IrisComponent` has no `nullptr_t` constructor, so the spec's own `return nullptr;` inside
-    an `-> IrisComponent` lambda doesn't compile as written (now tracked in
-    `docs/iris_core_spec.md` §8).
+    real C++23, including the `return nullptr;` line — see below, the one gap it surfaced is
+    now closed too.
   - `import` / `.iris.json` resolution — **done**. `IrisConfig` (parses `target`/`version`/
     `searchPaths` via the newly-vendored `libs/amanuensis` — a zero-dependency first-party JSON
     library, git-submoduled rather than hand-rolled, see below) and `ImportResolver`
@@ -108,6 +106,30 @@ argument list. See the decision doc for the one known edge case this doesn't cov
 (whitespace-free JSX like `push_back(<Frame/>)`), deliberately deferred since nothing in the
 spec needs it.
 
+## Resolved: `IrisComponent` had no `nullptr_t` constructor
+
+Surfaced by manually host-compiling the §9 `PartyScreen` example while verifying `!{ }` above —
+`IrisComponent` had no `nullptr_t` constructor, so the spec's own `return nullptr;` inside a
+`<Slot>` lambda declared to return `IrisComponent` (§1.5, §9 — every conditional-rendering
+example) didn't actually compile as written. An `IrisComponent`-shape gap, not an escape-hatch
+one; unrelated to the `!{ }` decision itself.
+
+Fixed with a new `IrisElementTag::None` sentinel (`include/Iris/IrisElementTag.h`) plus an
+implicit `IrisComponent(std::nullptr_t)` converting constructor
+(`include/Iris/IrisComponent.h`) that produces it — a walker/reconciler must treat a
+`None`-tagged node as "unmount whatever was here, mount nothing" and never hand it to a backend
+`Builder`. Adding that constructor loses `IrisComponent`'s aggregate-ness, so an explicit
+4-field constructor was added alongside it to keep Codegen.h's emitted `IrisComponent{Tag,
+Props, Children, SlotCallable}` call shape compiling unchanged.
+
+Also added: `tests/IrisComponentTests.cpp`, a first-of-its-kind test file that host-compiles
+`IrisComponent.h` directly — previously nothing did, since Codegen's own tests only ever check
+the shape of generated *text*, never compile it, which is exactly how this gap went unnoticed
+until a manual compile check found it. Re-running that same manual compile against the full
+`PartyScreen` example after this fix now succeeds with no workarounds, `nullptr` line included.
+Documented in `docs/iris_core_spec.md` §8 and `docs/iris_escape_hatch_decision.md`'s
+Verification section.
+
 ## Suggested order
 
 Starting from what's actually left:
@@ -116,13 +138,11 @@ Starting from what's actually left:
    the now-implemented import resolution. Backend-gated primitive checks and prop-level
    validation (`<Text font=...>`, inline-style errors) per the spec.
 2. **Stage 2 walker in `iris-penumbra-backend`** — consuming codegen's `Iris::IrisComponent`-
-   constructing output, now confirmed to include correctly-transformed `<Slot>` bodies.
+   constructing output, now confirmed to include correctly-transformed `<Slot>` bodies and a
+   compilable `nullptr`/`None` convention for "render nothing". The walker needs to treat
+   `IrisElementTag::None` as "unmount, mount nothing" per the note above.
 3. **Stage 3 reactive runtime** — already fully spec'd, largest remaining implementation chunk.
    Unblocked on the Penumbra side now that `IWidgetLifecycle` has landed.
 4. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
 5. **Stage 5** — validate against one of the real consuming projects once (1)–(4) produce
    something an actual `.iris` file can round-trip through.
-
-Separately, not blocking the order above: `IrisComponent` needs a `nullptr_t` constructor (or
-the spec's "render nothing" convention needs to change) — see `docs/iris_core_spec.md` §8 and
-`docs/iris_escape_hatch_decision.md`'s Verification section for how this surfaced.

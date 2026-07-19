@@ -12,6 +12,14 @@ namespace Iris {
 // been designed, so there is nothing correct to emit for it
 // (docs/iris_stage1_codegen_decision.md).
 enum class IrisElementTag {
+    // Sentinel: "no component was produced here" — what a `<Slot>` callable's
+    // `return nullptr;` (docs/iris_core_spec.md §1.5, §9) becomes via
+    // `IrisComponent`'s `nullptr_t` converting constructor
+    // (docs/iris_escape_hatch_decision.md's Verification section; the gap is
+    // tracked and closed in docs/iris_core_spec.md §8). Not a real Core
+    // primitive — a walker/reconciler must treat it as "unmount whatever was
+    // here, mount nothing", never pass it to a backend `Builder`.
+    None,
     Frame,
     Inline,
     Grid,

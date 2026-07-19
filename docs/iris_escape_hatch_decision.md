@@ -111,11 +111,12 @@ survives anywhere in the output. Beyond the string-shape assertions the test sui
 does for every other codegen case, this example's generated output was manually verified
 to actually compile as real C++23 against a stub `Button`/`HealthBar`/`IrisComponent`
 harness — the first time a `<Slot>`-using component's full generated `.cpp` has been
-confirmed compilable, not just structurally plausible. (One separate, pre-existing gap
-surfaced by that manual compile and *not* part of this decision: `IrisComponent` has no
-`nullptr_t` constructor, so the spec's own `return nullptr;` inside an
-`-> IrisComponent` lambda doesn't compile as-is. Worth its own follow-up; unrelated to
-escape-hatch transformation.)
+confirmed compilable, not just structurally plausible. (That manual compile surfaced one
+separate, pre-existing gap *not* part of this decision — `IrisComponent` had no `nullptr_t`
+constructor, so the spec's own `return nullptr;` inside an `-> IrisComponent` lambda didn't
+compile as written — closed separately, see `docs/iris_core_spec.md` §8 and
+`tests/IrisComponentTests.cpp`. Re-running the same manual compile after that fix now
+succeeds with no workarounds.)
 
 ## What is now unblocked
 
@@ -130,9 +131,6 @@ Per `docs/iris_next_steps.md`'s suggested order:
 
 ## What remains deliberately deferred
 
-- **The `nullptr`-to-`IrisComponent` gap** noted above under Verification — a
-  `IrisComponent`-shape question, not an escape-hatch one. Worth flagging as a new open
-  question in `docs/iris_core_spec.md` §8 rather than silently living only here.
 - **A whitespace-free JSX element inside `!{ }`** (e.g. `push_back(<Frame/>)`) is
   misparsed as a template argument list under the current heuristic. No example in the
   spec needs this; revisit if a real consumer does.

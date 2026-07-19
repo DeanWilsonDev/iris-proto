@@ -395,6 +395,10 @@ struct IrisComponent {
 };
 ```
 
+(Illustrative only — the real, current shape in `include/Iris/IrisComponent.h` also carries
+`SlotCallable` per §1.5/`docs/iris_stage1_codegen_decision.md`, and an `IrisElementTag::None`
+sentinel plus `nullptr_t` converting constructor per §8's resolved `nullptr`-conversion gap.)
+
 `render { }` blocks construct values of this IR type — they do **not** call directly into a
 backend's widget/builder API. Between construction and backend mapping there is now a middle
 step: the Iris runtime resolves every `Slot`-tagged node (§1.5, §3.1), invoking its callable and
@@ -675,13 +679,22 @@ remains open is unrelated to Stage 1 and was never expected to block it:
   `onFocus`, `onChange`) extensible by component authors, or a closed list?
 - **Implicit children forwarding.** No mechanism specified for a generic wrapper component to
   forward arbitrary children it wasn't handed as a named prop.
-- **`IrisComponent` has no `nullptr_t` constructor**, but every conditional-rendering example in
-  this spec (§1.5, §9) writes `return nullptr;` inside a `<Slot>` lambda declared to return
-  `IrisComponent` — surfaced by manually host-compiling the §9 `PartyScreen` example's generated
-  output while verifying `docs/iris_escape_hatch_decision.md` (that decision itself is
-  unaffected; this is an `IrisComponent`-shape gap, not an escape-hatch one). Needs either a
-  `nullptr_t`-accepting constructor/converting constructor on `IrisComponent`, or the spec's
-  "return nothing" convention to change to something else entirely.
+
+**Resolved:** `IrisComponent` had no `nullptr_t` constructor, so every conditional-rendering
+example in this spec (§1.5, §9) writing `return nullptr;` inside a `<Slot>` lambda declared to
+return `IrisComponent` didn't actually compile — surfaced by manually host-compiling the §9
+`PartyScreen` example's generated output while verifying `docs/iris_escape_hatch_decision.md`
+(an `IrisComponent`-shape gap, not an escape-hatch one). Fixed with a new `IrisElementTag::None`
+sentinel (`include/Iris/IrisElementTag.h`) plus an implicit `IrisComponent(std::nullptr_t)`
+converting constructor (`include/Iris/IrisComponent.h`) that produces it — `return nullptr;`
+now yields an `IrisElementTag::None`-tagged `IrisComponent`, which a walker/reconciler must
+treat as "unmount whatever was here, mount nothing" and never hand to a backend `Builder`.
+Adding that constructor loses `IrisComponent`'s aggregate-ness, so an explicit 4-field
+constructor was added alongside it to keep Codegen.h's emitted `IrisComponent{Tag, Props,
+Children, SlotCallable}` call shape compiling unchanged. `tests/IrisComponentTests.cpp` is a
+new test file that host-compiles `IrisComponent.h` directly (previously nothing did — Codegen's
+own tests only ever checked the shape of generated *text*, never compiled it) and covers the
+`nullptr` conversion, including through `MakeSlotCallable`.
 
 `<Image>`'s asset-pipeline gap and content-prop-name question — both flagged in the previous
 revision of this document as real, unresolved gaps despite `docs/iris_stage2_decision_doc.md`
