@@ -675,20 +675,31 @@ tree-builder targets it.
 None of the remaining carried-forward items block starting Stage 1 implementation, and Stage 2
 now has a real target for every Core primitive except `<Grid>` (deferred by decision, §3.1).
 
-**New, surfaced during Stage 1 implementation (the `RenderBlockParser` element-tree parser) —
-unlike the items above, these two *do* block the next slice of work, not just distant stages:**
+**Resolved:** `IrisProps`'s concrete runtime representation — `docs/iris_props_decision.md`: a
+closed, strongly-typed `std::variant` (`Iris::IrisPropValue`), not a type-erased
+`unordered_map<string, any>`. This unblocked Stage 1 codegen, which in turn surfaced two more
+gaps neither that document nor §2.5's `IrisComponent` shape actually covered — both closed in
+`docs/iris_stage1_codegen_decision.md`: where `<Slot>`'s callable child lives on `IrisComponent`
+(not `Props`, not `Children` — a new `SlotCallable` field, populated via
+`Iris::MakeSlotCallable()`), and how literal text/`{ }` interpolation children are represented
+(`<Text>` concatenates into its own `"text"` prop; other primitives synthesize a `<Text>` child
+node). `Codegen.h`/`GenerateComponentExpression()` implements and tests all of this
+(`tests/CodegenTests.cpp`).
 
-- **`IrisProps`'s concrete runtime representation.** §2.5 gives `IrisComponent`'s struct shape
-  but not what `IrisProps` concretely is. Prop values are heterogeneous by nature (a string for
-  `class`, an int for a numeric prop, a `std::function<void()>` for an event prop), so it can't
-  be a simple `map<string, string>`. Blocks two separate pieces of work: Stage 1 codegen in
-  `iris` (turning a parsed `ElementNode` into `.cpp` that constructs real `IrisComponent`
-  values needs a concrete target type to emit against) and Stage 2's backend-mapping walker in
-  `iris-penumbra-backend` (reading prop values back out to call `Box::Builder().className(...)`
-  etc. needs to know how they're stored). Candidates worth weighing in a short decision doc
-  before either downstream piece is implemented: a type-erased map (`unordered_map<string,
-  any>`), a closed variant covering the known prop-value kinds, or something narrower scoped to
-  just what Core primitives currently need. See `docs/iris_next_steps.md`.
+**New, surfaced by that same work — genuinely blocks a `<Slot>`-using component's generated
+`.cpp` from compiling, not just a distant stage:**
+
+- **Nested JSX inside an escape hatch is never transformed.** `RenderBlockParser` captures a
+  `<Slot>` child (or any escape hatch) as fully opaque verbatim text, by design (§1.4, directly
+  tested by `tests/RenderBlockParserTests.cpp`'s
+  `TestEscapeHatchContainingAngleBracketsIsOpaque`) — but every conditional/list-rendering
+  example in this spec (§1.1, §1.5, §9) writes a `<Tag ... />` JSX expression *inside* that
+  escape hatch (`return <SettingsPage onClose={...} />;`). Since that text is never re-parsed,
+  it passes straight through to generated `.cpp` as literal `<`/`>` tokens, which doesn't
+  compile. Not previously flagged anywhere — it's only visible once codegen actually tries to
+  emit a `<Slot>` body. See `docs/iris_next_steps.md` for the fix sketch (recursive re-parsing of
+  JSX-shaped runs inside escape hatches) — needs its own short decision doc before
+  implementation, same pattern as the two resolutions above.
 
 **Resolved:** How `.iris.json` gets parsed and how `import` resolves to a file. Decided in
 favor of vendoring Amanuensis (`libs/amanuensis`, a zero-dependency first-party JSON library,

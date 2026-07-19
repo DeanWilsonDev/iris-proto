@@ -1,6 +1,6 @@
 # Iris — Next Steps
 
-> Snapshot as of 2026-07-14. Reflects the corrected three-repo architecture
+> Snapshot as of 2026-07-19. Reflects the corrected three-repo architecture
 > (`docs/iris_stage2_decision_doc.md`'s correction note): `iris` (this repo, standalone,
 > backend-agnostic), `penumbra-proto` (standalone, no Iris knowledge), and
 > `iris-penumbra-backend` (vendors both, owns the Stage 2/3 backend-mapping code).
@@ -13,7 +13,15 @@
   - `RenderBlockParser` (`render{ }` → `ElementNode` AST: tags, props, `key`/`class`, nested
     elements, `{ }` escape hatches, literal text, comment stripping, single-root enforcement) —
     done, tested against the spec §9 worked example end-to-end.
-  - Codegen (`ElementNode` AST → compilable `.cpp`) — **not started**, blocked (see below).
+  - Codegen (`ElementNode` AST → compilable `.cpp`) — **done, for a single (non-nested) `render`
+    block**. `docs/iris_props_decision.md` (the `IrisProps`/`IrisPropValue` runtime shape) and
+    `docs/iris_stage1_codegen_decision.md` (two follow-on gaps that decision left open — see
+    below) both closed. `Codegen.h`/`GenerateComponentExpression()` walks an `ElementNode` and
+    emits a C++23 expression constructing `Iris::IrisComponent` — Core primitives (including
+    `<Slot>` via `Iris::MakeSlotCallable`), the `<Name>Props` component-invocation convention,
+    text/interpolation-child concatenation, and the closed prop-name lookup table are all
+    tested (`tests/CodegenTests.cpp`). The JSX-inside-escape-hatch gap is now resolved by
+    decision — see below.
   - `import` / `.iris.json` resolution — **done**. `IrisConfig` (parses `target`/`version`/
     `searchPaths` via the newly-vendored `libs/amanuensis` — a zero-dependency first-party JSON
     library, git-submoduled rather than hand-rolled, see below) and `ImportResolver`
@@ -23,7 +31,7 @@
     resolved imports to validate element tags is still separate, blocked (see below).
   - Semantic validation (Core-primitive vs. imported-component resolution, backend-gated
     primitive checks, the `<Text font=...>` and inline-style errors) — **not started**, depends
-    on import resolution to know what's in scope.
+    on import resolution to know what's in scope. Now unblocked.
 - **Stage 2 (Penumbra backend)** — repo/build wiring only. `iris-penumbra-backend` vendors both
   `iris` and `penumbra-proto` and links an `iris_penumbra_backend` interface target against
   both; the actual `IrisComponent`-IR-to-widget-tree walker has no sources yet.
@@ -47,50 +55,82 @@ Penumbra-side gap that was blocking Stage 3 lifecycle hooks.
 mark this resolved (mirroring how the `<Image>` gap's resolution was documented). Stage 3 now
 has every known Penumbra-side prerequisite it needs.
 
-## The one decision blocking the most downstream work: `IrisProps`'s runtime representation
+## Done: IrisProps runtime representation and Stage 1 codegen's two follow-on gaps
 
-Two separate pieces of real work are both stalled on the same open question:
-`docs/iris_core_spec.md` §2.5 gives `IrisComponent`'s struct shape —
+`docs/iris_props_decision.md` closed `IrisProps`/`IrisPropValue`'s shape (a closed, strongly-typed
+`std::variant`, not a type-erased `unordered_map<string, any>`). Writing codegen against it then
+surfaced two more gaps neither that document nor `docs/iris_core_spec.md` §2.5 actually covered —
+both closed in `docs/iris_stage1_codegen_decision.md`:
+
+1. `<Slot>`'s callable child doesn't fit in `Props` (whose one callable variant member is
+   zero-argument, shaped for event handlers) or in `Children` (which holds already-constructed
+   `IrisComponent` values, not an unevaluated callable) — resolved by adding a `SlotCallable`
+   field to `IrisComponent`, populated via a `Iris::MakeSlotCallable()` helper that defers the
+   `IrisComponent` vs. `vector<IrisComponent>` return-type choice to the host compiler.
+2. Literal text and `{ }` interpolation as element children have nowhere to go in a shape where
+   `Children` only holds `IrisComponent` values — resolved per-primitive: `<Text>` concatenates
+   its children into its own `"text"` prop; every other children-accepting primitive (chiefly
+   `<Inline>`) wraps a text/escape-hatch child as a synthetic `<Text>` `IrisComponent` node
+   appended to `Children` instead.
+
+Both `IrisComponent`'s revised shape (`include/Iris/IrisComponent.h`) and `Codegen.h` are
+implemented and tested.
+
+## Resolved: JSX inside escape hatches (`!{}` transform escape hatch)
+
+The gap surfaced during codegen testing: `RenderBlockParser` treats `{ }` escape hatch contents
+as fully opaque verbatim text (§1.4), but `<Slot>` is used throughout the spec with JSX inside
+its escape hatch body — conditional and list rendering both rely on this pattern. That JSX was
+never being transformed, producing uncompilable output.
+
+**Decision:** introduce a second escape hatch sigil, `!{}`, meaning "C++ that may contain JSX —
+recursively transform it." The existing `{ }` form is unchanged and stays fully opaque.
+
+Rules:
+- `{ }` — regular escape hatch. Opaque. Contents pass through verbatim. No change to existing
+  behaviour.
+- `!{ }` — JSX-transform escape hatch. Parser enters recursive transform mode. Any `<Tag>`
+  expressions inside are transformed to `Iris::IrisComponent`-constructing expressions. Closes
+  on the matching `}`. Valid anywhere a regular `{ }` is valid — prop values, child positions,
+  lambda bodies.
+- Once inside `!{}`, nested `{ }` props and children follow normal rules (opaque unless also
+  marked `!{}`). A nested `!{}` is valid if a second level of JSX-transform is genuinely needed,
+  but the spec has no examples requiring this.
+- `!{` is not valid C++ in a child or prop-value position, so the token is unambiguous at the
+  lexer level. No heuristic detection required.
+
+The `<Slot>` pattern from the spec becomes:
 
 ```cpp
-struct IrisComponent {
-    IrisElementTag Tag;
-    IrisProps      Props;
-    std::vector<IrisComponent> Children;
-};
+<Slot>
+    !{[&]() -> IrisComponent {
+        if (settingsOpen.get()) {
+            return <SettingsPage onClose={[&]() { settingsOpen.set(false); }} />;
+        }
+        return nullptr;
+    }}
+</Slot>
 ```
 
-— but never pins down what `IrisProps` concretely *is*. Prop values are heterogeneous by nature
-(a string for `class`, an int for `<HealthBar current={...}>`, a `std::function<void()>` for
-`onPress`), so it can't be a simple `map<string, string>`. This blocks:
-
-1. **Stage 1 codegen** in `iris` — turning a parsed `ElementNode` into `.cpp` that constructs
-   real `IrisComponent` values needs a concrete target type to emit against.
-2. **Stage 2's walker** in `iris-penumbra-backend` — reading prop values back out to call
-   `Box::Builder().className(...).onPress(...)` needs to know how they're actually stored.
-
-Recommend treating this the way every other Stage decision in this project has been made: a
-short decision doc (candidates worth weighing — a type-erased map like
-`unordered_map<string, any>`, a closed variant type covering the known prop value kinds, or
-something narrower scoped to just what Core primitives currently need) before either downstream
-piece gets implemented, rather than deciding it as a side effect of writing codegen. Formally
-tracked in `docs/iris_core_spec.md` §8's open-questions list. (The `.iris.json` JSON-parsing
-question that used to sit alongside it there is resolved now — see above.)
+`onClose` uses a regular `{ }` — its lambda body has no JSX — and stays opaque. Only the outer
+block needs `!{}`. A formal decision doc (`docs/iris_escape_hatch_decision.md`) should be written
+before implementation, following the same format as `iris_props_decision.md`.
 
 ## Suggested order
 
-Starting from what's actually left (docs sync is done — see above; `import`/`.iris.json`
-resolution is now also done — see above):
+Starting from what's actually left:
 
-1. Decide `IrisProps`'s runtime representation (decision doc) — the one remaining blocker for
-   the next two items.
-2. Stage 1 codegen in `iris`, targeting the type decided in (1).
-3. Semantic validation pass in `iris` (element-tag resolution against Core primitives and the
-   now-implemented `import` resolution).
-4. Stage 2 walker in `iris-penumbra-backend`, targeting the type decided in (1) and consuming
-   codegen'd output from (2).
-5. Stage 3 reactive runtime — already fully spec'd, largest remaining implementation chunk.
+1. **Write `docs/iris_escape_hatch_decision.md`** — capture the `!{}` decision formally before
+   implementing. Same format as `iris_props_decision.md`.
+2. **Implement `!{}` in `RenderBlockParser`** — the one gap that stops Stage 1 codegen's output
+   from compiling for any component that uses `<Slot>`.
+3. **Semantic validation pass in `iris`** — element-tag resolution against Core primitives and
+   the now-implemented import resolution. Backend-gated primitive checks and prop-level
+   validation (`<Text font=...>`, inline-style errors) per the spec.
+4. **Stage 2 walker in `iris-penumbra-backend`** — consuming codegen's `Iris::IrisComponent`-
+   constructing output.
+5. **Stage 3 reactive runtime** — already fully spec'd, largest remaining implementation chunk.
    Unblocked on the Penumbra side now that `IWidgetLifecycle` has landed.
-6. Stage 4 (Lustre) — needs its own design pass first, nothing to implement yet.
-7. Stage 5 — validate against one of the real consuming projects once (1)–(5) produce something
-   an actual `.iris` file can round-trip through.
+6. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
+7. **Stage 5** — validate against one of the real consuming projects once (1)–(5) produce
+   something an actual `.iris` file can round-trip through.
