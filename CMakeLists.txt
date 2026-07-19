@@ -35,7 +35,9 @@ add_library(iris STATIC
     src/Iris/RenderBlockParser.cpp
     src/Iris/IrisConfig.cpp
     src/Iris/ImportResolver.cpp
-    src/Iris/Codegen.cpp)
+    src/Iris/CorePrimitives.cpp
+    src/Iris/Codegen.cpp
+    src/Iris/SemanticValidator.cpp)
 
 target_include_directories(iris PUBLIC include)
 target_compile_features(iris PUBLIC cxx_std_23)
@@ -54,7 +56,8 @@ add_executable(iris_tests
     tests/IrisConfigTests.cpp
     tests/ImportResolverTests.cpp
     tests/CodegenTests.cpp
-    tests/IrisComponentTests.cpp)
+    tests/IrisComponentTests.cpp
+    tests/SemanticValidatorTests.cpp)
 
 target_link_libraries(iris_tests PRIVATE iris)
 set_target_properties(iris_tests PROPERTIES

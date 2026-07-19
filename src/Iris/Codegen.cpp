@@ -1,19 +1,11 @@
 #include "Iris/Codegen.h"
+#include "Iris/CorePrimitives.h"
 
 #include <unordered_map>
-#include <unordered_set>
 
 namespace Iris {
 
 namespace {
-
-// The Core primitive tag set codegen knows how to emit an `IrisElementTag` node
-// directly for (docs/iris_core_spec.md §3.1, docs/iris_stage1_codegen_decision.md —
-// `<Model3d>` deliberately excluded, see that doc's "Also settled here" section).
-const std::unordered_set<std::string>& PrimitiveTagNames() {
-    static const std::unordered_set<std::string> Names = {"Frame", "Inline", "Grid", "Image", "Text", "Slot"};
-    return Names;
-}
 
 // The closed prop-name → `IrisPropValue` variant-member lookup table from
 // docs/iris_props_decision.md. The mapped string is the `std::in_place_type<T>`
@@ -56,7 +48,7 @@ public:
     explicit ComponentEmitter(std::vector<CodegenError>& Errors) : Errors_(Errors) {}
 
     std::string Emit(const ElementNode& Node) {
-        if (PrimitiveTagNames().count(Node.Tag) != 0) {
+        if (CorePrimitiveTagNames().count(Node.Tag) != 0) {
             if (Node.Tag == "Slot") {
                 return EmitSlot(Node);
             }

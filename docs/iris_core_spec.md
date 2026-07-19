@@ -740,10 +740,19 @@ already available and free of transitive dependencies, so there was no reason to
 `ImportResolver` (`include/Iris/ImportResolver.h`) scans a source file for `import Name`
 statements via `CppTokenizer` and resolves each to `Name.iris` (`target: "penumbra"`) or
 `Name.irisx` (`target: "umbra-engine"`), searched across `searchPaths` in declaration order.
-Still open: wiring this into an actual preprocessor driver/CLI, and the semantic pass that uses
-resolved imports to validate element tags in a `render { }` block (§6's "unresolved/unimported
-component reference" error) — both deferred until codegen exists, since there's no driver
-binary yet to wire them into.
+**Resolved:** the semantic validation pass that uses `import`s to validate element tags.
+`include/Iris/SemanticValidator.h`'s `ValidateElementTree()` covers all four preprocessor-level
+checks from §6's catalogue that `Codegen.h` doesn't already handle with the spec's exact
+wording: backend-gated primitive on the wrong target (`<Model3d>`), inline `style` prop (on any
+element, not just Core primitives), `<Text font=...>`, and unresolved/unimported component
+reference. Recurses into elements nested inside a `!{ }` JSX-transform escape hatch
+(`docs/iris_escape_hatch_decision.md`) as well as the top level. The Core-primitive tag-name set
+now lives in a shared `include/Iris/CorePrimitives.h` so `Codegen.cpp` and the validator can't
+drift apart on what counts as a primitive. Tested in `tests/SemanticValidatorTests.cpp`.
+
+Still open: wiring `RenderBlockParser`, `ImportResolver`, `SemanticValidator`, and `Codegen`
+together into an actual preprocessor driver/CLI — there still isn't one; all four are only ever
+exercised directly by their own tests today.
 
 ---
 

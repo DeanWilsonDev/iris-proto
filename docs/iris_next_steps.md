@@ -31,11 +31,9 @@
     library, git-submoduled rather than hand-rolled, see below) and `ImportResolver`
     (`ScanImports` + `ResolveImports`, `.iris`/`.irisx` extension chosen by `target`) both landed
     with tests (`tests/IrisConfigTests.cpp`, `tests/ImportResolverTests.cpp`). Not yet wired into
-    an actual preprocessor driver/CLI — there isn't one yet — and the semantic pass that uses
-    resolved imports to validate element tags is still separate, blocked (see below).
+    an actual preprocessor driver/CLI — there isn't one yet.
   - Semantic validation (Core-primitive vs. imported-component resolution, backend-gated
-    primitive checks, the `<Text font=...>` and inline-style errors) — **not started**, depends
-    on import resolution to know what's in scope. Now unblocked.
+    primitive checks, the `<Text font=...>` and inline-style errors) — **done**. See below.
 - **Stage 2 (Penumbra backend)** — repo/build wiring only. `iris-penumbra-backend` vendors both
   `iris` and `penumbra-proto` and links an `iris_penumbra_backend` interface target against
   both; the actual `IrisComponent`-IR-to-widget-tree walker has no sources yet.
@@ -130,13 +128,51 @@ until a manual compile check found it. Re-running that same manual compile again
 Documented in `docs/iris_core_spec.md` §8 and `docs/iris_escape_hatch_decision.md`'s
 Verification section.
 
+## Done: semantic validation pass
+
+`include/Iris/SemanticValidator.h` / `src/Iris/SemanticValidator.cpp` add
+`ValidateElementTree(Root, Target, ImportedNames)`, covering the four preprocessor-level
+`docs/iris_core_spec.md` §6 error-catalogue entries `Codegen.h` doesn't already handle (or
+doesn't handle with the spec's exact wording):
+
+1. **Backend-gated primitive on the wrong target** — `<Model3d>` without
+   `"target": "umbra-engine"`.
+2. **Inline `style` prop** — on *any* element, Core primitive or component invocation alike.
+   Codegen's per-primitive prop tables happen to reject `style` on a primitive too, but with a
+   generic "unknown prop" message, and never check a component invocation's props at all (they
+   pass straight through to `<Name>Props`'s designated initializers) — this pass is the only
+   place `<HealthBar style="...">` gets caught.
+3. **`<Text font=...>`** — same gap as `style`, `<Text>`-specific.
+4. **Unresolved/unimported component reference** — a tag that's neither a Core primitive nor a
+   name the caller says was `import`ed (`ImportedNames`, by name — `ImportResolver`'s own
+   file-resolution success/failure is a separate, already-reported error, not re-checked here).
+
+Recurses into every child position, including nested elements found inside a `!{ }`
+JSX-transform escape hatch (`docs/iris_escape_hatch_decision.md`) — those are real parsed
+elements and get the same checks as anything written at the top level; a plain `{ }` escape
+hatch stays untouched, same as everywhere else in the preprocessor.
+
+Pulled the Core-primitive tag-name set out of `Codegen.cpp`'s private anonymous namespace into
+a new shared `include/Iris/CorePrimitives.h`/`src/Iris/CorePrimitives.cpp`
+(`CorePrimitiveTagNames()`, `BackendGatedPrimitiveTagNames()`) so Codegen and the semantic
+validator can't drift out of sync on what counts as a primitive — Codegen.cpp now calls the
+shared function instead of keeping its own copy.
+
+Tested end-to-end in `tests/SemanticValidatorTests.cpp`, including the full spec §9
+`PartyScreen` example (with `Button`/`HealthBar` correctly `import`ed) validating cleanly, and
+a case confirming an unimported tag nested inside a `!{ }` body is still caught.
+
+Still open: wiring `RenderBlockParser` + `ImportResolver` + `SemanticValidator` + `Codegen`
+together into an actual preprocessor driver/CLI — none of the four are connected end-to-end by
+a binary yet, each is only exercised directly by its own tests.
+
 ## Suggested order
 
 Starting from what's actually left:
 
-1. **Semantic validation pass in `iris`** — element-tag resolution against Core primitives and
-   the now-implemented import resolution. Backend-gated primitive checks and prop-level
-   validation (`<Text font=...>`, inline-style errors) per the spec.
+1. **Preprocessor driver/CLI** — the one piece connecting `RenderBlockParser` →
+   `ImportResolver`/`SemanticValidator` → `Codegen` into an actual `.iris` → `.cpp` pipeline.
+   Nothing currently wires these together; each is only ever driven directly by its own tests.
 2. **Stage 2 walker in `iris-penumbra-backend`** — consuming codegen's `Iris::IrisComponent`-
    constructing output, now confirmed to include correctly-transformed `<Slot>` bodies and a
    compilable `nullptr`/`None` convention for "render nothing". The walker needs to treat
