@@ -61,11 +61,18 @@ or grep the printed `[PASS]`/`[FAIL]` lines — there's no test filtering flag.
   (`../iris-penumbra-backend`), which vendors both this repo and `penumbra-proto` as
   submodules. Neither Iris nor Penumbra depends on the other, or on that bridge repo; real
   consumer projects depend on the bridge repo (and transitively get both).
-- **`libs/amanuensis`** (git submodule, `github.com/DeanWilsonDev/amanuensis`) is the one
+- **`libs/amanuensis`** (git submodule, `github.com/DeanWilsonDev/amanuensis`) is a
   vendored dependency — a zero-dependency first-party JSON library, used by `IrisConfig` to
   parse `.iris.json`. This doesn't conflict with the backend-agnostic rule above: it's a plain
   utility library with no knowledge of Iris, Penumbra, or any backend, added via its own
   documented `add_subdirectory` integration path rather than hand-rolling a JSON parser.
+- **`libs/umbra-interfaces`** (git submodule, `github.com/DeanWilsonDev/umbra-interfaces`) is
+  the other vendored dependency — `Umbra::IWidget`/`IrisPropDiff` (Stage 3's reconciler-facing
+  update contract) and `Umbra::IWidgetLifecycle`/`TickInfo`. Same non-conflict reasoning as
+  Amanuensis: header-only, zero dependencies, names no concrete runtime (Iris) or backend
+  (Penumbra) anywhere in it — a shared vocabulary a runtime and a backend adapter both build
+  against without depending on each other's headers. `iris::TextureHandle` is now a plain alias
+  for `Umbra::TextureHandle` from this package.
 - **`.iris.json`** (project root) declares the compile target (`"target": "penumbra"`) and
   module `searchPaths` for `import` resolution. This is project-level, not per-file — a
   project is either a Penumbra tool or an Umbra Engine game UI, never both.
@@ -97,6 +104,13 @@ Stage 2 (the Penumbra backend itself: `IrisPenumbraBackend::BuildWidgetTree()`, 
 `IrisComponent` node and building the equivalent real Penumbra widget tree via each Core
 primitive's own fluent `Builder`) is implemented in `iris-penumbra-backend`, not here — this
 repo only ever produces the backend-agnostic `IrisComponent` IR. It's a one-shot tree build
-only, no diffing or identity tracking: `key` is stripped by this repo's preprocessor before
-codegen and never reaches `IrisComponent` at all, so the `key`→`IWidget*` live-widget identity
-map belongs to Stage 3's reconciler, not Stage 2's walker.
+only, no diffing or identity tracking — that's Stage 3's reconciler, layered on top, not part
+of the walker itself.
+
+Stage 3's core engine (`iris::Signal<T>`, ambient dependency tracking, batching, `iris::Tick()`,
+the reconciler) is implemented here — see `docs/iris_stage3_implementation_decision.md`. `key`
+now does reach `IrisComponent` (`IrisComponent::Key`, set via a small IIFE `Codegen.h` wraps
+around any keyed element's base expression) — the reconciler's `Umbra::IWidget`-based
+`key`→live-widget matching is real and tested, against a mock `IWidget`. Not yet done: a real
+Penumbra `IWidget` adapter, and wiring the Stage 2 walker (above) to actually resolve `<Slot>`
+into a `SlotState` instead of asserting on it — both still open, tracked in that decision doc.

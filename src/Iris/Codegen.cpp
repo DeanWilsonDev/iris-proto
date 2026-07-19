@@ -48,16 +48,19 @@ public:
     explicit ComponentEmitter(std::vector<CodegenError>& Errors) : Errors_(Errors) {}
 
     std::string Emit(const ElementNode& Node) {
+        std::string Base;
         if (CorePrimitiveTagNames().count(Node.Tag) != 0) {
             if (Node.Tag == "Slot") {
-                return EmitSlot(Node);
+                Base = EmitSlot(Node);
+            } else if (Node.Tag == "Text") {
+                Base = EmitTextPrimitive(Node);
+            } else {
+                Base = EmitOrdinaryPrimitive(Node);
             }
-            if (Node.Tag == "Text") {
-                return EmitTextPrimitive(Node);
-            }
-            return EmitOrdinaryPrimitive(Node);
+        } else {
+            Base = EmitComponentInvocation(Node);
         }
-        return EmitComponentInvocation(Node);
+        return Node.Key.has_value() ? EmitWithKey(Base, *Node.Key) : Base;
     }
 
 private:
@@ -95,6 +98,21 @@ private:
             return QuoteLiteral(Value.Text);
         }
         return EmitEscapeHatchExpression(Value);
+    }
+
+    // `key` (docs/iris_core_spec.md §2.3/§2.4) applies uniformly to every element kind —
+    // a primitive's own aggregate-style construction and a component invocation's
+    // function call alike — so rather than threading key-emission through every
+    // `Emit*` function individually, `Emit()` always computes the base expression first
+    // and, only when a key is present, wraps it in an immediately-invoked lambda that
+    // sets `IrisComponent::Key` on the already-built value before returning it.
+    // `IrisPropValue`'s ordinary converting constructor (no `in_place_type` needed) picks
+    // the right variant alternative from the key expression's own type, exactly the way
+    // `key={item.id}` (an `int`) and `key="bar"` (a `std::string`) both need to work
+    // without codegen ever knowing which one it's looking at.
+    std::string EmitWithKey(const std::string& BaseExpression, const PropValue& KeyValue) {
+        return "[&]() { Iris::IrisComponent Node = " + BaseExpression + "; Node.Key = Iris::IrisPropValue(" +
+               EmitPropValueExpression(KeyValue) + "); return Node; }()";
     }
 
     // Builds `Iris::IrisProps{ {"name", Iris::IrisPropValue{std::in_place_type<T>, expr}}, ... }`

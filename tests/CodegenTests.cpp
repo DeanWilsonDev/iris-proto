@@ -231,6 +231,31 @@ void TestPartyScreenFullyCodegensWithJsxTransformEscapeHatches() {
     Expect(FrameExpressionCount == 3, "all three <Frame> elements (root, details-panel, party-row) were transformed");
 }
 
+void TestKeyedPrimitiveWrapsBaseExpressionAndSetsKey() {
+    const auto Result = Generate(R"(render { <Frame key={member.id} class="party-row" /> })");
+    Expect(Result.Errors.empty(), "a keyed primitive codegens with no errors");
+    Expect(Contains(Result.Source, "[&]() { Iris::IrisComponent Node = Iris::IrisComponent{Iris::IrisElementTag::"
+                                   "Frame,"),
+           "the base primitive expression is wrapped in the key-setting IIFE");
+    Expect(Contains(Result.Source, "Node.Key = Iris::IrisPropValue(member.id); return Node; }()"),
+           "the key expression passes through verbatim into Iris::IrisPropValue's converting constructor");
+}
+
+void TestKeyedComponentInvocationAlsoWrapsWithKey() {
+    const auto Result = Generate(R"(render { <HealthBar key={member.id} current={1} max={2} /> })");
+    Expect(Result.Errors.empty(), "a keyed component invocation codegens with no errors");
+    Expect(Contains(Result.Source, "[&]() { Iris::IrisComponent Node = HealthBar(HealthBarProps{"),
+           "the base component-invocation call is wrapped the same way a primitive's is — key "
+           "handling is uniform across every element kind");
+    Expect(Contains(Result.Source, "Node.Key = Iris::IrisPropValue(member.id); return Node; }()"),
+           "and the key is set on the invocation's returned IrisComponent afterward");
+}
+
+void TestUnkeyedElementHasNoWrapping() {
+    const auto Result = Generate(R"(render { <Frame class="a" /> })");
+    Expect(!Contains(Result.Source, "Node.Key"), "an element with no key prop gets no IIFE wrapping at all");
+}
+
 } // namespace
 
 void RunCodegenTests() {
@@ -250,4 +275,7 @@ void RunCodegenTests() {
     TestPartyScreenOuterLevelCodegens();
     TestJsxTransformEscapeHatchSplicesGeneratedNestedElement();
     TestPartyScreenFullyCodegensWithJsxTransformEscapeHatches();
+    TestKeyedPrimitiveWrapsBaseExpressionAndSetsKey();
+    TestKeyedComponentInvocationAlsoWrapsWithKey();
+    TestUnkeyedElementHasNoWrapping();
 }

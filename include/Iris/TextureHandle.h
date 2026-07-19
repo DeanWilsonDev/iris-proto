@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Umbra/TextureHandle.h"
+
 namespace iris {
 
 // Opaque, runtime-owned reference to a decoded backend texture
@@ -7,14 +9,11 @@ namespace iris {
 // §5's `<Image>` update path). Swapping handles during reconciliation is a pointer
 // assignment — zero disk I/O, unlike `src`'s synchronous re-decode path.
 //
-// Deliberately in the lowercase `iris::` namespace, not `Iris::` — this is Stage 3
-// reactive-runtime state (populated by a future `iris::LoadTextures()`), not a plain
-// IR data shape like `Iris::IrisComponent` (docs/iris_stage1_codegen_decision.md).
-// Not implemented yet: Stage 3's job, per docs/iris_next_steps.md. This stub exists only
-// so `Iris::IrisPropValue` (docs/iris_props_decision.md) has a concrete type to name.
-class TextureHandle {
-public:
-    TextureHandle() = default;
-};
+// An alias, not a distinct type: a texture handle is a rendering-backend concept, not
+// specific to Iris, so the real definition lives in `umbra-interfaces`
+// (`docs/iris_stage3_implementation_decision.md`) — `Umbra::IrisPropDiff::Handle`
+// names the same type. Kept as `iris::TextureHandle` here so `Iris::IrisPropValue`
+// (docs/iris_props_decision.md) and existing code naming it don't need to change.
+using TextureHandle = Umbra::TextureHandle;
 
 } // namespace iris

@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -30,11 +31,21 @@ struct IrisSlotCallable;
 // Verification section). Declaring any constructor loses aggregate-ness, so the ordinary
 // 4-field constructor below exists to keep `IrisComponent{Tag, Props, Children,
 // SlotCallable}` — Codegen.h's emitted call shape — compiling unchanged.
+//
+// `Key` (docs/iris_core_spec.md §2.3/§2.4, docs/iris_stage3_implementation_decision.md)
+// is deliberately not a constructor parameter — it's set, when present, by a small
+// lambda wrapper `Codegen.h` emits around whichever expression built the rest of this
+// value (a primitive's aggregate-style construction or a component invocation's
+// function call), so every element kind picks up key-setting uniformly without each
+// `Emit*` function needing its own key-threading logic. Every constructor here leaves
+// it default-initialized to `std::nullopt` — no key — same as any other data member not
+// named in an initializer list.
 struct IrisComponent {
     IrisElementTag                    Tag{IrisElementTag::Frame};
     IrisProps                         Props;
     std::vector<IrisComponent>        Children;
     std::shared_ptr<IrisSlotCallable> SlotCallable;
+    std::optional<IrisPropValue>      Key;
 
     IrisComponent() = default;
     IrisComponent(IrisElementTag Tag, IrisProps Props, std::vector<IrisComponent> Children,

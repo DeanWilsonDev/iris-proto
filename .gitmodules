@@ -1,3 +1,6 @@
 [submodule "libs/amanuensis"]
 	path = libs/amanuensis
 	url = https://github.com/DeanWilsonDev/amanuensis.git
+[submodule "libs/umbra-interfaces"]
+	path = libs/umbra-interfaces
+	url = https://github.com/DeanWilsonDev/umbra-interfaces.git

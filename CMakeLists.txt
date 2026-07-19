@@ -23,6 +23,15 @@ endif()
 add_subdirectory(libs/amanuensis)
 
 # ---------------------------------------------------------------------------
+# umbra-interfaces — the backend-agnostic IWidget/IrisPropDiff/IWidgetLifecycle
+# contract Stage 3's reconciler needs, vendored the same way as Amanuensis.
+# Zero-dependency and names no concrete runtime or backend, so depending on it
+# doesn't couple Iris's core to Penumbra or any other backend either — see
+# docs/iris_stage3_implementation_decision.md.
+# ---------------------------------------------------------------------------
+add_subdirectory(libs/umbra-interfaces)
+
+# ---------------------------------------------------------------------------
 # Iris preprocessor/runtime — static library. Nothing in here references
 # demo/ or tests/, and nothing in here references Penumbra or any other
 # backend — Iris's core is backend-agnostic by design (docs/iris_core_spec.md
@@ -38,11 +47,13 @@ add_library(iris STATIC
     src/Iris/CorePrimitives.cpp
     src/Iris/Codegen.cpp
     src/Iris/SemanticValidator.cpp
-    src/Iris/Driver.cpp)
+    src/Iris/Driver.cpp
+    src/Iris/SlotRuntime.cpp
+    src/Iris/Reconciler.cpp)
 
 target_include_directories(iris PUBLIC include)
 target_compile_features(iris PUBLIC cxx_std_23)
-target_link_libraries(iris PUBLIC amanuensis)
+target_link_libraries(iris PUBLIC amanuensis umbra_interfaces)
 
 # ---------------------------------------------------------------------------
 # iris_cc — the preprocessor CLI (tools/IrisCc.cpp), wrapping Iris::CompileFile
@@ -68,7 +79,9 @@ add_executable(iris_tests
     tests/CodegenTests.cpp
     tests/IrisComponentTests.cpp
     tests/SemanticValidatorTests.cpp
-    tests/DriverTests.cpp)
+    tests/DriverTests.cpp
+    tests/ReconcilerTests.cpp
+    tests/SlotRuntimeTests.cpp)
 
 target_link_libraries(iris_tests PRIVATE iris)
 set_target_properties(iris_tests PROPERTIES

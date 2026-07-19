@@ -39,17 +39,27 @@
   recursively builds the equivalent real Penumbra widget tree via each Core primitive's own
   fluent `Builder` (`Frame`→`Box`, `Inline`→`InlineContainer`, `Grid`→`Box` stub, `Image`→
   `ImageWidget`, `Text`→`Label`; `Slot` never reaches it, `None` builds to `nullptr` and is
-  skipped as a child). One-shot tree build only — no diffing, no identity tracking, since `key`
-  never reaches `IrisComponent` in the first place (Stage 3's concern, layered on top). Verified
+  skipped as a child). One-shot tree build only — no diffing, no identity tracking; `key`
+  reaching `IrisComponent` at all (needed for the reconciler's matching rule) landed as part
+  of Stage 3, below — this walker still doesn't use it, since it never diffs anything. Verified
   against the full pipeline: a real `.iris` component compiled through this repo's own `iris_cc`,
   `#include`d, called, and the resulting `IrisComponent` fed through `BuildWidgetTree` produced a
   real `Box`/`Label` tree with correct class name, child count, and interpolated text — first
   time output has been traced from `.iris` source all the way to a real Penumbra widget.
   `iris-penumbra-backend`'s vendored `iris` submodule was also bumped from this repo's very
   first commit (which predates `IrisComponent` having its current shape) to current `main`.
-- **Stage 3 (reactive runtime)** — fully spec'd (`docs/iris_stage3_decision_doc.md`), not
-  implemented. Its last known real blocker (Penumbra-side) closed a while back — see below —
-  and Stage 2 (above) is now a real target to reconcile against, not just a stub.
+- **Stage 3 (reactive runtime)** — **core engine done**; backend integration not yet. `Signal<T>`,
+  ambient dependency tracking, batching, `iris::Tick()`, and the reconciler (prop diffing,
+  same-tag-key matching, keyed list diffing) are implemented and tested against a mock
+  `Umbra::IWidget` — see `docs/iris_stage3_implementation_decision.md`. Three real gaps the
+  decision docs left open got resolved along the way: `key` never actually reached
+  `IrisComponent` (fixed — see below), no mechanism was ever specified for how a signal knows
+  which `<Slot>`s to mark dirty (ambient "active slot" tracking, the user's explicit choice), and
+  `IWidget`/`IrisPropDiff` were said to belong in a not-yet-existing `umbra-interfaces` package
+  that conflicted with this repo's zero-Penumbra-dependency rule (that package now exists for
+  real — see below). Still deliberately deferred: a real Penumbra `IWidget` adapter, wiring
+  `SlotState` into the Stage 2 walker (which still asserts on encountering `<Slot>`), and
+  discovering/resolving nested `<Slot>`s within an arbitrary tree.
 - **Stage 4 (Lustre-lite styling)** — not scoped yet.
 - **Stage 5 (first real consumer)** — not started. You mentioned real consuming projects already
   exist, which is why the repo-dependency direction got fixed now rather than later.
@@ -216,16 +226,61 @@ host-compiling a `main.cpp` that only `#include`s the top-level generated header
 glue, no hand-written declarations, confirmed to compile with `g++ -std=c++23`. First time a
 *multi-file* Iris project has been shown to actually build end-to-end.
 
+## Done (core engine): Stage 3 reactive runtime
+
+`docs/iris_stage3_implementation_decision.md` has the full writeup. Summary:
+
+- **`iris::Signal<T>`** (`include/Iris/Signal.h`) — `.get()`/`.set()`, ambient "active slot"
+  dependency tracking (the user's explicit choice over blanket re-invocation).
+- **`iris::SlotState`/`iris::IrisRuntime`** (`include/Iris/SlotRuntime.h`,
+  `src/Iris/SlotRuntime.cpp`) — one `<Slot>`'s live reactive state, batching
+  (`BeginBatch`/`EndBatch`/`ScopedEventBatch`), dirty-slot tracking, and `iris::Tick()`.
+- **The reconciler** (`include/Iris/Reconciler.h`, `src/Iris/Reconciler.cpp`) —
+  `ComputePropDiff`, same-tag-key matching (`ReconcileWidget`), keyed list diffing
+  (`ReconcileChildren`/`ReconcileList`), all working against `Umbra::IWidget` (a new,
+  backend-agnostic interface — see below) rather than any concrete backend type.
+- **`umbra-interfaces`** — a real new repo
+  ([`github.com/DeanWilsonDev/umbra-interfaces`](https://github.com/DeanWilsonDev/umbra-interfaces)),
+  created per explicit direction rather than working around the conflict between "IWidget
+  should live in Penumbra temporarily" and this repo's hard zero-backend-dependency rule.
+  Vendored into `iris` as `libs/umbra-interfaces`. `IWidget` also gained child-management
+  methods (`GetChildCount`/`GetChildAt`/`InsertChildAt`/`RemoveChildAt`) it didn't have before —
+  needed for the reconciler's "recurse into children" rule, mirrored against Penumbra's own
+  `Box` methods.
+- **`key` now actually reaches `IrisComponent`** — it didn't before (`Codegen` dropped it
+  entirely). `Emit()` wraps any keyed element's base expression in a small IIFE that sets
+  `.Key` afterward, uniformly across primitives and component invocations alike. Verified
+  end-to-end: a real `.iris` file with `key={props.id}` compiled through `iris_cc` and
+  host-compiled, confirming the runtime value round-trips correctly.
+
+Tested thoroughly against a mock `Umbra::IWidget` (`tests/ReconcilerTests.cpp`,
+`tests/SlotRuntimeTests.cpp`) — 27 new tests, including keyed-list reordering preserving
+widget identity, tag-mismatch remounts actually destroying the old widget, nested-children
+recursion through a matched parent, and batching collapsing multiple `set()` calls into one
+reconcile.
+
+**Not part of this pass** (see the decision doc's "What remains deliberately deferred"): a
+real Penumbra `IWidget` adapter (nothing implements `Umbra::IWidget` for a real
+`Penumbra::Widgets::WidgetBase` yet), wiring `SlotState` into the Stage 2 walker (which still
+asserts on encountering `<Slot>` — it was built and tested before `<Slot>` resolution
+existed), nested-`<Slot>` discovery within an arbitrary tree, and LIS-based minimal-move list
+diffing (the current list diff is correct — matched widgets are always reused — but not
+move-count-optimal).
+
 ## Suggested order
 
 Starting from what's actually left:
 
-1. **Stage 3 reactive runtime** (`iris`, this repo) — already fully spec'd, largest remaining
-   implementation chunk. Unblocked on the Penumbra side now that `IWidgetLifecycle` has landed,
-   and now has a real Stage 2 walker in `iris-penumbra-backend` to reconcile against instead of
-   a stub. Its own design pass still needs to formalize `IrisElementTag::None`'s exact
-   reconciler contract (how "unmount, mount nothing" interacts with keys/diffing) — deliberately
-   deferred to this point rather than formalized early, per the user's own call when asked.
-2. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
-3. **Stage 5** — validate against one of the real consuming projects once (1)–(2) produce
-   something an actual `.iris` file can round-trip through, mount, and reconcile.
+1. **A real Penumbra `IWidget` adapter, in `iris-penumbra-backend`** — the concrete next step
+   to make Stage 3's reconciler control actual Penumbra widgets instead of a test mock. Needs
+   to also teach the Stage 2 walker how to handle `<Slot>` (constructing a `SlotState` at that
+   position and splicing its widget(s) in) rather than asserting on it.
+2. **Nested `<Slot>` discovery** — finding and giving each nested `<Slot>` its own `SlotState`
+   within an arbitrary tree, rather than assuming a slot's own output is always already fully
+   resolved.
+3. **LIS-based minimal-move list diffing** — an optimization on top of the current
+   correct-but-not-optimal list diff, once real-world move patterns make the extra
+   `RemoveChildAt`/`InsertChildAt` traffic worth avoiding.
+4. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
+5. **Stage 5** — validate against one of the real consuming projects once (1)–(4) produce
+   something an actual `.iris` file can round-trip through, mount, and reconcile for real.

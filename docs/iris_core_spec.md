@@ -992,10 +992,16 @@ map to that document for whoever implements Stage 3, not a restatement. All ten 
   mutation, tree walking, lifecycle) is now there (decision doc §8, §10).
 - **No cross-component state-sharing mechanism** — props drilling only, deliberately, forever
   (decision doc §9).
-- **`IWidget`, `IrisPropDiff`, and `IWidgetLifecycle`/`TickInfo` all live in Penumbra
-  temporarily** and are meant to be extracted to a standalone `umbra-interfaces` header library
-  once Umbra Engine exists — Penumbra and Umbra Engine must never reference each other directly,
-  at that point or ever (decision doc's Appendix).
+- **Resolved:** `IWidget`, `IrisPropDiff`, and `IWidgetLifecycle`/`TickInfo` were said to "live
+  in Penumbra temporarily, pending extraction to `umbra-interfaces`" — but this repo has a hard
+  rule against depending on Penumbra at all (§2.5, CLAUDE.md), so that framing couldn't actually
+  be implemented as written. `umbra-interfaces` now exists for real
+  (`github.com/DeanWilsonDev/umbra-interfaces`, vendored here as `libs/umbra-interfaces`) rather
+  than working around the conflict — header-only, zero dependencies, names no concrete runtime
+  or backend. `IWidget` also gained child-management methods it didn't have before
+  (`GetChildCount`/`GetChildAt`/`InsertChildAt`/`RemoveChildAt`, mirroring Penumbra's own `Box`)
+  — needed for this section's own "recurse into children" matching rule, which a bare
+  `ApplyPropDiff` alone can't do. See `docs/iris_stage3_implementation_decision.md`.
 
 **Verification performed while incorporating this decision** (per the decision doc §10's own
 instruction not to trust decision-doc prose alone): re-confirmed directly against
@@ -1007,3 +1013,12 @@ commit. `IWidgetLifecycle` was checked and confirmed absent at commit `f008666`;
 `penumbra-proto` commit `663fece` it exists and matches this decision's shape — see above.
 Stage 3 now has every documented Penumbra-side prerequisite it needs; nothing left blocking
 implementation from the Penumbra side.
+
+**Implementation status:** the core reactive engine described above — `iris::Signal<T>`,
+ambient dependency tracking, `IrisRuntime` batching, `iris::Tick()`, and the reconciler
+(`ComputePropDiff`, same-tag-key matching, keyed list diffing) — is implemented and tested
+against a mock `Umbra::IWidget`, closing several gaps this section's prose left genuinely open
+(how a signal knows which slots to notify was never specified; `key` never actually reached
+`IrisComponent` before this). Full writeup: `docs/iris_stage3_implementation_decision.md`. Not
+yet done: a real Penumbra `IWidget` adapter, and wiring the Stage 2 walker
+(`iris-penumbra-backend`) to resolve `<Slot>` into a `SlotState` rather than asserting on it.
