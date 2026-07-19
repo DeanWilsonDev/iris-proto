@@ -266,7 +266,15 @@ private:
         }
         Initializer += "}";
 
-        return Node.Tag + "(" + Initializer + ")";
+        // Wrapped in iris::MountComponentInstance (docs/iris_signal_lifetime_decision.md)
+        // so any IRIS_SIGNAL declaration inside <Name>'s own body allocates against a
+        // fresh, heap-owned iris::ComponentInstance rather than living as a stack local
+        // that dangles the moment <Name>() returns. Every component invocation gets this,
+        // unconditionally — Codegen has no visibility into whether <Name>'s body actually
+        // declares any signals, and wrapping a signal-free component is harmless (an
+        // empty ComponentInstance, freed immediately on unmount).
+        return "iris::MountComponentInstance([&]() -> Iris::IrisComponent { return " + Node.Tag + "(" +
+               Initializer + "); })";
     }
 
     std::vector<CodegenError>& Errors_;

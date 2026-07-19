@@ -23,6 +23,7 @@ namespace iris {
 using MountFn = std::function<std::unique_ptr<Umbra::IWidget>(const Iris::IrisComponent&)>;
 
 class SlotState;
+class ComponentInstance;
 
 // The ambient "active slot" tracking `iris::Signal<T>` (`Signal.h`) needs and nothing
 // else should call directly: `TrackSignalDependency` registers whichever `SlotState` is
@@ -120,12 +121,26 @@ public:
     void       PopActiveSlot();
     SlotState* ActiveSlot() const;
 
+    // The ambient "current component instance" `ComponentInstance.h`'s
+    // `MountComponentInstance`/`IRIS_SIGNAL` machinery needs (docs/iris_signal_lifetime_
+    // decision.md) — the same push/pop-a-stack pattern as `PushActiveSlot` above, applied
+    // to a second problem: while a component function's body is running, any
+    // `IRIS_SIGNAL` declaration inside it allocates against whichever
+    // `ComponentInstance` is on top of this stack, rather than living as a stack local
+    // that dangles once the function returns. Not part of the public component-author
+    // API — set up by generated code (`Codegen.h`'s wrapping of every component
+    // invocation) or `iris::Mount()`, never called directly.
+    void               PushComponentInstance(ComponentInstance* Instance);
+    void               PopComponentInstance();
+    ComponentInstance* CurrentComponentInstance() const;
+
 private:
     IrisRuntime() = default;
 
-    std::vector<SlotState*> ActiveSlotStack_;
-    std::vector<SlotState*> DirtySlots_;
-    int                      BatchDepth_{0};
+    std::vector<SlotState*>         ActiveSlotStack_;
+    std::vector<SlotState*>         DirtySlots_;
+    int                              BatchDepth_{0};
+    std::vector<ComponentInstance*> ComponentInstanceStack_;
 };
 
 // RAII convenience for a backend adapter's own event-dispatch code to wrap a handler

@@ -278,67 +278,47 @@ the exact copy-initialization syntax (`iris::Signal<bool> settingsOpen = false;`
 in `docs/iris_core_spec.md` §2.2 uses — caught only once a real generated `.iris` file was
 compiled against it, now fixed with a regression test.
 
-## Critical, newly discovered: `<Slot>` capturing a `Signal` by reference is dangling-reference UB
+## Done: fixed the `<Slot>`/`Signal` dangling-reference bug
 
-Found while verifying the adapter against a genuine `.iris` → `iris_cc` → real-`Signal`-driven
-pipeline (not just hand-constructed `IrisComponent` trees) — confirmed with AddressSanitizer,
-not a fluke:
+Full writeup: `docs/iris_signal_lifetime_decision.md`. Summary: `iris::Signal<T> Name = Init;`
+declared directly (every spec example's original syntax) put `Name` on the stack — `[&]`
+capturing it into a `<Slot>` lambda was confirmed (AddressSanitizer) dangling-reference UB the
+instant the declaring component function returned, which it always does immediately
+(`return <expr>;`, Stage 1's own codegen convention). Not a bug in this session's `Signal`/
+`SlotState`/reconciler work — that faithfully implemented what `docs/iris_stage3_decision_doc.md`
+§0 specified; the spec's own claim of "genuinely persistent for free" didn't hold for an
+ordinary C++ function returning by value.
 
-```cpp
-IrisComponent Counter() {
-    iris::Signal<int> Count = 0;
-    render {
-        <Slot>!{[&]() -> IrisComponent { return <Text>{std::to_string(Count.get())}</Text>; }}</Slot>
-    }
-}
-```
+Fixed by `IRIS_SIGNAL(Type, Name, InitExpr)` (`include/Iris/ComponentInstance.h`) — an ordinary
+C++ macro expanding to a *reference* bound to heap-allocated storage, owned by a new
+`iris::ComponentInstance` tied to that specific mounted component's lifetime (freed
+automatically via the `shared_ptr` refcounting `SlotState` already does for diffing purposes —
+no new "on unmount" hook needed anywhere). `[&]` capture keeps meaning exactly what every spec
+example already writes, because a reference-typed variable captured by reference aliases its
+heap-stable referent directly — no coroutines, no capture-list syntax changes anywhere except
+the one declaration itself. `Codegen.h` now wraps every component invocation it emits in
+`iris::MountComponentInstance(...)`, the same category of change as the existing `key`-setting
+IIFE wrapping. Re-verified end to end under AddressSanitizer with zero errors: real `.iris` →
+`iris_cc` → `IRIS_SIGNAL` → `iris::Mount` → real Penumbra widget.
 
-`docs/iris_stage3_decision_doc.md` §0 asserts `iris::Signal<T>` locals are "true long-lived
-locals... captured by reference in render lambdas" — but as currently specified *and*
-implemented, `Count` is an ordinary stack-local `int`-holding object. The component function
-runs exactly once and **returns** (per its own documented contract, and per how Stage 1 codegen
-actually rewrites `render { }` into `return <expr>;`) — the instant it does, `Count`'s stack
-storage is gone. Every `[&]`-capturing `<Slot>` lambda in every example in the spec holds a
-dangling reference from that point on. This isn't a corner case; it's the load-bearing pattern
-the entire reactive model is built around.
-
-**This is a Stage 3 foundational-design gap, not an implementation bug in this session's
-`Signal`/`SlotState`/reconciler work** — those faithfully implement what
-`docs/iris_stage3_decision_doc.md` §0 specifies; the spec's own claim of "genuinely persistent
-for free" doesn't hold for an ordinary C++ function returning by value. Fixing it needs a real
-design decision — candidates, none picked yet:
-
-- **Heap-allocate `Signal<T>`'s storage** so a `Signal<T>` local is really just a thin
-  handle/proxy over independently-owned heap state — the `[&]` capture would then be safe
-  because it doesn't actually reference stack memory, even after the declaring function returns.
-- **Keep the component function's activation frame alive** via C++20 coroutines (`co_return` at
-  the `render { }` boundary instead of an ordinary `return`) — a much larger change touching
-  Codegen's `return <expr>;` wrapping convention (`docs/iris_import_header_decision.md`'s
-  neighbor, Codegen.h's own documented convention) and every component function's declared
-  signature.
-- Something else not yet considered.
-
-Every `.iris` example that's been host-compiled and run *with a live signal update* so far in
-this project's history has actually hit this — the `HealthBar`/`StartMenu` end-to-end checks
-earlier in this doc never exercised a signal `.set()` after the declaring function returned, so
-they never triggered it. This blocks Stage 3 from being usable for real, ahead of any of the
-items below.
+One required, mechanical syntax change for every component author: `iris::Signal<T> Name = v;`
+→ `IRIS_SIGNAL(T, Name, v)`. Every code sample in `docs/iris_core_spec.md` has been updated;
+historical decision-record docs were deliberately left showing the old syntax.
 
 ## Suggested order
 
 Starting from what's actually left:
 
-1. **Decide and fix the `Signal<T>` lifetime gap above** — blocks Stage 3 from being usable for
-   real; needs a real design decision, not a quick patch.
-2. **Wiring `<Slot>` into the Stage 2 walker** — nothing yet constructs a `SlotState` when
-   `BuildWidgetTree` encounters a `<Slot>` tag; it still asserts on one. The `Umbra::IWidget`
-   adapter that would receive that wiring is now ready; the wiring itself isn't done.
-3. **Nested `<Slot>` discovery** — finding and giving each nested `<Slot>` its own `SlotState`
+1. **Wiring `<Slot>` into the Stage 2 walker** — nothing yet constructs a `SlotState` when
+   `BuildWidgetTree` encounters a `<Slot>` tag; it still asserts on one. Both the `Umbra::IWidget`
+   adapter and the signal-lifetime fix it needs to be safe are now ready; the wiring itself isn't
+   done.
+2. **Nested `<Slot>` discovery** — finding and giving each nested `<Slot>` its own `SlotState`
    within an arbitrary tree, rather than assuming a slot's own output is always already fully
    resolved.
-4. **LIS-based minimal-move list diffing** — an optimization on top of the current
+3. **LIS-based minimal-move list diffing** — an optimization on top of the current
    correct-but-not-optimal list diff, once real-world move patterns make the extra
    `RemoveChildAt`/`InsertChildAt` traffic worth avoiding.
-5. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
-6. **Stage 5** — validate against one of the real consuming projects once (1)–(4) produce
+4. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
+5. **Stage 5** — validate against one of the real consuming projects once (1)–(3) produce
    something an actual `.iris` file can round-trip through, mount, and reconcile for real.

@@ -99,7 +99,7 @@ import Button
 import SettingsPage
 
 IrisComponent StartMenu() {
-    iris::Signal<bool> settingsOpen = false;
+    IRIS_SIGNAL(bool, settingsOpen, false);
 
     render {
         <Frame class="start-menu">
@@ -301,21 +301,33 @@ handle what v1 called "optional/default prop values"), state (host-language vari
 expressions, all type definitions, and comment syntax. Iris does not define grammar for any of
 these — they're whatever C++23 (or later, Nyx) already defines.
 
-### 2.2 State and re-renders — `iris::Signal<T>`
+### 2.2 State and re-renders — `IRIS_SIGNAL`
 
 ```cpp
-iris::Signal<bool> settingsOpen = false;
+IRIS_SIGNAL(bool, settingsOpen, false);
 ```
 
-State is a host-language variable wrapped in the `iris::Signal<T>` runtime-library type.
+State is a host-language local declared via the `IRIS_SIGNAL(Type, Name, InitExpr)` macro
+(`include/Iris/ComponentInstance.h`), which expands to `Name` being a reference bound to a
+heap-allocated `iris::Signal<Type>` — **not** `iris::Signal<Type> settingsOpen = false;`
+declared directly, which was the original (and, per `docs/iris_signal_lifetime_decision.md`,
+unsound) spelling. See that decision doc for why: a plain `Signal<T>` local's storage lives in
+the declaring function's stack frame, and every use of it here happens through a `<Slot>`
+callable that outlives that frame — capturing it `[&]`, exactly as every example in this
+section does, is dangling-reference UB once the component function returns, which every
+component function does immediately (§0's `return <expr>;` codegen convention). `IRIS_SIGNAL`
+closes that gap structurally: `[&]` capture keeps working exactly as written everywhere in this
+spec, because what's being captured is a reference to heap-stable storage, not a stack slot.
 
 **Component functions run exactly once, at mount** — per
 `docs/iris_stage3_decision_slot.md`, closing what was previously an open question about how a
 plain local variable could survive being "re-run." A component function is not re-invoked on
 every re-render the way earlier drafts of this spec implied; it executes a single time, and
-every `iris::Signal<T>` declared as a local inside it is therefore a genuinely persistent value
-for the component's whole lifetime — no call-order-indexed slot table or other indirection is
-needed to make that true.
+every `IRIS_SIGNAL` declared as a local inside it is genuinely persistent for the component's
+whole lifetime — owned by a heap-allocated `iris::ComponentInstance`
+(`docs/iris_signal_lifetime_decision.md`) tied to that specific mounted component, not to the
+declaring function's own stack frame, and freed automatically the moment that component leaves
+the tree.
 
 What *does* re-run is narrower and explicit: only the callables inside `<Slot>` (§1.5).
 Mutating a signal (`settingsOpen.set(true)`) notifies the Iris runtime to re-invoke whichever
@@ -679,18 +691,20 @@ remains open is unrelated to Stage 1 and was never expected to block it:
   `onFocus`, `onChange`) extensible by component authors, or a closed list?
 - **Implicit children forwarding.** No mechanism specified for a generic wrapper component to
   forward arbitrary children it wasn't handed as a named prop.
-- **Critical: `iris::Signal<T>` locals captured by `<Slot>` are dangling-reference UB as
-  currently specified.** §2.2/§9.5 and `docs/iris_stage3_decision_doc.md` §0 assert a
-  `Signal<T>` local is "genuinely persistent" once captured `[&]` into a `<Slot>` lambda — but a
-  component function runs once and *returns* (§2.2's own contract; Stage 1 codegen literally
-  emits `return <expr>;` for the `render { }` block), at which point that local's stack storage
-  is gone. Confirmed with AddressSanitizer against real generated `.iris` output while verifying
-  `iris-penumbra-backend`'s `Umbra::IWidget` adapter — every `[&]`-capturing `<Slot>` example in
-  this spec is affected; this is the load-bearing pattern the whole reactive model depends on,
-  not a corner case. See `docs/iris_next_steps.md` for candidate fixes (none chosen yet) —
-  heap-allocating `Signal<T>`'s real storage behind a thin local handle, or keeping the
-  component function's frame alive via a coroutine-based `render { }` instead of an ordinary
-  `return`. Blocks Stage 3 from being usable for real.
+**Resolved:** `iris::Signal<T>` locals captured by `<Slot>` were dangling-reference UB as
+originally specified — §2.2/§9.5 and `docs/iris_stage3_decision_doc.md` §0 asserted a
+`Signal<T>` local was "genuinely persistent" once captured `[&]` into a `<Slot>` lambda, but a
+component function runs once and *returns* (Stage 1 codegen literally emits `return <expr>;`
+for the `render { }` block), at which point a plain local's stack storage is gone. Confirmed
+with AddressSanitizer against real generated `.iris` output while verifying
+`iris-penumbra-backend`'s `Umbra::IWidget` adapter — every `[&]`-capturing `<Slot>` example in
+this spec was affected; this was the load-bearing pattern the whole reactive model depended on,
+not a corner case. Fixed per `docs/iris_signal_lifetime_decision.md`: state is now declared via
+`IRIS_SIGNAL(Type, Name, InitExpr)` (§2.2), which binds `Name` to a reference into a
+heap-allocated `iris::ComponentInstance` rather than a stack local — `[&]` capture keeps working
+exactly as every example already writes it, since what's captured is now a reference to
+heap-stable storage. Re-verified end to end (real `.iris` → `iris_cc` → `IRIS_SIGNAL` →
+`iris::Mount` → real Penumbra widget) under AddressSanitizer with zero errors.
 
 **Resolved:** `IrisComponent` had no `nullptr_t` constructor, so every conditional-rendering
 example in this spec (§1.5, §9) writing `return nullptr;` inside a `<Slot>` lambda declared to
@@ -796,7 +810,7 @@ struct PartyScreenProps {
 };
 
 IrisComponent PartyScreen(PartyScreenProps props) {
-    iris::Signal<bool> detailsOpen = false;
+    IRIS_SIGNAL(bool, detailsOpen, false);
 
     render {
         <Frame class="party-screen">
@@ -932,9 +946,12 @@ unresolved (previously tracked only in `docs/iris_stage3_open_questions.md`'s le
 in this document's own §8, since it only surfaced once Stage 3 planning began):
 
 1. **Component functions run exactly once, at mount** — not re-invoked on every render as
-   earlier phrasing in this spec implied. `iris::Signal<T>` locals are therefore genuinely
-   persistent for free; no call-order-indexed slot table (and its associated conditional-hooks
-   footgun) is needed (§2.2).
+   earlier phrasing in this spec implied. `IRIS_SIGNAL` locals are therefore genuinely
+   persistent — not "for free" as originally assumed here (see §8's resolved note and
+   `docs/iris_signal_lifetime_decision.md`: a plain stack local doesn't survive the declaring
+   function returning, so persistence needed the heap-backed `iris::ComponentInstance`
+   mechanism `IRIS_SIGNAL` provides) — and no call-order-indexed slot table (and its associated
+   conditional-hooks footgun) is needed (§2.2).
 2. **New Core primitive `<Slot>`** (§3.1) is the sole mechanism for re-invocation: its one
    escape-hatch child must be a callable — not an immediately-invoked one, unlike the IIFE
    pattern it replaces — that the runtime invokes at mount and re-invokes when a captured signal
@@ -1026,11 +1043,16 @@ commit. `IWidgetLifecycle` was checked and confirmed absent at commit `f008666`;
 Stage 3 now has every documented Penumbra-side prerequisite it needs; nothing left blocking
 implementation from the Penumbra side.
 
-**Implementation status:** the core reactive engine described above — `iris::Signal<T>`,
-ambient dependency tracking, `IrisRuntime` batching, `iris::Tick()`, and the reconciler
-(`ComputePropDiff`, same-tag-key matching, keyed list diffing) — is implemented and tested
-against a mock `Umbra::IWidget`, closing several gaps this section's prose left genuinely open
-(how a signal knows which slots to notify was never specified; `key` never actually reached
-`IrisComponent` before this). Full writeup: `docs/iris_stage3_implementation_decision.md`. Not
-yet done: a real Penumbra `IWidget` adapter, and wiring the Stage 2 walker
-(`iris-penumbra-backend`) to resolve `<Slot>` into a `SlotState` rather than asserting on it.
+**Implementation status:** the core reactive engine described above — `IRIS_SIGNAL`/
+`iris::Signal<T>`, ambient dependency tracking, `IrisRuntime` batching, `iris::Tick()`, and the
+reconciler (`ComputePropDiff`, same-tag-key matching, keyed list diffing) — is implemented,
+closing several gaps this section's prose left genuinely open (how a signal knows which slots
+to notify was never specified; `key` never actually reached `IrisComponent`; `Signal<T>` locals
+were dangling-reference UB as originally specified — see §8's resolved notes). A real Penumbra
+`Umbra::IWidget` adapter is also implemented and tested against actual `Penumbra::Widgets::Box`/
+`Label` objects, not just a mock (`iris-penumbra-backend`'s
+`docs/iris_penumbra_backend_adapter_decision.md`). Full writeups:
+`docs/iris_stage3_implementation_decision.md` (the reconciler/runtime core) and
+`docs/iris_signal_lifetime_decision.md` (the signal-lifetime fix). Not yet done: wiring the
+Stage 2 walker (`iris-penumbra-backend`) to resolve `<Slot>` into a `SlotState` rather than
+asserting on it, and nested-`<Slot>` discovery.

@@ -128,6 +128,17 @@ void TestComponentInvocationEmitsNamePropsConvention() {
     Expect(Contains(Result.Source, ".label = \"HP\""), "string-literal prop values are quoted verbatim");
 }
 
+void TestComponentInvocationIsWrappedInMountComponentInstance() {
+    // docs/iris_signal_lifetime_decision.md: every component invocation is wrapped so
+    // any IRIS_SIGNAL declared inside <Name>'s own body allocates against a heap-owned
+    // ComponentInstance instead of a stack local.
+    const auto Result = Generate(R"(render { <HealthBar current={1} max={2} /> })");
+    Expect(Result.Errors.empty(), "codegens with no errors");
+    Expect(Contains(Result.Source, "iris::MountComponentInstance([&]() -> Iris::IrisComponent { return "
+                                   "HealthBar(HealthBarProps{"),
+           "the invocation is wrapped in iris::MountComponentInstance");
+}
+
 void TestComponentInvocationWithChildrenIsAnError() {
     const auto Result = Generate(R"(render { <HealthBar current={1} max={2}><Frame /></HealthBar> })");
     Expect(!Result.Errors.empty(),
@@ -244,9 +255,11 @@ void TestKeyedPrimitiveWrapsBaseExpressionAndSetsKey() {
 void TestKeyedComponentInvocationAlsoWrapsWithKey() {
     const auto Result = Generate(R"(render { <HealthBar key={member.id} current={1} max={2} /> })");
     Expect(Result.Errors.empty(), "a keyed component invocation codegens with no errors");
-    Expect(Contains(Result.Source, "[&]() { Iris::IrisComponent Node = HealthBar(HealthBarProps{"),
-           "the base component-invocation call is wrapped the same way a primitive's is — key "
-           "handling is uniform across every element kind");
+    Expect(Contains(Result.Source, "[&]() { Iris::IrisComponent Node = iris::MountComponentInstance([&]() -> "
+                                   "Iris::IrisComponent { return HealthBar(HealthBarProps{"),
+           "the base component-invocation call (itself wrapped in iris::MountComponentInstance, "
+           "docs/iris_signal_lifetime_decision.md) is wrapped in the key-setting IIFE the same way "
+           "a primitive's is — key handling is uniform across every element kind");
     Expect(Contains(Result.Source, "Node.Key = Iris::IrisPropValue(member.id); return Node; }()"),
            "and the key is set on the invocation's returned IrisComponent afterward");
 }
@@ -271,6 +284,7 @@ void RunCodegenTests() {
     TestSlotWithWrongArityIsAnError();
     TestSlotWithNonEscapeHatchChildIsAnError();
     TestComponentInvocationEmitsNamePropsConvention();
+    TestComponentInvocationIsWrappedInMountComponentInstance();
     TestComponentInvocationWithChildrenIsAnError();
     TestPartyScreenOuterLevelCodegens();
     TestJsxTransformEscapeHatchSplicesGeneratedNestedElement();

@@ -134,6 +134,7 @@ void RunSemanticValidatorTests(); // tests/SemanticValidatorTests.cpp — no aut
 void RunDriverTests();            // tests/DriverTests.cpp — no auto-registration, see CLAUDE.md
 void RunReconcilerTests();        // tests/ReconcilerTests.cpp — no auto-registration, see CLAUDE.md
 void RunSlotRuntimeTests();       // tests/SlotRuntimeTests.cpp — no auto-registration, see CLAUDE.md
+void RunComponentInstanceTests(); // tests/ComponentInstanceTests.cpp — no auto-registration, see CLAUDE.md
 
 int main() {
     TestBasicRenderBlockDetection();
@@ -154,6 +155,7 @@ int main() {
     RunDriverTests();
     RunReconcilerTests();
     RunSlotRuntimeTests();
+    RunComponentInstanceTests();
 
     std::printf("\n%d failure(s)\n", Failures);
     return Failures == 0 ? 0 : 1;

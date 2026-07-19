@@ -140,6 +140,14 @@ void IrisRuntime::PopActiveSlot() { ActiveSlotStack_.pop_back(); }
 
 SlotState* IrisRuntime::ActiveSlot() const { return ActiveSlotStack_.empty() ? nullptr : ActiveSlotStack_.back(); }
 
+void IrisRuntime::PushComponentInstance(ComponentInstance* Instance) { ComponentInstanceStack_.push_back(Instance); }
+
+void IrisRuntime::PopComponentInstance() { ComponentInstanceStack_.pop_back(); }
+
+ComponentInstance* IrisRuntime::CurrentComponentInstance() const {
+    return ComponentInstanceStack_.empty() ? nullptr : ComponentInstanceStack_.back();
+}
+
 void Tick() { IrisRuntime::Instance().ReconcileDirtySlots(); }
 
 } // namespace iris

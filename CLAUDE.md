@@ -111,6 +111,18 @@ Stage 3's core engine (`iris::Signal<T>`, ambient dependency tracking, batching,
 the reconciler) is implemented here — see `docs/iris_stage3_implementation_decision.md`. `key`
 now does reach `IrisComponent` (`IrisComponent::Key`, set via a small IIFE `Codegen.h` wraps
 around any keyed element's base expression) — the reconciler's `Umbra::IWidget`-based
-`key`→live-widget matching is real and tested, against a mock `IWidget`. Not yet done: a real
-Penumbra `IWidget` adapter, and wiring the Stage 2 walker (above) to actually resolve `<Slot>`
-into a `SlotState` instead of asserting on it — both still open, tracked in that decision doc.
+`key`→live-widget matching is real and tested. A real Penumbra `IWidget` adapter is also
+implemented (in `iris-penumbra-backend`) and tested against actual `Penumbra::Widgets::Box`/
+`Label` objects, not just a mock.
+
+**State declaration uses `IRIS_SIGNAL(Type, Name, InitExpr)`, not a direct
+`iris::Signal<T> Name = InitExpr;` declaration.** The direct form was the original spec syntax
+and is unsound C++: a `<Slot>` callable capturing that local `[&]` (every spec example's own
+pattern) becomes a dangling reference the instant the declaring component function returns,
+which it always does immediately — confirmed with AddressSanitizer, not a corner case. Fixed
+per `docs/iris_signal_lifetime_decision.md`: the macro binds `Name` to a reference into a
+heap-allocated `iris::ComponentInstance` tied to that component's own mounted lifetime, so
+`[&]` capture stays exactly as safe as every example assumes. Not yet done: wiring the Stage 2
+walker (above) to actually resolve `<Slot>` into a `SlotState` instead of asserting on it, and
+nested-`<Slot>` discovery — both still open, tracked in `docs/iris_stage3_implementation_
+decision.md`.

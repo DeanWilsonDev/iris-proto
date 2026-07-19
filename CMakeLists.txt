@@ -81,7 +81,8 @@ add_executable(iris_tests
     tests/SemanticValidatorTests.cpp
     tests/DriverTests.cpp
     tests/ReconcilerTests.cpp
-    tests/SlotRuntimeTests.cpp)
+    tests/SlotRuntimeTests.cpp
+    tests/ComponentInstanceTests.cpp)
 
 target_link_libraries(iris_tests PRIVATE iris)
 set_target_properties(iris_tests PROPERTIES

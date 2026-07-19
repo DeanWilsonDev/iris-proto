@@ -11,6 +11,10 @@
 #include <variant>
 #include <vector>
 
+namespace iris {
+class ComponentInstance;
+} // namespace iris
+
 namespace Iris {
 
 struct IrisSlotCallable;
@@ -40,12 +44,25 @@ struct IrisSlotCallable;
 // `Emit*` function needing its own key-threading logic. Every constructor here leaves
 // it default-initialized to `std::nullopt` — no key — same as any other data member not
 // named in an initializer list.
+//
+// `Instance` (docs/iris_signal_lifetime_decision.md) is set only for a component
+// invocation's result — `Codegen.h` wraps every `<Name .../>` call it emits in
+// `iris::MountComponentInstance(...)`, which allocates a fresh `iris::ComponentInstance`,
+// runs the invocation with it as the ambient "current instance" (so any `IRIS_SIGNAL`
+// declaration inside that component function's body allocates against it, on the heap,
+// rather than as a stack local), and stashes it here. Ordinary `shared_ptr` refcounting
+// through wherever this `IrisComponent` value is retained (chiefly `SlotState`'s
+// `PreviousSingle_`/`PreviousList_`, which already keep the last-rendered tree around
+// for diffing) is what keeps a component's signals alive for exactly as long as it
+// stays in the tree, and frees them the moment nothing retains it any longer — no
+// separate "on unmount" hook needed anywhere else.
 struct IrisComponent {
     IrisElementTag                    Tag{IrisElementTag::Frame};
     IrisProps                         Props;
     std::vector<IrisComponent>        Children;
     std::shared_ptr<IrisSlotCallable> SlotCallable;
     std::optional<IrisPropValue>      Key;
+    std::shared_ptr<iris::ComponentInstance> Instance;
 
     IrisComponent() = default;
     IrisComponent(IrisElementTag Tag, IrisProps Props, std::vector<IrisComponent> Children,
