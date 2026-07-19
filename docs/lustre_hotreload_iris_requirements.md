@@ -32,19 +32,31 @@ rather than rediscovered later the way several Penumbra-side gaps were during St
 - No change to the reconciler — Lustre's restyle pass is not a reconcile, it doesn't diff or
   mutate the component tree, only re-applies style structs to widgets that already exist.
 
-## What's actually missing, narrowly, for Lustre's case
+## What's actually missing, narrowly, for Lustre's case — confirmed, not just suspected
 
 Iris's runtime currently has **no whole-application live-widget registry or tree-walk entry
 point** that anything external could use to find "every widget currently mounted, anywhere in
 the app" without going through a full reconcile. `SlotState` tracks only its own slot's live
-widget(s); `ResolveSlots` discovers slots but doesn't expose a global list. A Penumbra-side
-Lustre restyle pass triggered by a changed `.lustre` file needs to reach every live widget to
-re-resolve its class's style — today that would require the *application* to already hold a
-reference to its own root widget and walk it manually (possible, since `Umbra::IWidget`
-already has `GetChildCount`/`GetChildAt` for exactly this kind of traversal), so this may not
-need a new Iris-side API at all, just a documented pattern for how a consuming app wires a
-restyle pass up to its own root. Recorded here as a "check this holds" item, not a confirmed
-gap, since it hasn't been tried against a real app yet.
+widget(s); `ResolveSlots` discovers slots but doesn't expose a global list; grepping the whole
+codebase for a runtime widget-tree root turns up nothing — every existing "Root" is a
+compile-time `ElementNode` AST root, not a mounted widget.
+
+**Decided (not just flagged):** this should be a small addition to Iris itself, not to
+`iris-penumbra-backend` or to Lustre. The mechanism needed — hold a `Umbra::IWidget*`, hand it
+back out on request — has zero backend-specific content: `Umbra::IWidget` is already the
+backend-agnostic interface the reconciler walks/mutates through (`GetChildCount`/`GetChildAt`),
+so any backend's root satisfies it identically. Building this per-backend instead would mean
+every backend (Penumbra now, an Umbra Engine backend later, anything else eventually)
+reimplementing the same trivial store-a-pointer/expose-a-getter logic for no backend-specific
+reason. `IrisRuntime` already holds and tracks live widget state this way (via `Umbra::IWidget`
+references, no backend knowledge needed) — this is the same category of thing, not a new one.
+
+**Proposed shape:** `iris::RegisterRoot(Umbra::IWidget*)` / `iris::GetRoot()`, likely folded
+into `IrisRuntime` alongside its existing state, callable by any consuming app right after it
+builds its tree. Generic over any backend's `IWidget` implementation by construction — nothing
+Penumbra-specific about it. Benefit beyond Lustre: the next cross-cutting concern that needs
+"the whole mounted tree" (a debugger, an inspector, whatever) gets this for free instead of
+inventing its own registration convention.
 
 ## The larger, deliberately out-of-scope question
 
