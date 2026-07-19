@@ -78,12 +78,16 @@ add_executable(iris_cc tools/IrisCc.cpp)
 target_link_libraries(iris_cc PRIVATE iris)
 
 # ---------------------------------------------------------------------------
-# Tests — plain executable asserting via a handful of hand-rolled checks
-# (each TestXxx() function calls Expect(condition, description), no
-# auto-registration; see CLAUDE.md's "Build and test" section). Predates
-# Cimmerian being vendored; left as-is rather than migrated wholesale.
+# Tests — one Cimmerian-based executable. Every test uses Cimmerian's
+# DESCRIBE/IT/ASSERT_* macros with auto-registration and
+# tests/TestMain.cpp's single TestRunner::RunAll() entry point (see CLAUDE.md's
+# "Build and test" section). Originally split across a hand-rolled `iris_tests`
+# executable (predating Cimmerian being vendored) and a separate
+# `iris_cimmerian_tests`; coalesced into one binary once every file was
+# migrated to Cimmerian's style.
 # ---------------------------------------------------------------------------
-add_executable(iris_tests
+add_executable(test_iris
+    tests/TestMain.cpp
     tests/CppTokenizerTests.cpp
     tests/RenderBlockParserTests.cpp
     tests/IrisConfigTests.cpp
@@ -95,22 +99,9 @@ add_executable(iris_tests
     tests/ReconcilerTests.cpp
     tests/SlotRuntimeTests.cpp
     tests/ComponentInstanceTests.cpp
-    tests/SlotResolutionTests.cpp)
+    tests/SlotResolutionTests.cpp
+    tests/SlotSiblingGroupTests.cpp)
 
-target_link_libraries(iris_tests PRIVATE iris)
-set_target_properties(iris_tests PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
-
-# ---------------------------------------------------------------------------
-# Cimmerian-based tests — a separate executable, not merged into iris_tests:
-# Cimmerian's auto-registration + single TestRunner::RunAll() model doesn't
-# mesh with iris_tests' hand-rolled RunXTests()-called-from-one-main()
-# pattern. New BDD-style tests go here going forward.
-# ---------------------------------------------------------------------------
-add_executable(iris_cimmerian_tests
-    tests/cimmerian/CimmerianTestMain.cpp
-    tests/cimmerian/SlotSiblingGroupTests.cpp)
-
-target_link_libraries(iris_cimmerian_tests PRIVATE iris cimmerian)
-set_target_properties(iris_cimmerian_tests PROPERTIES
+target_link_libraries(test_iris PRIVATE iris cimmerian)
+set_target_properties(test_iris PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")

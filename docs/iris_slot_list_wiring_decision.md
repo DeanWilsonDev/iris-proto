@@ -111,6 +111,7 @@ clean after it.
 ## What remains deliberately deferred
 
 - **Nested `<Slot>` discovery** (a `<Slot>` inside another `<Slot>`'s own dynamically
-  produced output) — unchanged from `docs/iris_stage3_implementation_decision.md` and
+  produced output). ~~unchanged from `docs/iris_stage3_implementation_decision.md` and
   `docs/iris_slot_stage2_wiring_decision.md`. `ResolveSlots` only recurses into the
-  *static* tree; it never looks inside what a `<Slot>`'s callable itself returns.
+  *static* tree; it never looks inside what a `<Slot>`'s callable itself returns.~~
+  **Done** — `docs/iris_nested_slot_discovery_decision.md`.

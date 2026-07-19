@@ -22,24 +22,37 @@ read the spec first.
 ```sh
 cmake -S . -B build
 cmake --build build
-./build/tests/iris_tests
-./build/tests/iris_cimmerian_tests
+./build/tests/test_iris
 ```
 
-There are two test executables. `iris_tests` predates Cimmerian being vendored and is a plain
-executable: each `TestXxx()` function (across ~13 files, e.g. `tests/CppTokenizerTests.cpp`)
-calls a hand-rolled `Expect(condition, description)`, prints `[PASS]`/`[FAIL]` per assertion,
-and the binary exits non-zero if any assertion failed. To add a test here, add a new
-`TestXxx()` function and call it from `main()` — there's no auto-registration. To run a single
-check, either comment out the other `TestXxx()` calls in `main()` temporarily, or grep the
-printed `[PASS]`/`[FAIL]` lines — there's no test filtering flag.
+One test executable, `test_iris`, built from every `tests/*.cpp` file plus `tests/TestMain.cpp`
+(the entry point — just `#include <cimmerian/test-entry-point.hpp>`, Cimmerian supplies
+`main()`). All tests use Cimmerian (`libs/cimmerian`, a git submodule, `CIMMERIAN_VISUAL_PLATFORM`
+forced to `None` in `CMakeLists.txt` to avoid its default X11/libXtst dependency — see the
+comment there): `DESCRIBE("GroupName", { IT("description", { ...; ASSERT_TRUE(cond); ... }); })`,
+auto-registered — no `RunXTests()`-called-from-`main()` wiring needed, just add a new `IT(...)`
+inside the relevant file's `DESCRIBE` block (or a new file, since it's auto-registered
+regardless of which translation unit it's compiled in — just add it to `CMakeLists.txt`'s
+`test_iris` source list). `ASSERT_TRUE`/`ASSERT_FALSE`/`ASSERT_EQUAL`/`ASSERT_NOT_EQUAL` report
+and continue; `REQUIRE_TRUE`/`REQUIRE_EQUAL` halt the current test (via `return`) on failure —
+use those for a guard check something later in the same test would crash on (e.g. `size() == 1`
+before indexing `[0]`), matching what used to be an explicit `if (...) return;` after a failed
+`Expect()`.
 
-`iris_cimmerian_tests` (`tests/cimmerian/`) uses Cimmerian (`libs/cimmerian`, a git submodule,
-`CIMMERIAN_VISUAL_PLATFORM` forced to `None` in `CMakeLists.txt` to avoid its default X11/
-libXtst dependency — see the comment there) — `DESCRIBE`/`IT`/`ASSERT_EQUAL` BDD-style tests,
-auto-registered, with its own `TestRunner::RunAll()` entry point
-(`tests/cimmerian/CimmerianTestMain.cpp`). This is the intended tool for new tests going
-forward (`docs/iris_stage2_decision_doc.md` §7); `iris_tests`' existing tests weren't migrated.
+**Preprocessor gotcha specific to this style:** `IT`/`DESCRIBE` are function-like macros, and
+the C preprocessor's macro-argument scanner balances only `(` `)`, not `{` `}` — so a `{a, b}`
+brace-init-list or aggregate-init written directly inside an `IT(...)` body (not nested inside
+some other call's own parens) splits into extra macro arguments and fails to compile with a
+"macro 'IT' passed N arguments" error. Fix by wrapping the literal in an extra pair of parens
+(`SomeType({a, b})`) or moving it into a small helper function outside the `DESCRIBE` block —
+several existing tests do exactly this (e.g. `tests/ImportResolverTests.cpp`'s `OneImport`/
+`SearchPaths` helpers, `tests/IrisComponentTests.cpp`'s parenthesized constructor call).
+
+Previously split across a hand-rolled `iris_tests` executable (predating Cimmerian being
+vendored — each `TestXxx()` called a hand-rolled `Expect(condition, description)`, no
+auto-registration) and a separate `iris_cimmerian_tests`; coalesced into this one binary once
+every file was migrated to Cimmerian's style (`docs/iris_stage2_decision_doc.md` §7 always
+intended Cimmerian as the long-term tool).
 
 ## Architecture
 
@@ -141,5 +154,17 @@ recomputes each slot's absolute index fresh on every reconcile, so a list-return
 subsequent siblings shift correctly as its own length changes across re-renders. Verified
 against real Penumbra `Box`/`Label` objects, not just a mock: a live `iris::Signal` update
 reaching a real `Box::Children` vector end to end, and under AddressSanitizer (which caught and
-led to a fix for a real destruction-order use-after-free among sibling `<Slot>`s). Still open:
-nested-`<Slot>` discovery (a `<Slot>` inside another `<Slot>`'s own dynamic output).
+led to a fix for a real destruction-order use-after-free among sibling `<Slot>`s).
+
+**Nested `<Slot>` discovery is also done** (`docs/iris_nested_slot_discovery_decision.md`): a
+`<Slot>` nested inside another `<Slot>`'s own dynamically-produced output — the common case of
+rendering a child component whose own `render { }` body contains its own `<Slot>` — now gets
+found and given its own independent `SlotState`, reacting to its own signals without the outer
+`<Slot>` needing to re-render. `SlotState::NestedSlots_` is rebuilt from scratch (via the same
+`ResolveSlots()` walk above) on every `Reconcile()` call of the slot that contains it, mount and
+re-render alike — simpler and safer than trying to persist unchanged nested slots across a
+parent re-render, at the cost of unnecessarily re-running an unaffected nested `<Slot>`'s own
+callable whenever its outer parent re-renders for an unrelated reason. Still open: avoiding that
+rediscovery when the underlying subtree was reused unchanged, and a `<Slot>`'s own list output
+containing a *bare* `<Slot>` entry directly (rather than nested inside an ordinary wrapper
+element).

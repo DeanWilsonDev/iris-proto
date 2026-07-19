@@ -1,21 +1,11 @@
+#include "cimmerian/test.hpp"
+
 #include "Iris/Codegen.h"
 #include "Iris/RenderBlockParser.h"
 
-#include <cstdio>
 #include <string>
 
-extern int Failures; // defined in CppTokenizerTests.cpp
-
 namespace {
-
-void Expect(bool Condition, const std::string& Description) {
-    if (Condition) {
-        std::printf("[PASS] %s\n", Description.c_str());
-    } else {
-        std::printf("[FAIL] %s\n", Description.c_str());
-        ++Failures;
-    }
-}
 
 // Parses one render block and hands its root straight to codegen — Codegen only
 // consumes RenderBlockParser's output, never re-parses source itself.
@@ -32,264 +22,247 @@ bool Contains(const std::string& Haystack, std::string_view Needle) {
     return Haystack.find(Needle) != std::string::npos;
 }
 
-void TestSimplePrimitiveWithStringAndEscapeHatchProps() {
-    const auto Result = Generate(R"(render {
-        <Frame class="start-menu" onPress={[&]() { x.set(true); }} />
-    })");
-    Expect(Result.Errors.empty(), "Frame with class + onPress codegens with no errors");
-    Expect(Contains(Result.Source, "Iris::IrisElementTag::Frame"), "tag is Iris::IrisElementTag::Frame");
-    Expect(Contains(Result.Source, "std::in_place_type<std::string>, \"start-menu\""),
-           "class is wrapped in_place_type<std::string> with the quoted literal");
-    Expect(Contains(Result.Source, "std::in_place_type<std::function<void()>>, [&]() { x.set(true); }"),
-           "onPress is wrapped in_place_type<std::function<void()>> with the escape hatch verbatim");
-}
+} // namespace
 
-void TestUnknownPropOnPrimitiveIsAnError() {
-    const auto Result = Generate(R"(render { <Frame nonsense="x" /> })");
-    Expect(!Result.Errors.empty(), "unknown prop name on a Core primitive is a codegen error");
-    Expect(Result.Source.empty(), "no source is emitted when there are codegen errors");
-}
+DESCRIBE("Codegen", {
+    IT("a simple primitive with a string prop and an escape-hatch prop", {
+        const auto Result = Generate(R"(render {
+            <Frame class="start-menu" onPress={[&]() { x.set(true); }} />
+        })");
+        ASSERT_TRUE(Result.Errors.empty()); // Frame with class + onPress codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "Iris::IrisElementTag::Frame")); // tag is Iris::IrisElementTag::Frame
+        ASSERT_TRUE(Contains(Result.Source, "std::in_place_type<std::string>, \"start-menu\""));
+        // class is wrapped in_place_type<std::string> with the quoted literal
+        ASSERT_TRUE(Contains(Result.Source, "std::in_place_type<std::function<void()>>, [&]() { x.set(true); }"));
+        // onPress is wrapped in_place_type<std::function<void()>> with the escape hatch verbatim
+    });
 
-void TestNestedElementChildRecurses() {
-    const auto Result = Generate(R"(render {
-        <Frame class="outer"><Frame class="inner" /></Frame>
-    })");
-    Expect(Result.Errors.empty(), "nested Frame children codegen with no errors");
-    const std::size_t OuterPos = Result.Source.find("\"outer\"");
-    const std::size_t InnerPos = Result.Source.find("\"inner\"");
-    Expect(OuterPos != std::string::npos && InnerPos != std::string::npos && OuterPos < InnerPos,
-           "inner Frame's expression is nested inside the outer Frame's Children list");
-}
+    IT("an unknown prop on a primitive is an error", {
+        const auto Result = Generate(R"(render { <Frame nonsense="x" /> })");
+        ASSERT_FALSE(Result.Errors.empty()); // unknown prop name on a Core primitive is a codegen error
+        ASSERT_TRUE(Result.Source.empty());  // no source is emitted when there are codegen errors
+    });
 
-void TestImageWithChildIsAnError() {
-    const auto Result = Generate(R"(render { <Image src="a.png"><Frame /></Image> })");
-    Expect(!Result.Errors.empty(), "<Image> (a leaf) with a child is a codegen error");
-}
+    IT("a nested element child recurses", {
+        const auto Result = Generate(R"(render {
+            <Frame class="outer"><Frame class="inner" /></Frame>
+        })");
+        ASSERT_TRUE(Result.Errors.empty()); // nested Frame children codegen with no errors
+        const std::size_t OuterPos = Result.Source.find("\"outer\"");
+        const std::size_t InnerPos = Result.Source.find("\"inner\"");
+        ASSERT_TRUE(OuterPos != std::string::npos && InnerPos != std::string::npos && OuterPos < InnerPos);
+        // inner Frame's expression is nested inside the outer Frame's Children list
+    });
 
-void TestFrameWithTextChildIsAnError() {
-    const auto Result = Generate(R"(render { <Frame>hello</Frame> })");
-    Expect(!Result.Errors.empty(), "<Frame> with a literal-text child is a codegen error");
-}
+    IT("Image with a child is an error", {
+        const auto Result = Generate(R"(render { <Image src="a.png"><Frame /></Image> })");
+        ASSERT_FALSE(Result.Errors.empty()); // <Image> (a leaf) with a child is a codegen error
+    });
 
-void TestTextPrimitiveConcatenatesMixedChildren() {
-    const auto Result = Generate(R"(render { <Text>Hello {name}!</Text> })");
-    Expect(Result.Errors.empty(), "<Text> with mixed literal/escape-hatch children codegens with no errors");
-    Expect(Contains(Result.Source, "\"text\""), "content lands in a \"text\" prop");
-    // RenderBlockParser trims each literal-text run on flush, including the space
-    // adjacent to a following escape hatch (docs/iris_stage1_codegen_decision.md notes
-    // this concatenation scheme; the trimming itself is pre-existing RenderBlockParser
-    // behavior, not something codegen controls) — so "Hello " arrives as "Hello".
-    Expect(Contains(Result.Source, "\"Hello\" + name + \"!\""),
-           "literal runs and escape hatches join with '+' in source order");
-    Expect(!Contains(Result.Source, "Children"), "<Text> never uses a literal 'Children' identifier in its own emission");
-}
+    IT("Frame with a literal-text child is an error", {
+        const auto Result = Generate(R"(render { <Frame>hello</Frame> })");
+        ASSERT_FALSE(Result.Errors.empty()); // <Frame> with a literal-text child is a codegen error
+    });
 
-void TestTextWithNestedElementIsAnError() {
-    const auto Result = Generate(R"(render { <Text><Frame /></Text> })");
-    Expect(!Result.Errors.empty(), "<Text> with a nested element child is a codegen error");
-}
+    IT("Text concatenates mixed children", {
+        const auto Result = Generate(R"(render { <Text>Hello {name}!</Text> })");
+        ASSERT_TRUE(Result.Errors.empty()); // <Text> with mixed literal/escape-hatch children codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "\"text\"")); // content lands in a "text" prop
+        // RenderBlockParser trims each literal-text run on flush, including the space
+        // adjacent to a following escape hatch (docs/iris_stage1_codegen_decision.md notes
+        // this concatenation scheme; the trimming itself is pre-existing RenderBlockParser
+        // behavior, not something codegen controls) — so "Hello " arrives as "Hello".
+        ASSERT_TRUE(Contains(Result.Source, "\"Hello\" + name + \"!\""));
+        // literal runs and escape hatches join with '+' in source order
+        ASSERT_FALSE(Contains(Result.Source, "Children"));
+        // <Text> never uses a literal 'Children' identifier in its own emission
+    });
 
-void TestInlineWrapsTextChildrenAsSyntheticTextNodes() {
-    const auto Result = Generate(R"(render {
-        <Inline>Score: {points}<Frame class="badge" /></Inline>
-    })");
-    Expect(Result.Errors.empty(), "<Inline> with mixed children codegens with no errors");
-    Expect(Contains(Result.Source, "Iris::IrisElementTag::Text"),
-           "a synthetic Text node is emitted for Inline's literal/escape-hatch runs");
-    Expect(Contains(Result.Source, "\"badge\""), "the real nested Frame child is still emitted");
-}
+    IT("Text with a nested element child is an error", {
+        const auto Result = Generate(R"(render { <Text><Frame /></Text> })");
+        ASSERT_FALSE(Result.Errors.empty()); // <Text> with a nested element child is a codegen error
+    });
 
-void TestSlotWithSingleEscapeHatchChild() {
-    const auto Result = Generate(R"(render {
-        <Slot>{[&]() -> IrisComponent { return nullptr; }}</Slot>
-    })");
-    Expect(Result.Errors.empty(), "<Slot> with exactly one escape-hatch child codegens with no errors");
-    Expect(Contains(Result.Source, "Iris::MakeSlotCallable([&]() -> IrisComponent { return nullptr; })"),
-           "the lambda is passed to Iris::MakeSlotCallable verbatim");
-}
+    IT("Inline wraps text children as synthetic Text nodes", {
+        const auto Result = Generate(R"(render {
+            <Inline>Score: {points}<Frame class="badge" /></Inline>
+        })");
+        ASSERT_TRUE(Result.Errors.empty()); // <Inline> with mixed children codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "Iris::IrisElementTag::Text"));
+        // a synthetic Text node is emitted for Inline's literal/escape-hatch runs
+        ASSERT_TRUE(Contains(Result.Source, "\"badge\"")); // the real nested Frame child is still emitted
+    });
 
-void TestSlotWithWrongArityIsAnError() {
-    const auto Result = Generate(R"(render { <Slot></Slot> })");
-    Expect(!Result.Errors.empty(), "<Slot> with zero children is a codegen error");
-}
+    IT("Slot with a single escape-hatch child", {
+        const auto Result = Generate(R"(render {
+            <Slot>{[&]() -> IrisComponent { return nullptr; }}</Slot>
+        })");
+        ASSERT_TRUE(Result.Errors.empty()); // <Slot> with exactly one escape-hatch child codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "Iris::MakeSlotCallable([&]() -> IrisComponent { return nullptr; })"));
+        // the lambda is passed to Iris::MakeSlotCallable verbatim
+    });
 
-void TestSlotWithNonEscapeHatchChildIsAnError() {
-    const auto Result = Generate(R"(render { <Slot><Frame /></Slot> })");
-    Expect(!Result.Errors.empty(), "<Slot> with a nested-element child instead of an escape hatch is a codegen error");
-}
+    IT("Slot with the wrong arity is an error", {
+        const auto Result = Generate(R"(render { <Slot></Slot> })");
+        ASSERT_FALSE(Result.Errors.empty()); // <Slot> with zero children is a codegen error
+    });
 
-void TestComponentInvocationEmitsNamePropsConvention() {
-    const auto Result = Generate(
-        R"(render { <HealthBar current={player.health} max={player.maxHealth} label="HP" /> })");
-    Expect(Result.Errors.empty(), "an imported-component-shaped element codegens with no errors");
-    Expect(Contains(Result.Source, "HealthBar(HealthBarProps{"),
-           "unrecognised tag becomes a call to Name(NameProps{...}) per the <Name>Props convention");
-    Expect(Contains(Result.Source, ".current = player.health"), "escape-hatch prop values pass through verbatim");
-    Expect(Contains(Result.Source, ".label = \"HP\""), "string-literal prop values are quoted verbatim");
-}
+    IT("Slot with a non-escape-hatch child is an error", {
+        const auto Result = Generate(R"(render { <Slot><Frame /></Slot> })");
+        ASSERT_FALSE(Result.Errors.empty());
+        // <Slot> with a nested-element child instead of an escape hatch is a codegen error
+    });
 
-void TestComponentInvocationIsWrappedInMountComponentInstance() {
-    // docs/iris_signal_lifetime_decision.md: every component invocation is wrapped so
-    // any IRIS_SIGNAL declared inside <Name>'s own body allocates against a heap-owned
-    // ComponentInstance instead of a stack local.
-    const auto Result = Generate(R"(render { <HealthBar current={1} max={2} /> })");
-    Expect(Result.Errors.empty(), "codegens with no errors");
-    Expect(Contains(Result.Source, "iris::MountComponentInstance([&]() -> Iris::IrisComponent { return "
-                                   "HealthBar(HealthBarProps{"),
-           "the invocation is wrapped in iris::MountComponentInstance");
-}
+    IT("a component invocation emits the Name(NameProps{...}) convention", {
+        const auto Result = Generate(
+            R"(render { <HealthBar current={player.health} max={player.maxHealth} label="HP" /> })");
+        ASSERT_TRUE(Result.Errors.empty()); // an imported-component-shaped element codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "HealthBar(HealthBarProps{"));
+        // unrecognised tag becomes a call to Name(NameProps{...}) per the <Name>Props convention
+        ASSERT_TRUE(Contains(Result.Source, ".current = player.health")); // escape-hatch prop values pass through verbatim
+        ASSERT_TRUE(Contains(Result.Source, ".label = \"HP\"")); // string-literal prop values are quoted verbatim
+    });
 
-void TestComponentInvocationWithChildrenIsAnError() {
-    const auto Result = Generate(R"(render { <HealthBar current={1} max={2}><Frame /></HealthBar> })");
-    Expect(!Result.Errors.empty(),
-           "a component element with children is a codegen error (implicit children forwarding unimplemented)");
-}
+    IT("a component invocation is wrapped in MountComponentInstance", {
+        // docs/iris_signal_lifetime_decision.md: every component invocation is wrapped so
+        // any IRIS_SIGNAL declared inside <Name>'s own body allocates against a heap-owned
+        // ComponentInstance instead of a stack local.
+        const auto Result = Generate(R"(render { <HealthBar current={1} max={2} /> })");
+        ASSERT_TRUE(Result.Errors.empty()); // codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "iris::MountComponentInstance([&]() -> Iris::IrisComponent { return "
+                                            "HealthBar(HealthBarProps{"));
+        // the invocation is wrapped in iris::MountComponentInstance
+    });
 
-void TestPartyScreenOuterLevelCodegens() {
-    // The spec §9 PartyScreen example, one level deep: RenderBlockParser captures a
-    // <Slot>'s escape-hatch body verbatim, including any JSX-looking text inside it
-    // (docs/iris_core_spec.md §1.4 — tested directly in
-    // TestEscapeHatchContainingAngleBracketsIsOpaque, tests/RenderBlockParserTests.cpp).
-    // Codegen therefore only transforms what's structurally outside escape hatches;
-    // this test covers exactly that boundary, not the nested <Frame> inside the lambda.
-    const auto Result = Generate(R"(render {
-        <Frame class="party-screen">
-            <Button label="Details" onPress={[&]() { detailsOpen.set(true); }} />
+    IT("a component invocation with children is an error", {
+        const auto Result = Generate(R"(render { <HealthBar current={1} max={2}><Frame /></HealthBar> })");
+        ASSERT_FALSE(Result.Errors.empty());
+        // a component element with children is a codegen error (implicit children forwarding unimplemented)
+    });
+
+    IT("the PartyScreen example's outer level codegens", {
+        // The spec §9 PartyScreen example, one level deep: RenderBlockParser captures a
+        // <Slot>'s escape-hatch body verbatim, including any JSX-looking text inside it
+        // (docs/iris_core_spec.md §1.4 — tested directly in RenderBlockParserTests.cpp's
+        // "an escape hatch containing angle brackets is opaque" test). Codegen therefore
+        // only transforms what's structurally outside escape hatches; this test covers
+        // exactly that boundary, not the nested <Frame> inside the lambda.
+        const auto Result = Generate(R"(render {
+            <Frame class="party-screen">
+                <Button label="Details" onPress={[&]() { detailsOpen.set(true); }} />
+                <Slot>
+                    {[&]() -> IrisComponent {
+                        if (!detailsOpen.get()) return nullptr;
+                        return <Frame class="details-panel"></Frame>;
+                    }}
+                </Slot>
+            </Frame>
+        })");
+        ASSERT_TRUE(Result.Errors.empty()); // PartyScreen's outer structure codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "Button(ButtonProps{")); // Button is emitted as a component invocation
+        ASSERT_TRUE(Contains(Result.Source, "Iris::MakeSlotCallable")); // the outer Slot is emitted with MakeSlotCallable
+        ASSERT_TRUE(Contains(Result.Source, "return <Frame class=\"details-panel\"></Frame>;"));
+        // the Slot's escape-hatch body — JSX and all — passes through verbatim, unparsed
+    });
+
+    IT("a !{ } JSX-transform escape hatch splices in the generated nested element", {
+        // Same shape as the outer-level PartyScreen test above, but with `!{ }` instead
+        // of `{ }` — this time the nested <Frame> JSX must actually be transformed into
+        // a real Iris::IrisComponent-constructing expression and spliced back into
+        // the surrounding lambda text (docs/iris_next_steps.md, "Resolved: JSX inside
+        // escape hatches"), not passed through verbatim.
+        const auto Result = Generate(R"(render {
             <Slot>
-                {[&]() -> IrisComponent {
+                !{[&]() -> IrisComponent {
                     if (!detailsOpen.get()) return nullptr;
                     return <Frame class="details-panel"></Frame>;
                 }}
             </Slot>
-        </Frame>
-    })");
-    Expect(Result.Errors.empty(), "PartyScreen's outer structure codegens with no errors");
-    Expect(Contains(Result.Source, "Button(ButtonProps{"), "Button is emitted as a component invocation");
-    Expect(Contains(Result.Source, "Iris::MakeSlotCallable"), "the outer Slot is emitted with MakeSlotCallable");
-    Expect(Contains(Result.Source, "return <Frame class=\"details-panel\"></Frame>;"),
-           "the Slot's escape-hatch body — JSX and all — passes through verbatim, unparsed");
-}
+        })");
+        ASSERT_TRUE(Result.Errors.empty()); // <Slot> with a !{ } JSX-transform escape hatch codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "Iris::MakeSlotCallable")); // the Slot is emitted with MakeSlotCallable
+        ASSERT_FALSE(Contains(Result.Source, "<Frame")); // the raw <Frame ...> JSX text is gone from the generated source
+        ASSERT_TRUE(Contains(Result.Source, "Iris::IrisComponent{Iris::IrisElementTag::Frame"));
+        // the nested <Frame> was transformed into a real Iris::IrisComponent-constructing expression
+        ASSERT_TRUE(Contains(Result.Source, "if (!detailsOpen.get()) return nullptr;") &&
+                    Contains(Result.Source, "return Iris::IrisComponent{Iris::IrisElementTag::Frame"));
+        // the surrounding lambda text is preserved around the spliced-in expression
+    });
 
-void TestJsxTransformEscapeHatchSplicesGeneratedNestedElement() {
-    // Same shape as TestPartyScreenOuterLevelCodegens, but with `!{ }` instead of
-    // `{ }` — this time the nested <Frame> JSX must actually be transformed into
-    // a real Iris::IrisComponent-constructing expression and spliced back into
-    // the surrounding lambda text (docs/iris_next_steps.md, "Resolved: JSX inside
-    // escape hatches"), not passed through verbatim.
-    const auto Result = Generate(R"(render {
-        <Slot>
-            !{[&]() -> IrisComponent {
-                if (!detailsOpen.get()) return nullptr;
-                return <Frame class="details-panel"></Frame>;
-            }}
-        </Slot>
-    })");
-    Expect(Result.Errors.empty(), "<Slot> with a !{ } JSX-transform escape hatch codegens with no errors");
-    Expect(Contains(Result.Source, "Iris::MakeSlotCallable"), "the Slot is emitted with MakeSlotCallable");
-    Expect(!Contains(Result.Source, "<Frame"), "the raw <Frame ...> JSX text is gone from the generated source");
-    Expect(Contains(Result.Source, "Iris::IrisComponent{Iris::IrisElementTag::Frame"),
-           "the nested <Frame> was transformed into a real Iris::IrisComponent-constructing expression");
-    Expect(Contains(Result.Source, "if (!detailsOpen.get()) return nullptr;") &&
-               Contains(Result.Source, "return Iris::IrisComponent{Iris::IrisElementTag::Frame"),
-           "the surrounding lambda text is preserved around the spliced-in expression");
-}
+    IT("the full PartyScreen example codegens with !{ } JSX-transform escape hatches", {
+        // The full spec §9 PartyScreen example, this time written with `!{ }` instead
+        // of `{ }` for both <Slot>s (docs/iris_escape_hatch_decision.md) — unlike the
+        // outer-level-only test above, every nested <Frame>/<HealthBar> is expected to
+        // be actually transformed, not passed through as raw JSX text.
+        const auto Result = Generate(R"(render {
+            <Frame class="party-screen">
+                <Button label="Details" onPress={[&]() { detailsOpen.set(true); }} />
+                <Slot>
+                    !{[&]() -> IrisComponent {
+                        if (!detailsOpen.get()) return nullptr;
+                        return <Frame class="details-panel">
+                            <Slot>
+                                !{[&]() -> std::vector<IrisComponent> {
+                                    std::vector<IrisComponent> rows;
+                                    for (auto& member : props.members) {
+                                        rows.push_back(
+                                            <Frame key={member.id} class="party-row">
+                                                <HealthBar current={member.hp} max={member.maxHp} label={member.name} />
+                                            </Frame>
+                                        );
+                                    }
+                                    return rows;
+                                }}
+                            </Slot>
+                        </Frame>;
+                    }}
+                </Slot>
+            </Frame>
+        })");
+        ASSERT_TRUE(Result.Errors.empty()); // the two-level !{ } PartyScreen example codegens with no errors
+        ASSERT_TRUE(!Contains(Result.Source, "<Frame") && !Contains(Result.Source, "<HealthBar") &&
+                    !Contains(Result.Source, "<Slot"));
+        // no raw JSX text survives anywhere in the output, including the nested list-rendering Slot
+        ASSERT_TRUE(Contains(Result.Source, "HealthBar(HealthBarProps{"));
+        // the innermost <HealthBar> component invocation was generated
 
-void TestPartyScreenFullyCodegensWithJsxTransformEscapeHatches() {
-    // The full spec §9 PartyScreen example, this time written with `!{ }` instead
-    // of `{ }` for both <Slot>s (docs/iris_escape_hatch_decision.md) — unlike
-    // TestPartyScreenOuterLevelCodegens, every nested <Frame>/<HealthBar> is
-    // expected to be actually transformed, not passed through as raw JSX text.
-    const auto Result = Generate(R"(render {
-        <Frame class="party-screen">
-            <Button label="Details" onPress={[&]() { detailsOpen.set(true); }} />
-            <Slot>
-                !{[&]() -> IrisComponent {
-                    if (!detailsOpen.get()) return nullptr;
-                    return <Frame class="details-panel">
-                        <Slot>
-                            !{[&]() -> std::vector<IrisComponent> {
-                                std::vector<IrisComponent> rows;
-                                for (auto& member : props.members) {
-                                    rows.push_back(
-                                        <Frame key={member.id} class="party-row">
-                                            <HealthBar current={member.hp} max={member.maxHp} label={member.name} />
-                                        </Frame>
-                                    );
-                                }
-                                return rows;
-                            }}
-                        </Slot>
-                    </Frame>;
-                }}
-            </Slot>
-        </Frame>
-    })");
-    Expect(Result.Errors.empty(), "the two-level !{ } PartyScreen example codegens with no errors");
-    Expect(!Contains(Result.Source, "<Frame") && !Contains(Result.Source, "<HealthBar") &&
-               !Contains(Result.Source, "<Slot"),
-           "no raw JSX text survives anywhere in the output, including the nested list-rendering Slot");
-    Expect(Contains(Result.Source, "HealthBar(HealthBarProps{"),
-           "the innermost <HealthBar> component invocation was generated");
-    // Every <Frame> in the source (root, details-panel, and the per-row Frame
-    // inside the list) must have become a real IrisComponent-constructing
-    // expression, not opaque text.
-    std::size_t FrameExpressionCount = 0;
-    std::size_t SearchPos = 0;
-    while ((SearchPos = Result.Source.find("Iris::IrisElementTag::Frame", SearchPos)) != std::string::npos) {
-        ++FrameExpressionCount;
-        SearchPos += 1;
-    }
-    Expect(FrameExpressionCount == 3, "all three <Frame> elements (root, details-panel, party-row) were transformed");
-}
+        // Every <Frame> in the source (root, details-panel, and the per-row Frame
+        // inside the list) must have become a real IrisComponent-constructing
+        // expression, not opaque text.
+        std::size_t FrameExpressionCount = 0;
+        std::size_t SearchPos = 0;
+        while ((SearchPos = Result.Source.find("Iris::IrisElementTag::Frame", SearchPos)) != std::string::npos) {
+            ++FrameExpressionCount;
+            SearchPos += 1;
+        }
+        ASSERT_EQUAL(FrameExpressionCount, static_cast<std::size_t>(3));
+        // all three <Frame> elements (root, details-panel, party-row) were transformed
+    });
 
-void TestKeyedPrimitiveWrapsBaseExpressionAndSetsKey() {
-    const auto Result = Generate(R"(render { <Frame key={member.id} class="party-row" /> })");
-    Expect(Result.Errors.empty(), "a keyed primitive codegens with no errors");
-    Expect(Contains(Result.Source, "[&]() { Iris::IrisComponent Node = Iris::IrisComponent{Iris::IrisElementTag::"
-                                   "Frame,"),
-           "the base primitive expression is wrapped in the key-setting IIFE");
-    Expect(Contains(Result.Source, "Node.Key = Iris::IrisPropValue(member.id); return Node; }()"),
-           "the key expression passes through verbatim into Iris::IrisPropValue's converting constructor");
-}
+    IT("a keyed primitive wraps the base expression and sets the key", {
+        const auto Result = Generate(R"(render { <Frame key={member.id} class="party-row" /> })");
+        ASSERT_TRUE(Result.Errors.empty()); // a keyed primitive codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "[&]() { Iris::IrisComponent Node = Iris::IrisComponent{Iris::IrisElementTag::"
+                                            "Frame,"));
+        // the base primitive expression is wrapped in the key-setting IIFE
+        ASSERT_TRUE(Contains(Result.Source, "Node.Key = Iris::IrisPropValue(member.id); return Node; }()"));
+        // the key expression passes through verbatim into Iris::IrisPropValue's converting constructor
+    });
 
-void TestKeyedComponentInvocationAlsoWrapsWithKey() {
-    const auto Result = Generate(R"(render { <HealthBar key={member.id} current={1} max={2} /> })");
-    Expect(Result.Errors.empty(), "a keyed component invocation codegens with no errors");
-    Expect(Contains(Result.Source, "[&]() { Iris::IrisComponent Node = iris::MountComponentInstance([&]() -> "
-                                   "Iris::IrisComponent { return HealthBar(HealthBarProps{"),
-           "the base component-invocation call (itself wrapped in iris::MountComponentInstance, "
-           "docs/iris_signal_lifetime_decision.md) is wrapped in the key-setting IIFE the same way "
-           "a primitive's is — key handling is uniform across every element kind");
-    Expect(Contains(Result.Source, "Node.Key = Iris::IrisPropValue(member.id); return Node; }()"),
-           "and the key is set on the invocation's returned IrisComponent afterward");
-}
+    IT("a keyed component invocation also wraps with the key", {
+        const auto Result = Generate(R"(render { <HealthBar key={member.id} current={1} max={2} /> })");
+        ASSERT_TRUE(Result.Errors.empty()); // a keyed component invocation codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "[&]() { Iris::IrisComponent Node = iris::MountComponentInstance([&]() -> "
+                                            "Iris::IrisComponent { return HealthBar(HealthBarProps{"));
+        // the base component-invocation call (itself wrapped in iris::MountComponentInstance,
+        // docs/iris_signal_lifetime_decision.md) is wrapped in the key-setting IIFE the same way
+        // a primitive's is — key handling is uniform across every element kind
+        ASSERT_TRUE(Contains(Result.Source, "Node.Key = Iris::IrisPropValue(member.id); return Node; }()"));
+        // and the key is set on the invocation's returned IrisComponent afterward
+    });
 
-void TestUnkeyedElementHasNoWrapping() {
-    const auto Result = Generate(R"(render { <Frame class="a" /> })");
-    Expect(!Contains(Result.Source, "Node.Key"), "an element with no key prop gets no IIFE wrapping at all");
-}
-
-} // namespace
-
-void RunCodegenTests() {
-    TestSimplePrimitiveWithStringAndEscapeHatchProps();
-    TestUnknownPropOnPrimitiveIsAnError();
-    TestNestedElementChildRecurses();
-    TestImageWithChildIsAnError();
-    TestFrameWithTextChildIsAnError();
-    TestTextPrimitiveConcatenatesMixedChildren();
-    TestTextWithNestedElementIsAnError();
-    TestInlineWrapsTextChildrenAsSyntheticTextNodes();
-    TestSlotWithSingleEscapeHatchChild();
-    TestSlotWithWrongArityIsAnError();
-    TestSlotWithNonEscapeHatchChildIsAnError();
-    TestComponentInvocationEmitsNamePropsConvention();
-    TestComponentInvocationIsWrappedInMountComponentInstance();
-    TestComponentInvocationWithChildrenIsAnError();
-    TestPartyScreenOuterLevelCodegens();
-    TestJsxTransformEscapeHatchSplicesGeneratedNestedElement();
-    TestPartyScreenFullyCodegensWithJsxTransformEscapeHatches();
-    TestKeyedPrimitiveWrapsBaseExpressionAndSetsKey();
-    TestKeyedComponentInvocationAlsoWrapsWithKey();
-    TestUnkeyedElementHasNoWrapping();
-}
+    IT("an unkeyed element gets no IIFE wrapping", {
+        const auto Result = Generate(R"(render { <Frame class="a" /> })");
+        ASSERT_FALSE(Contains(Result.Source, "Node.Key")); // an element with no key prop gets no IIFE wrapping at all
+    });
+});

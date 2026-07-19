@@ -1,22 +1,11 @@
+#include "cimmerian/test.hpp"
+
 #include "Iris/Reconciler.h"
 
-#include <cstdio>
-#include <functional>
 #include <set>
 #include <string>
 
-extern int Failures; // defined in CppTokenizerTests.cpp
-
 namespace {
-
-void Expect(bool Condition, const std::string& Description) {
-    if (Condition) {
-        std::printf("[PASS] %s\n", Description.c_str());
-    } else {
-        std::printf("[FAIL] %s\n", Description.c_str());
-        ++Failures;
-    }
-}
 
 // A minimal Umbra::IWidget for testing the reconciler purely against the interface —
 // no real backend needed. Tracks its own construction/destruction in a shared set so
@@ -113,178 +102,174 @@ private:
     int* MountCount_;
 };
 
-void TestComputePropDiffOnlyIncludesChangedFields() {
-    Iris::IrisProps Old;
-    Old["class"] = Iris::IrisPropValue{std::string("a")};
-    Iris::IrisProps New;
-    New["class"] = Iris::IrisPropValue{std::string("a")};    // unchanged
-    New["text"] = Iris::IrisPropValue{std::string("hello")}; // new
-
-    const auto Diff = iris::ComputePropDiff(Old, New);
-    Expect(!Diff.ClassName.has_value(), "an unchanged prop value is omitted from the diff");
-    Expect(Diff.Text.has_value() && *Diff.Text == "hello", "a new/changed prop value is included");
-}
-
-void TestComputePropDiffEventPropsAlwaysIncludedWhenPresent() {
-    Iris::IrisProps New;
-    New["onPress"] = Iris::IrisPropValue{std::function<void()>([]() {})};
-    const auto Diff = iris::ComputePropDiff({}, New);
-    Expect(Diff.OnPress.has_value(), "an event prop present in New is always included (no operator== to compare)");
-}
-
-void TestReconcileWidgetMountsFreshWhenNoWidgetExists() {
-    int                              MountCount = 0;
-    TestMounter                       Mount(&MountCount);
-    std::unique_ptr<Umbra::IWidget>  Widget;
-    const auto                        Old = Iris::IrisComponent(nullptr);
-    const auto                        New = MakeNode(Iris::IrisElementTag::Frame);
-
-    iris::ReconcileWidget(Widget, Old, New, Mount);
-    Expect(Widget != nullptr, "a fresh mount produces a widget");
-    Expect(MountCount == 1, "Mount was called exactly once");
-}
-
-void TestReconcileWidgetUpdatesInPlaceOnSameTagAndKey() {
-    int         MountCount = 0;
-    TestMounter Mount(&MountCount);
-
-    Iris::IrisProps InitialProps;
-    InitialProps["class"] = Iris::IrisPropValue{std::string("a")};
-    const auto Old = MakeNode(Iris::IrisElementTag::Frame, InitialProps, {}, Iris::IrisPropValue(1));
-
-    std::unique_ptr<Umbra::IWidget> Widget;
-    iris::ReconcileWidget(Widget, Iris::IrisComponent(nullptr), Old, Mount);
-    const int OriginalMountCount = MountCount;
-    const auto* AsMock = dynamic_cast<MockWidget*>(Widget.get());
-    const int   OriginalId = AsMock->Id;
-
-    Iris::IrisProps UpdatedProps;
-    UpdatedProps["class"] = Iris::IrisPropValue{std::string("b")};
-    const auto New = MakeNode(Iris::IrisElementTag::Frame, UpdatedProps, {}, Iris::IrisPropValue(1));
-
-    iris::ReconcileWidget(Widget, Old, New, Mount);
-    AsMock = dynamic_cast<MockWidget*>(Widget.get());
-    Expect(MountCount == OriginalMountCount, "same tag + same key: no remount, Mount is not called again");
-    Expect(AsMock->Id == OriginalId, "the same widget object is reused — identity preserved");
-    Expect(AsMock->ClassName == "b", "the prop diff was applied to the reused widget");
-}
-
-void TestReconcileWidgetRemountsOnTagMismatch() {
-    int         MountCount = 0;
-    TestMounter Mount(&MountCount);
-
-    const auto Old = MakeNode(Iris::IrisElementTag::Frame);
-    std::unique_ptr<Umbra::IWidget> Widget;
-    iris::ReconcileWidget(Widget, Iris::IrisComponent(nullptr), Old, Mount);
-    const int OldId = dynamic_cast<MockWidget*>(Widget.get())->Id;
-    Expect(AliveWidgetIds.count(OldId) == 1, "the original widget is alive before the remount");
-
-    const auto New = MakeNode(Iris::IrisElementTag::Text);
-    iris::ReconcileWidget(Widget, Old, New, Mount);
-
-    Expect(AliveWidgetIds.count(OldId) == 0, "a tag mismatch unmounts (destroys) the old widget");
-    Expect(dynamic_cast<MockWidget*>(Widget.get())->Tag == "Text", "and mounts a fresh widget for the new tag");
-}
-
-void TestReconcileWidgetNoneUnmountsAndMountsNothing() {
-    int         MountCount = 0;
-    TestMounter Mount(&MountCount);
-
-    const auto Old = MakeNode(Iris::IrisElementTag::Frame);
-    std::unique_ptr<Umbra::IWidget> Widget;
-    iris::ReconcileWidget(Widget, Iris::IrisComponent(nullptr), Old, Mount);
-    const int OldId = dynamic_cast<MockWidget*>(Widget.get())->Id;
-
-    const Iris::IrisComponent NewNone(nullptr);
-    iris::ReconcileWidget(Widget, Old, NewNone, Mount);
-
-    Expect(AliveWidgetIds.count(OldId) == 0, "transitioning to None unmounts the old widget");
-    Expect(Widget == nullptr, "and Widget ends up null — no widget for None");
-}
-
-void TestReconcileWidgetRecursesIntoChildren() {
-    int         MountCount = 0;
-    TestMounter Mount(&MountCount);
-
-    std::vector<Iris::IrisComponent> OldChildren;
-    OldChildren.push_back(MakeNode(Iris::IrisElementTag::Text));
-    const auto Old = MakeNode(Iris::IrisElementTag::Frame, {}, std::move(OldChildren));
-
-    std::unique_ptr<Umbra::IWidget> Widget;
-    iris::ReconcileWidget(Widget, Iris::IrisComponent(nullptr), Old, Mount);
-    const int ChildId = dynamic_cast<MockWidget*>(Widget->GetChildAt(0))->Id;
-
-    Iris::IrisProps ChildProps;
-    ChildProps["text"] = Iris::IrisPropValue{std::string("updated")};
-    std::vector<Iris::IrisComponent> NewChildren;
-    NewChildren.push_back(MakeNode(Iris::IrisElementTag::Text, ChildProps));
-    const auto New = MakeNode(Iris::IrisElementTag::Frame, {}, std::move(NewChildren));
-
-    iris::ReconcileWidget(Widget, Old, New, Mount);
-    Expect(Widget->GetChildCount() == 1, "still exactly one child");
-    const auto* AsMockChild = dynamic_cast<MockWidget*>(Widget->GetChildAt(0));
-    Expect(AsMockChild->Id == ChildId, "the child widget's identity is preserved across the parent's own reconcile");
-    Expect(AsMockChild->Text == "updated", "and the child's own prop diff was applied");
-}
-
-void TestReconcileChildrenPreservesIdentityAcrossReorderByKey() {
-    int         MountCount = 0;
-    TestMounter Mount(&MountCount);
-
-    std::vector<Iris::IrisComponent> OldList;
-    OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
-    OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
-
-    std::vector<std::unique_ptr<Umbra::IWidget>> Widgets;
-    iris::ReconcileChildren(Widgets, {}, OldList, Mount);
-    Expect(Widgets.size() == 2, "both list items mounted");
-    const int Id1 = dynamic_cast<MockWidget*>(Widgets[0].get())->Id; // key 1
-    const int Id2 = dynamic_cast<MockWidget*>(Widgets[1].get())->Id; // key 2
-
-    // Reordered: key 2 now comes first.
-    std::vector<Iris::IrisComponent> NewList;
-    NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
-    NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
-
-    iris::ReconcileChildren(Widgets, OldList, NewList, Mount);
-    Expect(Widgets.size() == 2, "still two widgets after reordering");
-    Expect(dynamic_cast<MockWidget*>(Widgets[0].get())->Id == Id2,
-           "the key-2 widget object is reused in its new (first) position");
-    Expect(dynamic_cast<MockWidget*>(Widgets[1].get())->Id == Id1,
-           "the key-1 widget object is reused in its new (second) position");
-}
-
-void TestReconcileChildrenUnmountsRemovedAndMountsAdded() {
-    int         MountCount = 0;
-    TestMounter Mount(&MountCount);
-
-    std::vector<Iris::IrisComponent> OldList;
-    OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
-    OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
-
-    std::vector<std::unique_ptr<Umbra::IWidget>> Widgets;
-    iris::ReconcileChildren(Widgets, {}, OldList, Mount);
-    const int RemovedId = dynamic_cast<MockWidget*>(Widgets[1].get())->Id; // key 2 will be removed
-
-    std::vector<Iris::IrisComponent> NewList;
-    NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
-    NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(3))); // new key
-
-    iris::ReconcileChildren(Widgets, OldList, NewList, Mount);
-    Expect(Widgets.size() == 2, "still two widgets — one removed, one added");
-    Expect(AliveWidgetIds.count(RemovedId) == 0, "the widget for the removed key was actually unmounted");
-}
-
 } // namespace
 
-void RunReconcilerTests() {
-    TestComputePropDiffOnlyIncludesChangedFields();
-    TestComputePropDiffEventPropsAlwaysIncludedWhenPresent();
-    TestReconcileWidgetMountsFreshWhenNoWidgetExists();
-    TestReconcileWidgetUpdatesInPlaceOnSameTagAndKey();
-    TestReconcileWidgetRemountsOnTagMismatch();
-    TestReconcileWidgetNoneUnmountsAndMountsNothing();
-    TestReconcileWidgetRecursesIntoChildren();
-    TestReconcileChildrenPreservesIdentityAcrossReorderByKey();
-    TestReconcileChildrenUnmountsRemovedAndMountsAdded();
-}
+DESCRIBE("Reconciler", {
+    IT("ComputePropDiff only includes changed fields", {
+        Iris::IrisProps Old;
+        Old["class"] = Iris::IrisPropValue{std::string("a")};
+        Iris::IrisProps New;
+        New["class"] = Iris::IrisPropValue{std::string("a")};    // unchanged
+        New["text"] = Iris::IrisPropValue{std::string("hello")}; // new
+
+        const auto Diff = iris::ComputePropDiff(Old, New);
+        ASSERT_FALSE(Diff.ClassName.has_value()); // an unchanged prop value is omitted from the diff
+        ASSERT_TRUE(Diff.Text.has_value() && *Diff.Text == "hello"); // a new/changed prop value is included
+    });
+
+    IT("ComputePropDiff always includes event props when present", {
+        Iris::IrisProps New;
+        New["onPress"] = Iris::IrisPropValue{std::function<void()>([]() {})};
+        const auto Diff = iris::ComputePropDiff({}, New);
+        ASSERT_TRUE(Diff.OnPress.has_value()); // an event prop present in New is always included (no operator== to compare)
+    });
+
+    IT("ReconcileWidget mounts fresh when no widget exists", {
+        int                              MountCount = 0;
+        TestMounter                       Mount(&MountCount);
+        std::unique_ptr<Umbra::IWidget>  Widget;
+        const auto                        Old = Iris::IrisComponent(nullptr);
+        const auto                        New = MakeNode(Iris::IrisElementTag::Frame);
+
+        iris::ReconcileWidget(Widget, Old, New, Mount);
+        ASSERT_TRUE(Widget != nullptr); // a fresh mount produces a widget
+        ASSERT_EQUAL(MountCount, 1);    // Mount was called exactly once
+    });
+
+    IT("ReconcileWidget updates in place on the same tag and key", {
+        int         MountCount = 0;
+        TestMounter Mount(&MountCount);
+
+        Iris::IrisProps InitialProps;
+        InitialProps["class"] = Iris::IrisPropValue{std::string("a")};
+        const auto Old = MakeNode(Iris::IrisElementTag::Frame, InitialProps, {}, Iris::IrisPropValue(1));
+
+        std::unique_ptr<Umbra::IWidget> Widget;
+        iris::ReconcileWidget(Widget, Iris::IrisComponent(nullptr), Old, Mount);
+        const int OriginalMountCount = MountCount;
+        const auto* AsMock = dynamic_cast<MockWidget*>(Widget.get());
+        const int   OriginalId = AsMock->Id;
+
+        Iris::IrisProps UpdatedProps;
+        UpdatedProps["class"] = Iris::IrisPropValue{std::string("b")};
+        const auto New = MakeNode(Iris::IrisElementTag::Frame, UpdatedProps, {}, Iris::IrisPropValue(1));
+
+        iris::ReconcileWidget(Widget, Old, New, Mount);
+        AsMock = dynamic_cast<MockWidget*>(Widget.get());
+        ASSERT_EQUAL(MountCount, OriginalMountCount); // same tag + same key: no remount, Mount is not called again
+        ASSERT_EQUAL(AsMock->Id, OriginalId);         // the same widget object is reused — identity preserved
+        ASSERT_TRUE(AsMock->ClassName == "b");        // the prop diff was applied to the reused widget
+    });
+
+    IT("ReconcileWidget remounts on a tag mismatch", {
+        int         MountCount = 0;
+        TestMounter Mount(&MountCount);
+
+        const auto Old = MakeNode(Iris::IrisElementTag::Frame);
+        std::unique_ptr<Umbra::IWidget> Widget;
+        iris::ReconcileWidget(Widget, Iris::IrisComponent(nullptr), Old, Mount);
+        const int OldId = dynamic_cast<MockWidget*>(Widget.get())->Id;
+        ASSERT_EQUAL(AliveWidgetIds.count(OldId), static_cast<std::size_t>(1));
+        // the original widget is alive before the remount
+
+        const auto New = MakeNode(Iris::IrisElementTag::Text);
+        iris::ReconcileWidget(Widget, Old, New, Mount);
+
+        ASSERT_EQUAL(AliveWidgetIds.count(OldId), static_cast<std::size_t>(0));
+        // a tag mismatch unmounts (destroys) the old widget
+        ASSERT_TRUE(dynamic_cast<MockWidget*>(Widget.get())->Tag == "Text");
+        // and mounts a fresh widget for the new tag
+    });
+
+    IT("ReconcileWidget with New == None unmounts and mounts nothing", {
+        int         MountCount = 0;
+        TestMounter Mount(&MountCount);
+
+        const auto Old = MakeNode(Iris::IrisElementTag::Frame);
+        std::unique_ptr<Umbra::IWidget> Widget;
+        iris::ReconcileWidget(Widget, Iris::IrisComponent(nullptr), Old, Mount);
+        const int OldId = dynamic_cast<MockWidget*>(Widget.get())->Id;
+
+        const Iris::IrisComponent NewNone(nullptr);
+        iris::ReconcileWidget(Widget, Old, NewNone, Mount);
+
+        ASSERT_EQUAL(AliveWidgetIds.count(OldId), static_cast<std::size_t>(0));
+        // transitioning to None unmounts the old widget
+        ASSERT_TRUE(Widget == nullptr); // and Widget ends up null — no widget for None
+    });
+
+    IT("ReconcileWidget recurses into children", {
+        int         MountCount = 0;
+        TestMounter Mount(&MountCount);
+
+        std::vector<Iris::IrisComponent> OldChildren;
+        OldChildren.push_back(MakeNode(Iris::IrisElementTag::Text));
+        const auto Old = MakeNode(Iris::IrisElementTag::Frame, {}, std::move(OldChildren));
+
+        std::unique_ptr<Umbra::IWidget> Widget;
+        iris::ReconcileWidget(Widget, Iris::IrisComponent(nullptr), Old, Mount);
+        const int ChildId = dynamic_cast<MockWidget*>(Widget->GetChildAt(0))->Id;
+
+        Iris::IrisProps ChildProps;
+        ChildProps["text"] = Iris::IrisPropValue{std::string("updated")};
+        std::vector<Iris::IrisComponent> NewChildren;
+        NewChildren.push_back(MakeNode(Iris::IrisElementTag::Text, ChildProps));
+        const auto New = MakeNode(Iris::IrisElementTag::Frame, {}, std::move(NewChildren));
+
+        iris::ReconcileWidget(Widget, Old, New, Mount);
+        ASSERT_EQUAL(Widget->GetChildCount(), static_cast<std::size_t>(1)); // still exactly one child
+        const auto* AsMockChild = dynamic_cast<MockWidget*>(Widget->GetChildAt(0));
+        ASSERT_EQUAL(AsMockChild->Id, ChildId);
+        // the child widget's identity is preserved across the parent's own reconcile
+        ASSERT_TRUE(AsMockChild->Text == "updated"); // and the child's own prop diff was applied
+    });
+
+    IT("ReconcileChildren preserves identity across a reorder by key", {
+        int         MountCount = 0;
+        TestMounter Mount(&MountCount);
+
+        std::vector<Iris::IrisComponent> OldList;
+        OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
+        OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
+
+        std::vector<std::unique_ptr<Umbra::IWidget>> Widgets;
+        iris::ReconcileChildren(Widgets, {}, OldList, Mount);
+        ASSERT_EQUAL(Widgets.size(), static_cast<std::size_t>(2)); // both list items mounted
+        const int Id1 = dynamic_cast<MockWidget*>(Widgets[0].get())->Id; // key 1
+        const int Id2 = dynamic_cast<MockWidget*>(Widgets[1].get())->Id; // key 2
+
+        // Reordered: key 2 now comes first.
+        std::vector<Iris::IrisComponent> NewList;
+        NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
+        NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
+
+        iris::ReconcileChildren(Widgets, OldList, NewList, Mount);
+        ASSERT_EQUAL(Widgets.size(), static_cast<std::size_t>(2)); // still two widgets after reordering
+        ASSERT_EQUAL(dynamic_cast<MockWidget*>(Widgets[0].get())->Id, Id2);
+        // the key-2 widget object is reused in its new (first) position
+        ASSERT_EQUAL(dynamic_cast<MockWidget*>(Widgets[1].get())->Id, Id1);
+        // the key-1 widget object is reused in its new (second) position
+    });
+
+    IT("ReconcileChildren unmounts removed items and mounts added ones", {
+        int         MountCount = 0;
+        TestMounter Mount(&MountCount);
+
+        std::vector<Iris::IrisComponent> OldList;
+        OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
+        OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
+
+        std::vector<std::unique_ptr<Umbra::IWidget>> Widgets;
+        iris::ReconcileChildren(Widgets, {}, OldList, Mount);
+        const int RemovedId = dynamic_cast<MockWidget*>(Widgets[1].get())->Id; // key 2 will be removed
+
+        std::vector<Iris::IrisComponent> NewList;
+        NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
+        NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(3))); // new key
+
+        iris::ReconcileChildren(Widgets, OldList, NewList, Mount);
+        ASSERT_EQUAL(Widgets.size(), static_cast<std::size_t>(2)); // still two widgets — one removed, one added
+        ASSERT_EQUAL(AliveWidgetIds.count(RemovedId), static_cast<std::size_t>(0));
+        // the widget for the removed key was actually unmounted
+    });
+});

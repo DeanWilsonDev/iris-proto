@@ -1058,5 +1058,7 @@ were dangling-reference UB as originally specified — see §8's resolved notes)
 `<Slot>` into the Stage 2 walker, for both the single-`IrisComponent`- and list-returning
 callable shapes — verified against real Penumbra `Box`/`Label` objects, a live `iris::Signal`
 update reaching a real `Box::Children` vector end to end, clean under AddressSanitizer +
-UndefinedBehaviorSanitizer). Not yet done: nested-`<Slot>` discovery and LIS-based
-minimal-move list diffing.
+UndefinedBehaviorSanitizer). Nested-`<Slot>` discovery (a `<Slot>` inside another `<Slot>`'s
+own dynamically-produced output) is now done too — `docs/iris_nested_slot_discovery_decision.md`.
+Not yet done: LIS-based minimal-move list diffing, and avoiding nested-`<Slot>` rediscovery on
+every outer re-render when the underlying subtree was reused unchanged.

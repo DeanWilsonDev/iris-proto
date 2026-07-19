@@ -1,5 +1,6 @@
 #include "Iris/SlotRuntime.h"
 #include "Iris/Reconciler.h"
+#include "Iris/SlotResolution.h"
 
 #include <algorithm>
 #include <unordered_map>
@@ -81,6 +82,13 @@ SlotState::SlotState(std::shared_ptr<Iris::IrisSlotCallable> Callable, MountFn M
     : Callable_(std::move(Callable)), Mount_(std::move(Mount)) {}
 
 SlotState::~SlotState() {
+    // Must run before anything below: a nested entry's own AttachedParent_ is a widget
+    // living inside SingleWidget_/ListWidgets_/AttachedParent_'s own children, all of
+    // which this destructor's own body is about to remove/drop — destroying nested
+    // entries afterward (the default member-destruction order) would detach against an
+    // already-freed widget (docs/iris_nested_slot_discovery_decision.md).
+    NestedSlots_.clear();
+
     SignalRegistry::Instance().ClearSlot(this);
     IrisRuntime::Instance().UnregisterSlot(this);
 
@@ -117,12 +125,26 @@ void SlotState::AttachToGroup(Umbra::IWidget* Parent, std::shared_ptr<SlotSiblin
 
 std::size_t SlotState::CurrentRealChildCount() const { return AttachedCount_; }
 
+void SlotState::DiscoverNestedSlots(Umbra::IWidget& Widget, const Iris::IrisComponent& Node) {
+    std::vector<std::unique_ptr<SlotState>> Found = ResolveSlots(Widget, Node, Mount_);
+    for (std::unique_ptr<SlotState>& Nested : Found) {
+        NestedSlots_.push_back(std::move(Nested));
+    }
+}
+
 void SlotState::Reconcile() {
     if (Mounted_ && !Dirty_) {
         return;
     }
     Mounted_ = true;
     Dirty_ = false;
+
+    // Discard whatever nested <Slot>s the previous render discovered before this slot's
+    // own output is reconciled below — always safe, since every widget a nested
+    // SlotState might detach from is still fully valid at this point, never yet
+    // replaced or destroyed (docs/iris_nested_slot_discovery_decision.md). Rebuilt fresh
+    // at the end of this call, whichever branch runs.
+    NestedSlots_.clear();
 
     SignalRegistry::Instance().ClearSlot(this);
     IrisRuntime::Instance().PushActiveSlot(this);
@@ -142,11 +164,15 @@ void SlotState::Reconcile() {
             }
             ReconcileWidget(Current, PreviousSingle_, NewOutput, Mount_);
             if (Current != nullptr) {
+                DiscoverNestedSlots(*Current, NewOutput);
                 AttachedParent_->InsertChildAt(Base, std::move(Current));
             }
             AttachedCount_ = (NewOutput.Tag != Iris::IrisElementTag::None) ? 1 : 0;
         } else {
             ReconcileWidget(SingleWidget_, PreviousSingle_, NewOutput, Mount_);
+            if (SingleWidget_ != nullptr) {
+                DiscoverNestedSlots(*SingleWidget_, NewOutput);
+            }
         }
         PreviousSingle_ = std::move(NewOutput);
     } else {
@@ -166,11 +192,19 @@ void SlotState::Reconcile() {
             ReconcileChildren(Current, PreviousList_, NewOutput, Mount_);
 
             for (std::size_t I = 0; I < Current.size(); ++I) {
+                if (Current[I] != nullptr) {
+                    DiscoverNestedSlots(*Current[I], NewOutput[I]);
+                }
                 AttachedParent_->InsertChildAt(Base + I, std::move(Current[I]));
             }
             AttachedCount_ = Current.size();
         } else {
             ReconcileChildren(ListWidgets_, PreviousList_, NewOutput, Mount_);
+            for (std::size_t I = 0; I < ListWidgets_.size(); ++I) {
+                if (ListWidgets_[I] != nullptr) {
+                    DiscoverNestedSlots(*ListWidgets_[I], NewOutput[I]);
+                }
+            }
         }
         PreviousList_ = std::move(NewOutput);
     }

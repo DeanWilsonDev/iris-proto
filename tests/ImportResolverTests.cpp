@@ -1,54 +1,12 @@
+#include "cimmerian/test.hpp"
+
 #include "Iris/ImportResolver.h"
 
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
 
-extern int Failures; // defined in CppTokenizerTests.cpp
-
 namespace {
-
-void Expect(bool Condition, const std::string& Description) {
-    if (Condition) {
-        std::printf("[PASS] %s\n", Description.c_str());
-    } else {
-        std::printf("[FAIL] %s\n", Description.c_str());
-        ++Failures;
-    }
-}
-
-void TestScanImportsFindsLeadingImports() {
-    const auto Imports = Iris::ScanImports(R"(
-import Button
-import SettingsPage
-
-IrisComponent StartMenu() {
-    render { <Button /> }
-}
-)",
-                                            "test.iris");
-    Expect(Imports.size() == 2, "two import statements found");
-    if (Imports.size() != 2) {
-        return;
-    }
-    Expect(Imports[0].Name == "Button", "first import name is Button");
-    Expect(Imports[1].Name == "SettingsPage", "second import name is SettingsPage");
-}
-
-void TestScanImportsIgnoresTheWordInsideAStringOrComment() {
-    const auto Imports = Iris::ScanImports(R"(
-// import Button
-const char* Note = "import Button";
-)",
-                                            "test.iris");
-    Expect(Imports.empty(), "'import' inside a comment or string literal is not treated as the keyword");
-}
-
-void TestScanImportsWithNoImportsIsEmpty() {
-    const auto Imports = Iris::ScanImports("IrisComponent Foo() { render { <Frame /> } }", "test.iris");
-    Expect(Imports.empty(), "a file with no import statements yields no results");
-}
 
 // Minimal on-disk fixture for ResolveImports() — real filesystem, cleaned up
 // after each test that uses it, since resolution genuinely stats files.
@@ -72,81 +30,108 @@ private:
     std::filesystem::path Root_;
 };
 
-void TestResolveImportsFindsFileInSearchPath() {
-    TempProject Project;
-    Project.WriteComponent("Button", ".iris");
-
-    Iris::IrisConfig Config;
-    Config.Target      = Iris::IrisBuildTarget::Penumbra;
-    Config.SearchPaths  = {"demo"};
-
-    const std::vector<Iris::ImportStatement> Imports = {{"Button", {}}};
-    const auto                               Result  = Iris::ResolveImports(Imports, Config, Project.RootPath());
-
-    Expect(Result.Errors.empty(), "resolving an import whose file exists produces no errors");
-    Expect(Result.Resolved.size() == 1 && Result.Resolved[0].Name == "Button",
-           "Button resolves successfully");
+// A `{...}` list literal with a top-level comma, written directly inside an IT(...)
+// body, would split into extra macro arguments — the preprocessor's macro-argument
+// scanner balances only `(` `)`, not `{` `}`. These helpers keep such literals inside
+// an ordinary function call instead.
+std::vector<Iris::ImportStatement> OneImport(const std::string& Name) {
+    return {{Name, {}}};
 }
 
-void TestResolveImportsReportsMissingFile() {
-    TempProject Project;
-
-    Iris::IrisConfig Config;
-    Config.Target     = Iris::IrisBuildTarget::Penumbra;
-    Config.SearchPaths = {"demo"};
-
-    const std::vector<Iris::ImportStatement> Imports = {{"Missing", {}}};
-    const auto                               Result  = Iris::ResolveImports(Imports, Config, Project.RootPath());
-
-    Expect(Result.Resolved.empty(), "an import with no matching file resolves to nothing");
-    Expect(Result.Errors.size() == 1, "an import with no matching file reports exactly one error");
-}
-
-void TestResolveImportsUsesIrisxExtensionForUmbraEngine() {
-    TempProject Project;
-    Project.WriteComponent("HudPanel", ".irisx");
-
-    Iris::IrisConfig Config;
-    Config.Target      = Iris::IrisBuildTarget::UmbraEngine;
-    Config.SearchPaths  = {"demo"};
-
-    const std::vector<Iris::ImportStatement> Imports = {{"HudPanel", {}}};
-    const auto                               Result  = Iris::ResolveImports(Imports, Config, Project.RootPath());
-
-    Expect(Result.Errors.empty(), "umbra-engine target resolves against .irisx files with no errors");
-    Expect(Result.Resolved.size() == 1, "HudPanel.irisx resolves successfully");
-}
-
-void TestResolveImportsSearchesPathsInDeclarationOrder() {
-    TempProject Project;
-    std::filesystem::create_directories(std::filesystem::path(Project.RootPath()) / "other");
-    std::ofstream(std::filesystem::path(Project.RootPath()) / "other" / "Button.iris") << "// wrong one\n";
-    Project.WriteComponent("Button", ".iris"); // demo/Button.iris — should win, "demo" declared first
-
-    Iris::IrisConfig Config;
-    Config.Target      = Iris::IrisBuildTarget::Penumbra;
-    Config.SearchPaths  = {"demo", "other"};
-
-    const std::vector<Iris::ImportStatement> Imports = {{"Button", {}}};
-    const auto                               Result  = Iris::ResolveImports(Imports, Config, Project.RootPath());
-
-    Expect(Result.Resolved.size() == 1, "Button resolves to exactly one file");
-    if (Result.Resolved.empty()) {
-        return;
-    }
-    const std::string& Resolved = Result.Resolved[0].ResolvedPath;
-    Expect(Resolved.find("demo") != std::string::npos && Resolved.find("other") == std::string::npos,
-           "first-declared search path wins over a later one containing the same filename");
-}
+std::vector<std::string> SearchPaths(std::vector<std::string> Paths) { return Paths; }
 
 } // namespace
 
-void RunImportResolverTests() {
-    TestScanImportsFindsLeadingImports();
-    TestScanImportsIgnoresTheWordInsideAStringOrComment();
-    TestScanImportsWithNoImportsIsEmpty();
-    TestResolveImportsFindsFileInSearchPath();
-    TestResolveImportsReportsMissingFile();
-    TestResolveImportsUsesIrisxExtensionForUmbraEngine();
-    TestResolveImportsSearchesPathsInDeclarationOrder();
+DESCRIBE("ImportResolver", {
+    IT("ScanImports finds leading import statements", {
+        const auto Imports = Iris::ScanImports(R"(
+import Button
+import SettingsPage
+
+IrisComponent StartMenu() {
+    render { <Button /> }
 }
+)",
+                                                "test.iris");
+        REQUIRE_EQUAL(Imports.size(), static_cast<std::size_t>(2)); // two import statements found
+        ASSERT_TRUE(Imports[0].Name == "Button");       // first import name is Button
+        ASSERT_TRUE(Imports[1].Name == "SettingsPage"); // second import name is SettingsPage
+    });
+
+    IT("ScanImports ignores the word inside a string or comment", {
+        const auto Imports = Iris::ScanImports(R"(
+// import Button
+const char* Note = "import Button";
+)",
+                                                "test.iris");
+        ASSERT_TRUE(Imports.empty()); // 'import' inside a comment or string literal is not treated as the keyword
+    });
+
+    IT("ScanImports with no imports is empty", {
+        const auto Imports = Iris::ScanImports("IrisComponent Foo() { render { <Frame /> } }", "test.iris");
+        ASSERT_TRUE(Imports.empty()); // a file with no import statements yields no results
+    });
+
+    IT("ResolveImports finds a file in the search path", {
+        TempProject Project;
+        Project.WriteComponent("Button", ".iris");
+
+        Iris::IrisConfig Config;
+        Config.Target      = Iris::IrisBuildTarget::Penumbra;
+        Config.SearchPaths  = SearchPaths({"demo"});
+
+        const std::vector<Iris::ImportStatement> Imports = OneImport("Button");
+        const auto                               Result  = Iris::ResolveImports(Imports, Config, Project.RootPath());
+
+        ASSERT_TRUE(Result.Errors.empty()); // resolving an import whose file exists produces no errors
+        ASSERT_TRUE(Result.Resolved.size() == 1 && Result.Resolved[0].Name == "Button");
+    });
+
+    IT("ResolveImports reports a missing file", {
+        TempProject Project;
+
+        Iris::IrisConfig Config;
+        Config.Target     = Iris::IrisBuildTarget::Penumbra;
+        Config.SearchPaths = SearchPaths({"demo"});
+
+        const std::vector<Iris::ImportStatement> Imports = OneImport("Missing");
+        const auto                               Result  = Iris::ResolveImports(Imports, Config, Project.RootPath());
+
+        ASSERT_TRUE(Result.Resolved.empty()); // an import with no matching file resolves to nothing
+        ASSERT_EQUAL(Result.Errors.size(), static_cast<std::size_t>(1));
+    });
+
+    IT("ResolveImports uses the .irisx extension for the umbra-engine target", {
+        TempProject Project;
+        Project.WriteComponent("HudPanel", ".irisx");
+
+        Iris::IrisConfig Config;
+        Config.Target      = Iris::IrisBuildTarget::UmbraEngine;
+        Config.SearchPaths  = SearchPaths({"demo"});
+
+        const std::vector<Iris::ImportStatement> Imports = OneImport("HudPanel");
+        const auto                               Result  = Iris::ResolveImports(Imports, Config, Project.RootPath());
+
+        ASSERT_TRUE(Result.Errors.empty()); // umbra-engine target resolves against .irisx files with no errors
+        ASSERT_EQUAL(Result.Resolved.size(), static_cast<std::size_t>(1));
+    });
+
+    IT("ResolveImports searches paths in declaration order", {
+        TempProject Project;
+        std::filesystem::create_directories(std::filesystem::path(Project.RootPath()) / "other");
+        std::ofstream(std::filesystem::path(Project.RootPath()) / "other" / "Button.iris") << "// wrong one\n";
+        Project.WriteComponent("Button", ".iris"); // demo/Button.iris — should win, "demo" declared first
+
+        Iris::IrisConfig Config;
+        Config.Target      = Iris::IrisBuildTarget::Penumbra;
+        Config.SearchPaths  = SearchPaths({"demo", "other"});
+
+        const std::vector<Iris::ImportStatement> Imports = OneImport("Button");
+        const auto                               Result  = Iris::ResolveImports(Imports, Config, Project.RootPath());
+
+        REQUIRE_EQUAL(Result.Resolved.size(), static_cast<std::size_t>(1)); // Button resolves to exactly one file
+        const std::string& Resolved = Result.Resolved[0].ResolvedPath;
+        ASSERT_TRUE(Resolved.find("demo") != std::string::npos && Resolved.find("other") == std::string::npos);
+        // first-declared search path wins over a later one containing the same filename
+    });
+});

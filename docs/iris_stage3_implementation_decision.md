@@ -219,13 +219,17 @@ Scoped out of this pass, each a real, separate piece of work:
   `<Slot>` position and splice its own widget(s) in.~~ **Done**, for both the
   single-`IrisComponent`- and list-returning callable shapes —
   `docs/iris_slot_stage2_wiring_decision.md` and `docs/iris_slot_list_wiring_decision.md`.
-- **Nested `<Slot>` discovery.** `SlotState`/`Reconciler` assume the trees a slot's
+- **Nested `<Slot>` discovery.** ~~`SlotState`/`Reconciler` assume the trees a slot's
   callable produces contain no further `<Slot>` tags — matching Stage 2's own
   documented precondition ("the tree a backend pass ever sees is fully concrete — no
   Slot nodes"). Recursively finding nested `<Slot>` tags within an arbitrary
   `IrisComponent` tree and giving each its own independent `SlotState` (per the spec's
-  own `<Slot>`-scoped-diffing design) is real, separate work this pass doesn't attempt.
-  **Still open** — the one item on this original list not yet closed.
+  own `<Slot>`-scoped-diffing design) is real, separate work this pass doesn't attempt.~~
+  **Done** — `docs/iris_nested_slot_discovery_decision.md`. That pass also fixed a
+  latent `Reconciler.cpp` correctness gap this exposed (Slot-tagged children weren't
+  excluded from ordinary widget-index bookkeeping) and left one narrower follow-up open:
+  nested slots are currently rediscovered on every outer re-render rather than persisted
+  when their underlying widget was reused unchanged (a performance, not correctness, gap).
 - **LIS-based minimal-move list diffing** (Decision 6's known limitation). **Still open.**
 - **Numeric (`int`/`float`) `IrisPropDiff` fields** — still absent, per
   `docs/iris_props_decision.md`'s original note; add both together, deliberately, if a

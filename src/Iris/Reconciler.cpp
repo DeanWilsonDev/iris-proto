@@ -133,6 +133,23 @@ std::vector<std::unique_ptr<Umbra::IWidget>> ReconcileList(std::vector<std::uniq
     return Result;
 }
 
+// A `Slot`-tagged child contributes zero real widgets — same convention `BuildWidgetTree`/
+// `ResolveSlotsRecursive` already apply to the static tree (docs/iris_slot_stage2_wiring_
+// decision.md) — so it must never reach `ReconcileList`'s own tag+key matching, which assumes
+// 1:1 alignment between an `IrisComponent` list and its matched widget's real children. A
+// nested `<Slot>` found this way gets its own `SlotState` entirely separately
+// (docs/iris_nested_slot_discovery_decision.md's `SlotState::NestedSlots_`), never through
+// this list-diffing path.
+std::vector<Iris::IrisComponent> FilterOrdinary(const std::vector<Iris::IrisComponent>& Children) {
+    std::vector<Iris::IrisComponent> Ordinary;
+    for (const Iris::IrisComponent& Child : Children) {
+        if (Child.Tag != Iris::IrisElementTag::Slot) {
+            Ordinary.push_back(Child);
+        }
+    }
+    return Ordinary;
+}
+
 } // namespace
 
 Umbra::IrisPropDiff ComputePropDiff(const Iris::IrisProps& Old, const Iris::IrisProps& New) {
@@ -165,6 +182,9 @@ void ReconcileWidget(std::unique_ptr<Umbra::IWidget>& Widget, const Iris::IrisCo
 
     Widget->ApplyPropDiff(ComputePropDiff(Old.Props, New.Props));
 
+    const std::vector<Iris::IrisComponent> OldOrdinary = FilterOrdinary(Old.Children);
+    const std::vector<Iris::IrisComponent> NewOrdinary = FilterOrdinary(New.Children);
+
     std::vector<std::unique_ptr<Umbra::IWidget>> OldChildren;
     const std::size_t                             ChildCount = Widget->GetChildCount();
     OldChildren.reserve(ChildCount);
@@ -172,7 +192,7 @@ void ReconcileWidget(std::unique_ptr<Umbra::IWidget>& Widget, const Iris::IrisCo
         OldChildren.push_back(Widget->RemoveChildAt(0));
     }
     std::vector<std::unique_ptr<Umbra::IWidget>> NewChildren =
-        ReconcileList(std::move(OldChildren), Old.Children, New.Children, Mount);
+        ReconcileList(std::move(OldChildren), OldOrdinary, NewOrdinary, Mount);
     for (std::size_t Index = 0; Index < NewChildren.size(); ++Index) {
         Widget->InsertChildAt(Index, std::move(NewChildren[Index]));
     }

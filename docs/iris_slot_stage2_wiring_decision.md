@@ -98,9 +98,10 @@ real Penumbra `Box::Children` vector, verified by inspecting that real vector di
 ## What remains deliberately deferred
 
 - **Nested `<Slot>` discovery** (a `<Slot>` inside another `<Slot>`'s own dynamically
-  produced output) — unchanged from `docs/iris_stage3_implementation_decision.md`.
+  produced output). ~~unchanged from `docs/iris_stage3_implementation_decision.md`.
   `ResolveSlots` only recurses into the *static* tree; it never looks inside what a
-  `<Slot>`'s callable itself returns.
+  `<Slot>`'s callable itself returns.~~ **Done** —
+  `docs/iris_nested_slot_discovery_decision.md`.
 
 List-returning `<Slot>`s, and sibling `<Slot>`s whose earlier one's real child count
 changes (list growth/shrink, or toggling to/from `None`), are now resolved correctly —

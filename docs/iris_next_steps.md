@@ -359,17 +359,20 @@ screenshot/visual-regression testing needs — nothing Iris's own tests need.
 A new `iris_cimmerian_tests` executable (`tests/cimmerian/`) uses Cimmerian's `DESCRIBE`/`IT`/
 `ASSERT_EQUAL` BDD-style macros with auto-registration and its own `TestRunner::RunAll()` entry
 point (`tests/cimmerian/CimmerianTestMain.cpp`, just `#include <cimmerian/test-entry-point.hpp>`).
-Kept as a *separate* binary from `iris_tests` rather than merged in: Cimmerian's
+~~Kept as a *separate* binary from `iris_tests` rather than merged in: Cimmerian's
 auto-registration model doesn't mesh with `iris_tests`' existing hand-rolled
 `RunXTests()`-called-from-one-`main()` pattern, and migrating ~13 existing test files wasn't
-in scope. This is the intended tool for new tests going forward
-(`docs/iris_stage2_decision_doc.md` §7).
+in scope.~~ **Later coalesced**: every hand-rolled `iris_tests` file was migrated to Cimmerian's
+`DESCRIBE`/`IT` style and merged into one `test_iris` executable (`tests/TestMain.cpp` is the
+renamed, relocated entry point; `tests/cimmerian/` no longer exists as a separate directory —
+see CLAUDE.md's "Build and test" section). This is the intended tool for new tests going
+forward (`docs/iris_stage2_decision_doc.md` §7).
 
-First test file, `tests/cimmerian/SlotSiblingGroupTests.cpp`: three tests adding coverage for
-the list-`<Slot>` wiring work not present in `tests/SlotResolutionTests.cpp` — a three-sibling
-mix of list- and single-returning `<Slot>`s, and an explicit regression test for the
-forward-order sibling-teardown use-after-free AddressSanitizer caught during that work. Clean
-under AddressSanitizer + UndefinedBehaviorSanitizer.
+First test file, `tests/cimmerian/SlotSiblingGroupTests.cpp` (now `tests/SlotSiblingGroupTests.cpp`):
+three tests adding coverage for the list-`<Slot>` wiring work not present in
+`tests/SlotResolutionTests.cpp` — a three-sibling mix of list- and single-returning `<Slot>`s,
+and an explicit regression test for the forward-order sibling-teardown use-after-free
+AddressSanitizer caught during that work. Clean under AddressSanitizer + UndefinedBehaviorSanitizer.
 
 ## Suggested order
 

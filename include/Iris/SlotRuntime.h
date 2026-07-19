@@ -134,6 +134,14 @@ public:
     std::size_t CurrentRealChildCount() const;
 
 private:
+    // Walks `Widget` (this slot's own just-reconciled real widget, for one position of
+    // its current output — the single widget, or one list item) alongside `Node` (the
+    // matching `IrisComponent`) via `ResolveSlots` to find every `<Slot>` nested inside
+    // it, and appends the resulting `SlotState`s to `NestedSlots_`
+    // (docs/iris_nested_slot_discovery_decision.md). Called once per position, per
+    // `Reconcile()` call, after `NestedSlots_` has already been cleared for this render.
+    void DiscoverNestedSlots(Umbra::IWidget& Widget, const Iris::IrisComponent& Node);
+
     std::shared_ptr<Iris::IrisSlotCallable> Callable_;
     MountFn                                  Mount_;
     bool                                      Mounted_{false};
@@ -153,6 +161,15 @@ private:
     std::unique_ptr<Umbra::IWidget>              SingleWidget_;
     std::vector<Iris::IrisComponent>             PreviousList_;
     std::vector<std::unique_ptr<Umbra::IWidget>> ListWidgets_;
+
+    // Every `<Slot>` found nested inside this slot's own *current* rendered output —
+    // discovered fresh on every `Reconcile()` call, mount and re-render alike
+    // (docs/iris_nested_slot_discovery_decision.md). Declared last: `~SlotState()`
+    // explicitly clears this before touching `SingleWidget_`/`ListWidgets_`/
+    // `AttachedParent_` below, since a nested entry's own `AttachedParent_` is a widget
+    // living inside one of those — order matters, this comment is not a substitute for
+    // that explicit clear.
+    std::vector<std::unique_ptr<SlotState>> NestedSlots_;
 };
 
 // The process-wide batching/dirty-tracking/active-slot-stack owner

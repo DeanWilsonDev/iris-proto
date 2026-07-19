@@ -1,22 +1,12 @@
+#include "cimmerian/test.hpp"
+
 #include "Iris/Driver.h"
 
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
 
-extern int Failures; // defined in CppTokenizerTests.cpp
-
 namespace {
-
-void Expect(bool Condition, const std::string& Description) {
-    if (Condition) {
-        std::printf("[PASS] %s\n", Description.c_str());
-    } else {
-        std::printf("[FAIL] %s\n", Description.c_str());
-        ++Failures;
-    }
-}
 
 bool Contains(const std::string& Haystack, std::string_view Needle) {
     return Haystack.find(Needle) != std::string::npos;
@@ -61,78 +51,81 @@ Iris::IrisConfig PenumbraConfig() {
     return Config;
 }
 
-void TestSimpleRenderBlockCompiles() {
-    const Iris::DriverResult Result =
-        Iris::CompileFile("IrisComponent Foo() {\n    render { <Frame class=\"a\" /> }\n}\n", "test.iris",
-                           PenumbraConfig(), "/nonexistent");
-    Expect(Result.Diagnostics.empty(), "a plain Core-primitive render block compiles with no diagnostics");
-    Expect(Contains(Result.Output, "return Iris::IrisComponent{Iris::IrisElementTag::Frame"),
-           "the render{ } block becomes a return statement constructing the component");
-    Expect(!Contains(Result.Output, "render {"), "the literal render{ } text is gone from the output");
-}
+} // namespace
 
-void TestOutputHasLineDirectives() {
-    const Iris::DriverResult Result = Iris::CompileFile("IrisComponent Foo() {\n    render { <Frame /> }\n}\n",
-                                                          "test.iris", PenumbraConfig(), "/nonexistent");
-    Expect(Contains(Result.Output, "#line 1 \"test.iris\""), "output starts with a #line directive for the file");
-    Expect(Contains(Result.Output, "#line 2 \"test.iris\""),
-           "a resync #line directive follows the replaced render block, at the line its closing '}' was on");
-}
+DESCRIBE("Driver", {
+    IT("a simple render block compiles", {
+        const Iris::DriverResult Result =
+            Iris::CompileFile("IrisComponent Foo() {\n    render { <Frame class=\"a\" /> }\n}\n", "test.iris",
+                               PenumbraConfig(), "/nonexistent");
+        ASSERT_TRUE(Result.Diagnostics.empty()); // a plain Core-primitive render block compiles with no diagnostics
+        ASSERT_TRUE(Contains(Result.Output, "return Iris::IrisComponent{Iris::IrisElementTag::Frame"));
+        // the render{ } block becomes a return statement constructing the component
+        ASSERT_FALSE(Contains(Result.Output, "render {")); // the literal render{ } text is gone from the output
+    });
 
-void TestImportLineBecomesIncludeOfGeneratedHeader() {
-    TempProject Project;
-    Project.WriteComponent("Button");
+    IT("the output has #line directives", {
+        const Iris::DriverResult Result = Iris::CompileFile("IrisComponent Foo() {\n    render { <Frame /> }\n}\n",
+                                                              "test.iris", PenumbraConfig(), "/nonexistent");
+        ASSERT_TRUE(Contains(Result.Output, "#line 1 \"test.iris\"")); // output starts with a #line directive for the file
+        ASSERT_TRUE(Contains(Result.Output, "#line 2 \"test.iris\""));
+        // a resync #line directive follows the replaced render block, at the line its closing '}' was on
+    });
 
-    const Iris::DriverResult Result =
-        Iris::CompileFile("import Button\nIrisComponent Foo() {\n    render { <Button label=\"x\" /> }\n}\n",
-                           "test.iris", PenumbraConfig(), Project.RootPath());
-    Expect(Result.Diagnostics.empty(), "a render block using an imported component compiles with no diagnostics");
-    Expect(!Contains(Result.Output, "import Button"),
-           "the literal 'import Button' text is gone, not just commented out");
-    Expect(Contains(Result.Output, "#include \"components/Button.iris.h\""),
-           "it becomes an #include of the resolved import's generated header, relative to ProjectRoot");
-    Expect(Contains(Result.Output, "#pragma once"),
-           "every generated file is a self-contained, include-guarded header");
-    Expect(Contains(Result.Output, "Button(ButtonProps{"),
-           "the imported component is emitted as an ordinary function call");
-}
+    IT("an import line becomes an #include of the generated header", {
+        TempProject Project;
+        Project.WriteComponent("Button");
 
-void TestUnresolvedImportIsADiagnosticAndBlocksOutput() {
-    const Iris::DriverResult Result =
-        Iris::CompileFile("import NoSuchComponent\nIrisComponent Foo() { render { <Frame/> } }\n", "test.iris",
-                           PenumbraConfig(), "/nonexistent");
-    Expect(!Result.Diagnostics.empty(), "an unresolvable import is a diagnostic");
-    Expect(Result.Output.empty(), "no output is produced when there are diagnostics");
-    Expect(DiagnosticsContain(Result.Diagnostics, "Cannot resolve `import NoSuchComponent`"),
-           "the diagnostic is ImportResolver's own unresolved-import message");
-}
+        const Iris::DriverResult Result =
+            Iris::CompileFile("import Button\nIrisComponent Foo() {\n    render { <Button label=\"x\" /> }\n}\n",
+                               "test.iris", PenumbraConfig(), Project.RootPath());
+        ASSERT_TRUE(Result.Diagnostics.empty()); // a render block using an imported component compiles with no diagnostics
+        ASSERT_FALSE(Contains(Result.Output, "import Button"));
+        // the literal 'import Button' text is gone, not just commented out
+        ASSERT_TRUE(Contains(Result.Output, "#include \"components/Button.iris.h\""));
+        // it becomes an #include of the resolved import's generated header, relative to ProjectRoot
+        ASSERT_TRUE(Contains(Result.Output, "#pragma once"));
+        // every generated file is a self-contained, include-guarded header
+        ASSERT_TRUE(Contains(Result.Output, "Button(ButtonProps{"));
+        // the imported component is emitted as an ordinary function call
+    });
 
-void TestUnimportedComponentReferenceIsADiagnostic() {
-    const Iris::DriverResult Result = Iris::CompileFile(
-        "IrisComponent Foo() { render { <HealthBar current={1} max={2} /> } }\n", "test.iris", PenumbraConfig(),
-        "/nonexistent");
-    Expect(!Result.Diagnostics.empty(), "an unimported, non-Core-primitive tag is a diagnostic");
-    Expect(Result.Output.empty(), "no output is produced when there are diagnostics");
-    Expect(DiagnosticsContain(Result.Diagnostics, "HealthBar` is not imported and is not a Core primitive"),
-           "the diagnostic is SemanticValidator's message");
-}
+    IT("an unresolved import is a diagnostic and blocks output", {
+        const Iris::DriverResult Result =
+            Iris::CompileFile("import NoSuchComponent\nIrisComponent Foo() { render { <Frame/> } }\n", "test.iris",
+                               PenumbraConfig(), "/nonexistent");
+        ASSERT_FALSE(Result.Diagnostics.empty()); // an unresolvable import is a diagnostic
+        ASSERT_TRUE(Result.Output.empty());       // no output is produced when there are diagnostics
+        ASSERT_TRUE(DiagnosticsContain(Result.Diagnostics, "Cannot resolve `import NoSuchComponent`"));
+        // the diagnostic is ImportResolver's own unresolved-import message
+    });
 
-void TestParseErrorIsADiagnosticAndBlocksOutput() {
-    const Iris::DriverResult Result = Iris::CompileFile("IrisComponent Foo() { render { <A/> <B/> } }\n", "test.iris",
-                                                          PenumbraConfig(), "/nonexistent");
-    Expect(!Result.Diagnostics.empty(), "a multi-root render block is a diagnostic");
-    Expect(Result.Output.empty(), "no output is produced when there are diagnostics");
-    Expect(DiagnosticsContain(Result.Diagnostics, "must have exactly one root element"),
-           "the diagnostic is RenderBlockParser's own message");
-}
+    IT("an unimported component reference is a diagnostic", {
+        const Iris::DriverResult Result = Iris::CompileFile(
+            "IrisComponent Foo() { render { <HealthBar current={1} max={2} /> } }\n", "test.iris", PenumbraConfig(),
+            "/nonexistent");
+        ASSERT_FALSE(Result.Diagnostics.empty()); // an unimported, non-Core-primitive tag is a diagnostic
+        ASSERT_TRUE(Result.Output.empty());       // no output is produced when there are diagnostics
+        ASSERT_TRUE(DiagnosticsContain(Result.Diagnostics, "HealthBar` is not imported and is not a Core primitive"));
+        // the diagnostic is SemanticValidator's message
+    });
 
-void TestFullPartyScreenExampleCompilesCleanly() {
-    TempProject Project;
-    Project.WriteComponent("Button");
-    Project.WriteComponent("HealthBar");
+    IT("a parse error is a diagnostic and blocks output", {
+        const Iris::DriverResult Result = Iris::CompileFile("IrisComponent Foo() { render { <A/> <B/> } }\n", "test.iris",
+                                                              PenumbraConfig(), "/nonexistent");
+        ASSERT_FALSE(Result.Diagnostics.empty()); // a multi-root render block is a diagnostic
+        ASSERT_TRUE(Result.Output.empty());       // no output is produced when there are diagnostics
+        ASSERT_TRUE(DiagnosticsContain(Result.Diagnostics, "must have exactly one root element"));
+        // the diagnostic is RenderBlockParser's own message
+    });
 
-    const Iris::DriverResult Result = Iris::CompileFile(
-        R"(import HealthBar
+    IT("the full PartyScreen example compiles cleanly", {
+        TempProject Project;
+        Project.WriteComponent("Button");
+        Project.WriteComponent("HealthBar");
+
+        const Iris::DriverResult Result = Iris::CompileFile(
+            R"(import HealthBar
 import Button
 
 IrisComponent PartyScreen(PartyScreenProps props) {
@@ -165,25 +158,14 @@ IrisComponent PartyScreen(PartyScreenProps props) {
     }
 }
 )",
-        "PartyScreen.iris", PenumbraConfig(), Project.RootPath());
+            "PartyScreen.iris", PenumbraConfig(), Project.RootPath());
 
-    Expect(Result.Diagnostics.empty(), "the full spec §9 PartyScreen example compiles with no diagnostics");
-    Expect(!Contains(Result.Output, "render {"), "no render{ } text survives in the output");
-    Expect(!Contains(Result.Output, "<Frame") && !Contains(Result.Output, "<HealthBar"),
-           "no raw JSX text survives anywhere, including inside the nested !{ } bodies");
-    Expect(Contains(Result.Output, "#include \"components/HealthBar.iris.h\"") &&
-               Contains(Result.Output, "#include \"components/Button.iris.h\""),
-           "both import lines become #includes of their resolved generated headers");
-}
-
-} // namespace
-
-void RunDriverTests() {
-    TestSimpleRenderBlockCompiles();
-    TestOutputHasLineDirectives();
-    TestImportLineBecomesIncludeOfGeneratedHeader();
-    TestUnresolvedImportIsADiagnosticAndBlocksOutput();
-    TestUnimportedComponentReferenceIsADiagnostic();
-    TestParseErrorIsADiagnosticAndBlocksOutput();
-    TestFullPartyScreenExampleCompilesCleanly();
-}
+        ASSERT_TRUE(Result.Diagnostics.empty()); // the full spec §9 PartyScreen example compiles with no diagnostics
+        ASSERT_FALSE(Contains(Result.Output, "render {")); // no render{ } text survives in the output
+        ASSERT_TRUE(!Contains(Result.Output, "<Frame") && !Contains(Result.Output, "<HealthBar"));
+        // no raw JSX text survives anywhere, including inside the nested !{ } bodies
+        ASSERT_TRUE(Contains(Result.Output, "#include \"components/HealthBar.iris.h\"") &&
+                    Contains(Result.Output, "#include \"components/Button.iris.h\""));
+        // both import lines become #includes of their resolved generated headers
+    });
+});
