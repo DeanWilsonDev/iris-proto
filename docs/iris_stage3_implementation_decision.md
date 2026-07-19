@@ -203,24 +203,30 @@ now decided by implementation, not left further open.
 
 Scoped out of this pass, each a real, separate piece of work:
 
-- **A real Penumbra `IWidget` adapter.** Nothing in `iris-penumbra-backend` yet
+- **A real Penumbra `IWidget` adapter.** ~~Nothing in `iris-penumbra-backend` yet
   implements `Umbra::IWidget` by wrapping `Penumbra::Widgets::WidgetBase` — this
   runtime is tested exclusively against a mock `IWidget` (`tests/ReconcilerTests.cpp`,
   `tests/SlotRuntimeTests.cpp`). The mock proves the algorithm is correct; it doesn't
-  prove a real Penumbra widget tree reconciles correctly yet.
-- **Wiring `SlotState` into Stage 2's walker.** `IrisPenumbraBackend::BuildWidgetTree`
+  prove a real Penumbra widget tree reconciles correctly yet.~~ **Done** —
+  `iris-penumbra-backend`'s `PenumbraWidget`
+  (`docs/iris_penumbra_backend_adapter_decision.md` in that repo), verified against
+  real `Box`/`Label` objects.
+- **Wiring `SlotState` into Stage 2's walker.** ~~`IrisPenumbraBackend::BuildWidgetTree`
   (the Stage 2 walker) still explicitly asserts on encountering an `IrisElementTag::Slot`
   node rather than resolving it — it was built and tested before `<Slot>` resolution
   existed. Making a `<Slot>`-containing tree actually mountable means teaching that
   walker (or something layered in front of it) to construct a `SlotState` at each
-  `<Slot>` position and splice its own widget(s) in.
+  `<Slot>` position and splice its own widget(s) in.~~ **Done**, for both the
+  single-`IrisComponent`- and list-returning callable shapes —
+  `docs/iris_slot_stage2_wiring_decision.md` and `docs/iris_slot_list_wiring_decision.md`.
 - **Nested `<Slot>` discovery.** `SlotState`/`Reconciler` assume the trees a slot's
   callable produces contain no further `<Slot>` tags — matching Stage 2's own
   documented precondition ("the tree a backend pass ever sees is fully concrete — no
   Slot nodes"). Recursively finding nested `<Slot>` tags within an arbitrary
   `IrisComponent` tree and giving each its own independent `SlotState` (per the spec's
   own `<Slot>`-scoped-diffing design) is real, separate work this pass doesn't attempt.
-- **LIS-based minimal-move list diffing** (Decision 6's known limitation).
+  **Still open** — the one item on this original list not yet closed.
+- **LIS-based minimal-move list diffing** (Decision 6's known limitation). **Still open.**
 - **Numeric (`int`/`float`) `IrisPropDiff` fields** — still absent, per
   `docs/iris_props_decision.md`'s original note; add both together, deliberately, if a
   Core primitive ever needs one.

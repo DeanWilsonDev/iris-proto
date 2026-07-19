@@ -48,18 +48,22 @@
   time output has been traced from `.iris` source all the way to a real Penumbra widget.
   `iris-penumbra-backend`'s vendored `iris` submodule was also bumped from this repo's very
   first commit (which predates `IrisComponent` having its current shape) to current `main`.
-- **Stage 3 (reactive runtime)** — **core engine done**; backend integration not yet. `Signal<T>`,
-  ambient dependency tracking, batching, `iris::Tick()`, and the reconciler (prop diffing,
-  same-tag-key matching, keyed list diffing) are implemented and tested against a mock
-  `Umbra::IWidget` — see `docs/iris_stage3_implementation_decision.md`. Three real gaps the
-  decision docs left open got resolved along the way: `key` never actually reached
-  `IrisComponent` (fixed — see below), no mechanism was ever specified for how a signal knows
-  which `<Slot>`s to mark dirty (ambient "active slot" tracking, the user's explicit choice), and
-  `IWidget`/`IrisPropDiff` were said to belong in a not-yet-existing `umbra-interfaces` package
-  that conflicted with this repo's zero-Penumbra-dependency rule (that package now exists for
-  real — see below). Still deliberately deferred: a real Penumbra `IWidget` adapter, wiring
-  `SlotState` into the Stage 2 walker (which still asserts on encountering `<Slot>`), and
-  discovering/resolving nested `<Slot>`s within an arbitrary tree.
+- **Stage 3 (reactive runtime)** — **core engine and backend integration both done.**
+  `Signal<T>`, ambient dependency tracking, batching, `iris::Tick()`, and the reconciler (prop
+  diffing, same-tag-key matching, keyed list diffing) are implemented and tested against a mock
+  `Umbra::IWidget` — see `docs/iris_stage3_implementation_decision.md`. A real Penumbra
+  `IWidget` adapter (`iris-penumbra-backend`'s `PenumbraWidget`) and `<Slot>` wiring into the
+  Stage 2 walker (`iris::ResolveSlots`, both the single-`IrisComponent`- and list-returning
+  callable shapes) are also done and verified against real `Penumbra::Widgets::Box`/`Label`
+  objects under AddressSanitizer — see the "Done" sections below. Three real gaps the decision
+  docs left open got resolved along the way: `key` never actually reached `IrisComponent`
+  (fixed — see below), no mechanism was ever specified for how a signal knows which `<Slot>`s to
+  mark dirty (ambient "active slot" tracking, the user's explicit choice), and `IWidget`/
+  `IrisPropDiff` were said to belong in a not-yet-existing `umbra-interfaces` package that
+  conflicted with this repo's zero-Penumbra-dependency rule (that package now exists for real —
+  see below). Still deliberately deferred: discovering/resolving nested `<Slot>`s within an
+  arbitrary tree, and LIS-based minimal-move list diffing (the current diff is correct, not
+  move-count-optimal).
 - **Stage 4 (Lustre-lite styling)** — not scoped yet.
 - **Stage 5 (first real consumer)** — not started. You mentioned real consuming projects already
   exist, which is why the repo-dependency direction got fixed now rather than later.
@@ -260,12 +264,12 @@ recursion through a matched parent, and batching collapsing multiple `set()` cal
 reconcile.
 
 **Not part of this pass** (see the decision doc's "What remains deliberately deferred"): a
-real Penumbra `IWidget` adapter (nothing implements `Umbra::IWidget` for a real
+real Penumbra `IWidget` adapter (nothing implemented `Umbra::IWidget` for a real
 `Penumbra::Widgets::WidgetBase` yet), wiring `SlotState` into the Stage 2 walker (which still
-asserts on encountering `<Slot>` — it was built and tested before `<Slot>` resolution
+asserted on encountering `<Slot>` — it was built and tested before `<Slot>` resolution
 existed), nested-`<Slot>` discovery within an arbitrary tree, and LIS-based minimal-move list
 diffing (the current list diff is correct — matched widgets are always reused — but not
-move-count-optimal).
+move-count-optimal). **The first two are now done — see below.**
 
 ## Done: the Penumbra `Umbra::IWidget` adapter, in `iris-penumbra-backend`
 
@@ -312,14 +316,15 @@ treats `IrisElementTag::Slot` exactly like `None` during the static build (contr
 nothing, no more assert) — a new `iris::ResolveSlots(Widget, Node, Mount)`
 (`include/Iris/SlotResolution.h`) then walks the just-built widget tree and the original
 `IrisComponent` tree in lockstep, and for each `<Slot>` found, constructs a `SlotState`,
-tells it exactly where it lives (`SlotState::AttachAt(Parent, Index)`, a new "attached"
-mode alongside the existing standalone one), and performs its initial mount — splicing
-its render into the parent's real children at that position. Every subsequent
+tells it exactly where it lives (originally `SlotState::AttachAt(Parent, Index)`, a new
+"attached" mode alongside the existing standalone one — since generalized to
+`AttachToGroup`, see the list-wiring paragraph below), and performs its initial mount —
+splicing its render into the parent's real children at that position. Every subsequent
 `Reconcile()` (including ones `iris::Tick()` triggers automatically) updates that same
 real position in place, via `ReconcileWidget` completely unchanged — it never knew or
-cared where its `unique_ptr<Umbra::IWidget>&` actually lived. `ResolveSlots`/`AttachAt`
-are pure `Umbra::IWidget` — entirely backend-agnostic, living in `iris`'s own runtime;
-the only change needed in `iris-penumbra-backend` was a one-line change to
+cared where its `unique_ptr<Umbra::IWidget>&` actually lived. `ResolveSlots`/`SlotState`'s
+attachment API are pure `Umbra::IWidget` — entirely backend-agnostic, living in `iris`'s
+own runtime; the only change needed in `iris-penumbra-backend` was a one-line change to
 `BuildWidgetTree`'s own `Slot` case.
 
 Verified against a mock (`tests/SlotResolutionTests.cpp`) and, more importantly, against
@@ -343,13 +348,36 @@ MarkDestroyed`).
 before — `ResolveSlots` only walks the *static* tree, never a `<Slot>`'s own
 dynamically-produced output).
 
+## Done: vendored Cimmerian, the ecosystem's own test framework
+
+`libs/cimmerian` (git submodule, `github.com/DeanWilsonDev/cimmerian`), pinned at its latest
+upstream commit. `CMakeLists.txt` forces `CIMMERIAN_VISUAL_PLATFORM=None` (a cache variable
+set *before* `add_subdirectory(libs/cimmerian)`, since Cimmerian's own `CMakeLists.txt` only
+sets it if it isn't already set) to avoid the default `X11`/`libXtst` dependency its
+screenshot/visual-regression testing needs — nothing Iris's own tests need.
+
+A new `iris_cimmerian_tests` executable (`tests/cimmerian/`) uses Cimmerian's `DESCRIBE`/`IT`/
+`ASSERT_EQUAL` BDD-style macros with auto-registration and its own `TestRunner::RunAll()` entry
+point (`tests/cimmerian/CimmerianTestMain.cpp`, just `#include <cimmerian/test-entry-point.hpp>`).
+Kept as a *separate* binary from `iris_tests` rather than merged in: Cimmerian's
+auto-registration model doesn't mesh with `iris_tests`' existing hand-rolled
+`RunXTests()`-called-from-one-`main()` pattern, and migrating ~13 existing test files wasn't
+in scope. This is the intended tool for new tests going forward
+(`docs/iris_stage2_decision_doc.md` §7).
+
+First test file, `tests/cimmerian/SlotSiblingGroupTests.cpp`: three tests adding coverage for
+the list-`<Slot>` wiring work not present in `tests/SlotResolutionTests.cpp` — a three-sibling
+mix of list- and single-returning `<Slot>`s, and an explicit regression test for the
+forward-order sibling-teardown use-after-free AddressSanitizer caught during that work. Clean
+under AddressSanitizer + UndefinedBehaviorSanitizer.
+
 ## Suggested order
 
 Starting from what's actually left:
 
 1. **Nested `<Slot>` discovery** — finding and giving each nested `<Slot>` its own `SlotState`
    within an arbitrary tree, rather than assuming a slot's own output is always already fully
-   resolved.
+   resolved. The one remaining gap in Stage 3's own `<Slot>` wiring.
 2. **LIS-based minimal-move list diffing** — an optimization on top of the current
    correct-but-not-optimal list diff, once real-world move patterns make the extra
    `RemoveChildAt`/`InsertChildAt` traffic worth avoiding.
