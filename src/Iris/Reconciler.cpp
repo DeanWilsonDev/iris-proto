@@ -1,5 +1,6 @@
 #include "Iris/Reconciler.h"
 
+#include <algorithm>
 #include <functional>
 #include <type_traits>
 #include <variant>
@@ -72,55 +73,117 @@ bool KeysEqual(const std::optional<Iris::IrisPropValue>& A, const std::optional<
         *A);
 }
 
-std::vector<std::unique_ptr<Umbra::IWidget>> ReconcileList(std::vector<std::unique_ptr<Umbra::IWidget>> OldWidgets,
-                                                             const std::vector<Iris::IrisComponent>& OldList,
-                                                             const std::vector<Iris::IrisComponent>& NewList,
-                                                             const MountFn& Mount) {
-    std::vector<bool> OldMatched(OldList.size(), false);
-    std::vector<int>  NewToOld(NewList.size(), -1);
+// Matches `OldList` against `NewList`: keyed entries first (position-independent, so
+// an item that moved is still recognised as the same item), then remaining unkeyed
+// entries by relative order among what's left. Shared by both the plain-vector
+// (`ReconcileList`) and live-widget (`ReconcileChildrenAt`) reconciliation paths so
+// they can never drift out of sync on what counts as a match.
+struct ListMatch {
+    std::vector<bool> OldMatched;
+    std::vector<int>  NewToOld; // -1 == no match, needs a fresh mount
+};
 
-    // Pass 1: match by explicit key (docs/iris_stage3_decision_doc.md §3) — position-
-    // independent, so an item that moved is still recognised as the same item.
+ListMatch MatchLists(const std::vector<Iris::IrisComponent>& OldList,
+                      const std::vector<Iris::IrisComponent>& NewList) {
+    ListMatch Match;
+    Match.OldMatched.assign(OldList.size(), false);
+    Match.NewToOld.assign(NewList.size(), -1);
+
+    // Pass 1: match by explicit key (docs/iris_stage3_decision_doc.md §3).
     for (std::size_t NewIndex = 0; NewIndex < NewList.size(); ++NewIndex) {
         if (!NewList[NewIndex].Key.has_value()) {
             continue;
         }
         for (std::size_t OldIndex = 0; OldIndex < OldList.size(); ++OldIndex) {
-            if (OldMatched[OldIndex] || !OldList[OldIndex].Key.has_value()) {
+            if (Match.OldMatched[OldIndex] || !OldList[OldIndex].Key.has_value()) {
                 continue;
             }
             if (OldList[OldIndex].Tag == NewList[NewIndex].Tag &&
                 KeysEqual(OldList[OldIndex].Key, NewList[NewIndex].Key)) {
-                NewToOld[NewIndex] = static_cast<int>(OldIndex);
-                OldMatched[OldIndex] = true;
+                Match.NewToOld[NewIndex] = static_cast<int>(OldIndex);
+                Match.OldMatched[OldIndex] = true;
                 break;
             }
         }
     }
 
-    // Pass 2: remaining unkeyed entries matched by relative order among what's left —
-    // the documented, simpler fallback (Reconciler.h's "Known limitation").
+    // Pass 2: remaining unkeyed entries matched by relative order among what's left.
     std::size_t OldCursor = 0;
     for (std::size_t NewIndex = 0; NewIndex < NewList.size(); ++NewIndex) {
-        if (NewToOld[NewIndex] != -1 || NewList[NewIndex].Key.has_value()) {
+        if (Match.NewToOld[NewIndex] != -1 || NewList[NewIndex].Key.has_value()) {
             continue;
         }
-        while (OldCursor < OldList.size() && (OldMatched[OldCursor] || OldList[OldCursor].Key.has_value())) {
+        while (OldCursor < OldList.size() && (Match.OldMatched[OldCursor] || OldList[OldCursor].Key.has_value())) {
             ++OldCursor;
         }
         if (OldCursor < OldList.size() && OldList[OldCursor].Tag == NewList[NewIndex].Tag) {
-            NewToOld[NewIndex] = static_cast<int>(OldCursor);
-            OldMatched[OldCursor] = true;
+            Match.NewToOld[NewIndex] = static_cast<int>(OldCursor);
+            Match.OldMatched[OldCursor] = true;
             ++OldCursor;
         }
     }
 
+    return Match;
+}
+
+// Longest increasing subsequence, by value, of the matched entries in `NewToOld`
+// (unmatched `-1` entries are ignored). Returns a mask over *new* positions: `true`
+// marks a position whose matched old widget is already in the correct relative order
+// and needs no structural move at all — only these positions' `RemoveChildAt`/
+// `InsertChildAt` pair is skippable; everything else needs exactly one such pair
+// (moved) or one `InsertChildAt` (freshly mounted). Standard patience-sorting LIS,
+// O(n log n).
+std::vector<bool> ComputeKeepInPlace(const std::vector<int>& NewToOld) {
+    std::vector<std::size_t> MatchedPositions; // positions (indices into NewToOld) that matched something
+    for (std::size_t Index = 0; Index < NewToOld.size(); ++Index) {
+        if (NewToOld[Index] != -1) {
+            MatchedPositions.push_back(Index);
+        }
+    }
+
+    std::vector<int>         TailValues;   // OldIndex values, kept sorted increasing
+    std::vector<std::size_t> TailAt;       // index into MatchedPositions for each tail
+    std::vector<int>         Predecessor(MatchedPositions.size(), -1);
+
+    for (std::size_t I = 0; I < MatchedPositions.size(); ++I) {
+        const int Value = NewToOld[MatchedPositions[I]];
+        const auto It   = std::lower_bound(TailValues.begin(), TailValues.end(), Value);
+        const auto Pos  = static_cast<std::size_t>(It - TailValues.begin());
+        Predecessor[I]  = (Pos > 0) ? static_cast<int>(TailAt[Pos - 1]) : -1;
+        if (Pos == TailValues.size()) {
+            TailValues.push_back(Value);
+            TailAt.push_back(I);
+        } else {
+            TailValues[Pos] = Value;
+            TailAt[Pos]     = I;
+        }
+    }
+
+    std::vector<bool> Keep(NewToOld.size(), false);
+    if (!TailAt.empty()) {
+        int Cursor = static_cast<int>(TailAt.back());
+        while (Cursor != -1) {
+            Keep[MatchedPositions[static_cast<std::size_t>(Cursor)]] = true;
+            Cursor = Predecessor[static_cast<std::size_t>(Cursor)];
+        }
+    }
+    return Keep;
+}
+
+std::vector<std::unique_ptr<Umbra::IWidget>> ReconcileList(std::vector<std::unique_ptr<Umbra::IWidget>> OldWidgets,
+                                                             const std::vector<Iris::IrisComponent>& OldList,
+                                                             const std::vector<Iris::IrisComponent>& NewList,
+                                                             const MountFn& Mount) {
+    const ListMatch Match = MatchLists(OldList, NewList);
+
     std::vector<std::unique_ptr<Umbra::IWidget>> Result;
     Result.reserve(NewList.size());
     for (std::size_t NewIndex = 0; NewIndex < NewList.size(); ++NewIndex) {
-        if (NewToOld[NewIndex] != -1) {
-            std::unique_ptr<Umbra::IWidget> Reused = std::move(OldWidgets[static_cast<std::size_t>(NewToOld[NewIndex])]);
-            ReconcileWidget(Reused, OldList[static_cast<std::size_t>(NewToOld[NewIndex])], NewList[NewIndex], Mount);
+        if (Match.NewToOld[NewIndex] != -1) {
+            std::unique_ptr<Umbra::IWidget> Reused =
+                std::move(OldWidgets[static_cast<std::size_t>(Match.NewToOld[NewIndex])]);
+            ReconcileWidget(Reused, OldList[static_cast<std::size_t>(Match.NewToOld[NewIndex])], NewList[NewIndex],
+                             Mount);
             Result.push_back(std::move(Reused));
         } else {
             std::unique_ptr<Umbra::IWidget> Fresh;
@@ -148,6 +211,18 @@ std::vector<Iris::IrisComponent> FilterOrdinary(const std::vector<Iris::IrisComp
         }
     }
     return Ordinary;
+}
+
+// Updates `Widget` in place for a matched pair (same tag, same key — guaranteed by
+// every caller, never re-checked here) — applies the prop diff and recurses into
+// children via `ReconcileChildrenAt`. Never replaces or destroys `Widget` itself,
+// which is exactly why callers that already know they have a match (a kept-in-place
+// LIS entry, or a matched-but-moved entry about to be reinserted) can call this
+// through a non-owning reference instead of `ReconcileWidget`'s `unique_ptr&`.
+void ReconcileMatchedInPlace(Umbra::IWidget& Widget, const Iris::IrisComponent& Old, const Iris::IrisComponent& New,
+                             const MountFn& Mount) {
+    Widget.ApplyPropDiff(ComputePropDiff(Old.Props, New.Props));
+    ReconcileChildrenAt(Widget, 0, FilterOrdinary(Old.Children), FilterOrdinary(New.Children), Mount);
 }
 
 } // namespace
@@ -180,28 +255,68 @@ void ReconcileWidget(std::unique_ptr<Umbra::IWidget>& Widget, const Iris::IrisCo
         return;
     }
 
-    Widget->ApplyPropDiff(ComputePropDiff(Old.Props, New.Props));
-
-    const std::vector<Iris::IrisComponent> OldOrdinary = FilterOrdinary(Old.Children);
-    const std::vector<Iris::IrisComponent> NewOrdinary = FilterOrdinary(New.Children);
-
-    std::vector<std::unique_ptr<Umbra::IWidget>> OldChildren;
-    const std::size_t                             ChildCount = Widget->GetChildCount();
-    OldChildren.reserve(ChildCount);
-    for (std::size_t Index = 0; Index < ChildCount; ++Index) {
-        OldChildren.push_back(Widget->RemoveChildAt(0));
-    }
-    std::vector<std::unique_ptr<Umbra::IWidget>> NewChildren =
-        ReconcileList(std::move(OldChildren), OldOrdinary, NewOrdinary, Mount);
-    for (std::size_t Index = 0; Index < NewChildren.size(); ++Index) {
-        Widget->InsertChildAt(Index, std::move(NewChildren[Index]));
-    }
+    ReconcileMatchedInPlace(*Widget, Old, New, Mount);
 }
 
 void ReconcileChildren(std::vector<std::unique_ptr<Umbra::IWidget>>& Widgets,
                         const std::vector<Iris::IrisComponent>& OldList,
                         const std::vector<Iris::IrisComponent>& NewList, const MountFn& Mount) {
     Widgets = ReconcileList(std::move(Widgets), OldList, NewList, Mount);
+}
+
+void ReconcileChildrenAt(Umbra::IWidget& Parent, std::size_t Base,
+                          const std::vector<Iris::IrisComponent>& OldList,
+                          const std::vector<Iris::IrisComponent>& NewList, const MountFn& Mount) {
+    const ListMatch         Match = MatchLists(OldList, NewList);
+    const std::vector<bool> Keep  = ComputeKeepInPlace(Match.NewToOld);
+
+    // Which old index (if any) each new position keeps in place — used below to
+    // decide, per old index, whether it survives untouched or must be removed.
+    std::vector<int> KeptOldIndex(OldList.size(), -1);
+    for (std::size_t NewIndex = 0; NewIndex < NewList.size(); ++NewIndex) {
+        if (Keep[NewIndex]) {
+            KeptOldIndex[static_cast<std::size_t>(Match.NewToOld[NewIndex])] = static_cast<int>(NewIndex);
+        }
+    }
+
+    // Remove every old child not staying in place — highest original index first, so
+    // an as-yet-unremoved lower index's absolute position (Base + OldIndex) never
+    // shifts out from under it (RemoveChildAt only ever moves indices *above* the one
+    // removed). Matched-but-moved entries are kept alive here for reinsertion below;
+    // unmatched (dropped) entries destruct immediately — correct unmount.
+    std::vector<std::unique_ptr<Umbra::IWidget>> MovedOld(OldList.size());
+    for (std::size_t Reverse = OldList.size(); Reverse-- > 0;) {
+        if (KeptOldIndex[Reverse] != -1) {
+            continue; // stays exactly where it is
+        }
+        std::unique_ptr<Umbra::IWidget> Removed = Parent.RemoveChildAt(Base + Reverse);
+        if (Match.OldMatched[Reverse]) {
+            MovedOld[Reverse] = std::move(Removed);
+        }
+    }
+
+    // Walk left to right inserting/updating at each target index. By induction,
+    // Parent's children [Base, Base + NewIndex) already equal NewList[0, NewIndex)
+    // before this iteration: a kept entry is already sitting at Base + NewIndex (kept
+    // entries preserve both their relative order — the LIS property — and, since
+    // nothing is ever inserted before an already-correct prefix, their absolute
+    // position too); anything else gets inserted exactly once, right here.
+    for (std::size_t NewIndex = 0; NewIndex < NewList.size(); ++NewIndex) {
+        if (Keep[NewIndex]) {
+            Umbra::IWidget* InPlace = Parent.GetChildAt(Base + NewIndex);
+            ReconcileMatchedInPlace(*InPlace, OldList[static_cast<std::size_t>(Match.NewToOld[NewIndex])],
+                                     NewList[NewIndex], Mount);
+            continue;
+        }
+        if (Match.NewToOld[NewIndex] != -1) {
+            std::unique_ptr<Umbra::IWidget>& Reused = MovedOld[static_cast<std::size_t>(Match.NewToOld[NewIndex])];
+            ReconcileMatchedInPlace(*Reused, OldList[static_cast<std::size_t>(Match.NewToOld[NewIndex])],
+                                     NewList[NewIndex], Mount);
+            Parent.InsertChildAt(Base + NewIndex, std::move(Reused));
+        } else {
+            Parent.InsertChildAt(Base + NewIndex, Mount(NewList[NewIndex]));
+        }
+    }
 }
 
 } // namespace iris

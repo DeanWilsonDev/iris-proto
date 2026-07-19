@@ -158,16 +158,19 @@ void SlotState::Reconcile() {
             // changed (e.g. its own list grew) since the last time this slot
             // reconciled, shifting where this slot's own content now lives.
             const std::size_t Base = AttachedGroup_->AbsoluteIndexOf(AttachedGroupIndex_);
-            std::unique_ptr<Umbra::IWidget> Current;
-            if (AttachedCount_ != 0) {
-                Current = AttachedParent_->RemoveChildAt(Base);
+
+            const std::vector<Iris::IrisComponent> OldAsList =
+                (AttachedCount_ != 0) ? std::vector<Iris::IrisComponent>{PreviousSingle_}
+                                      : std::vector<Iris::IrisComponent>{};
+            const std::vector<Iris::IrisComponent> NewAsList =
+                (NewOutput.Tag != Iris::IrisElementTag::None) ? std::vector<Iris::IrisComponent>{NewOutput}
+                                                               : std::vector<Iris::IrisComponent>{};
+            ReconcileChildrenAt(*AttachedParent_, Base, OldAsList, NewAsList, Mount_);
+
+            if (!NewAsList.empty()) {
+                DiscoverNestedSlots(*AttachedParent_->GetChildAt(Base), NewOutput);
             }
-            ReconcileWidget(Current, PreviousSingle_, NewOutput, Mount_);
-            if (Current != nullptr) {
-                DiscoverNestedSlots(*Current, NewOutput);
-                AttachedParent_->InsertChildAt(Base, std::move(Current));
-            }
-            AttachedCount_ = (NewOutput.Tag != Iris::IrisElementTag::None) ? 1 : 0;
+            AttachedCount_ = NewAsList.size();
         } else {
             ReconcileWidget(SingleWidget_, PreviousSingle_, NewOutput, Mount_);
             if (SingleWidget_ != nullptr) {
@@ -183,21 +186,12 @@ void SlotState::Reconcile() {
         if (AttachedParent_ != nullptr) {
             const std::size_t Base = AttachedGroup_->AbsoluteIndexOf(AttachedGroupIndex_);
 
-            std::vector<std::unique_ptr<Umbra::IWidget>> Current;
-            Current.reserve(AttachedCount_);
-            for (std::size_t I = 0; I < AttachedCount_; ++I) {
-                Current.push_back(AttachedParent_->RemoveChildAt(Base));
-            }
+            ReconcileChildrenAt(*AttachedParent_, Base, PreviousList_, NewOutput, Mount_);
 
-            ReconcileChildren(Current, PreviousList_, NewOutput, Mount_);
-
-            for (std::size_t I = 0; I < Current.size(); ++I) {
-                if (Current[I] != nullptr) {
-                    DiscoverNestedSlots(*Current[I], NewOutput[I]);
-                }
-                AttachedParent_->InsertChildAt(Base + I, std::move(Current[I]));
+            for (std::size_t I = 0; I < NewOutput.size(); ++I) {
+                DiscoverNestedSlots(*AttachedParent_->GetChildAt(Base + I), NewOutput[I]);
             }
-            AttachedCount_ = Current.size();
+            AttachedCount_ = NewOutput.size();
         } else {
             ReconcileChildren(ListWidgets_, PreviousList_, NewOutput, Mount_);
             for (std::size_t I = 0; I < ListWidgets_.size(); ++I) {

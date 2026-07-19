@@ -168,3 +168,18 @@ callable whenever its outer parent re-renders for an unrelated reason. Still ope
 rediscovery when the underlying subtree was reused unchanged, and a `<Slot>`'s own list output
 containing a *bare* `<Slot>` entry directly (rather than nested inside an ordinary wrapper
 element).
+
+**List diffing is now LIS-based and move-count-optimal**
+(`docs/iris_lis_list_diff_decision.md`): the reconciler's list diff always reused the correct
+widget objects, but previously always removed and reinserted every list entry regardless of
+whether it needed to move — the one item every Stage 3 decision doc had flagged as deliberately
+deferred. `Reconciler.cpp` now has `ReconcileChildrenAt`, a live-widget counterpart to the
+existing plain-vector `ReconcileChildren`, which computes the longest increasing subsequence of
+matched old positions and leaves those untouched structurally (only prop/child updates run on
+them, via a new `ReconcileMatchedInPlace`) — every other position gets exactly one
+`RemoveChildAt`/`InsertChildAt`, the minimum possible. Both `ReconcileWidget`'s own
+child-recursion and `SlotState::Reconcile`'s attached-parent branches (`SlotRuntime.cpp`) now go
+through it instead of their old hand-rolled remove-all/insert-all sequences. Verified with new
+tests asserting actual mutation call counts, not just end-state correctness; full suite clean
+under AddressSanitizer + UndefinedBehaviorSanitizer. This closes the last open item from Stage
+3's original decision doc.

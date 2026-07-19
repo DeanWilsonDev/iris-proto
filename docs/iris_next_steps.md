@@ -48,22 +48,21 @@
   time output has been traced from `.iris` source all the way to a real Penumbra widget.
   `iris-penumbra-backend`'s vendored `iris` submodule was also bumped from this repo's very
   first commit (which predates `IrisComponent` having its current shape) to current `main`.
-- **Stage 3 (reactive runtime)** — **core engine and backend integration both done.**
-  `Signal<T>`, ambient dependency tracking, batching, `iris::Tick()`, and the reconciler (prop
-  diffing, same-tag-key matching, keyed list diffing) are implemented and tested against a mock
-  `Umbra::IWidget` — see `docs/iris_stage3_implementation_decision.md`. A real Penumbra
-  `IWidget` adapter (`iris-penumbra-backend`'s `PenumbraWidget`) and `<Slot>` wiring into the
-  Stage 2 walker (`iris::ResolveSlots`, both the single-`IrisComponent`- and list-returning
-  callable shapes) are also done and verified against real `Penumbra::Widgets::Box`/`Label`
-  objects under AddressSanitizer — see the "Done" sections below. Three real gaps the decision
-  docs left open got resolved along the way: `key` never actually reached `IrisComponent`
-  (fixed — see below), no mechanism was ever specified for how a signal knows which `<Slot>`s to
-  mark dirty (ambient "active slot" tracking, the user's explicit choice), and `IWidget`/
-  `IrisPropDiff` were said to belong in a not-yet-existing `umbra-interfaces` package that
-  conflicted with this repo's zero-Penumbra-dependency rule (that package now exists for real —
-  see below). Still deliberately deferred: discovering/resolving nested `<Slot>`s within an
-  arbitrary tree, and LIS-based minimal-move list diffing (the current diff is correct, not
-  move-count-optimal).
+- **Stage 3 (reactive runtime)** — **done, including both items this doc used to list as
+  remaining.** `Signal<T>`, ambient dependency tracking, batching, `iris::Tick()`, and the
+  reconciler (prop diffing, same-tag-key matching, keyed list diffing, now LIS-based
+  minimal-move — see below) are implemented and tested against a mock `Umbra::IWidget` — see
+  `docs/iris_stage3_implementation_decision.md`. A real Penumbra `IWidget` adapter
+  (`iris-penumbra-backend`'s `PenumbraWidget`) and `<Slot>` wiring into the Stage 2 walker
+  (`iris::ResolveSlots`, both the single-`IrisComponent`- and list-returning callable shapes,
+  plus nested `<Slot>` discovery within a `<Slot>`'s own dynamically-produced output) are also
+  done and verified against real `Penumbra::Widgets::Box`/`Label` objects under
+  AddressSanitizer — see the "Done" sections below. Three real gaps the decision docs left open
+  got resolved along the way: `key` never actually reached `IrisComponent` (fixed — see below),
+  no mechanism was ever specified for how a signal knows which `<Slot>`s to mark dirty (ambient
+  "active slot" tracking, the user's explicit choice), and `IWidget`/`IrisPropDiff` were said to
+  belong in a not-yet-existing `umbra-interfaces` package that conflicted with this repo's
+  zero-Penumbra-dependency rule (that package now exists for real — see below).
 - **Stage 4 (Lustre-lite styling)** — not scoped yet.
 - **Stage 5 (first real consumer)** — not started. You mentioned real consuming projects already
   exist, which is why the repo-dependency direction got fixed now rather than later.
@@ -374,16 +373,58 @@ three tests adding coverage for the list-`<Slot>` wiring work not present in
 and an explicit regression test for the forward-order sibling-teardown use-after-free
 AddressSanitizer caught during that work. Clean under AddressSanitizer + UndefinedBehaviorSanitizer.
 
+## Done: nested `<Slot>` discovery
+
+Full writeup: `docs/iris_nested_slot_discovery_decision.md`. Summary: a `<Slot>` nested inside
+another `<Slot>`'s own dynamically-produced output (the common case of rendering a child
+component whose own `render { }` body contains its own `<Slot>`) now gets found and given its
+own independent `SlotState`, reacting to its own signals without the outer `<Slot>` needing to
+re-render. `Reconciler.cpp`'s `ReconcileWidget`/`ReconcileList` were fixed to filter `Slot`-tagged
+children out of ordinary index-aligned child diffing first (`FilterOrdinary`) — a `<Slot>` child
+contributes zero real widgets, same convention the static-tree walker already used, and a naive
+diff would otherwise corrupt the real tree at that position. `SlotState::NestedSlots_` is then
+rebuilt from scratch (re-running `ResolveSlots` against the just-reconciled dynamic output) on
+every `Reconcile()` call, mount and re-render alike — simpler and safer than persisting a nested
+slot unchanged across a parent re-render, at the cost of an unnecessary rediscovery/re-render
+whenever the outer `<Slot>` re-renders for an unrelated reason. Verified against real Penumbra
+widgets and clean under AddressSanitizer + UndefinedBehaviorSanitizer, including a real
+destruction-order use-after-free ASan caught (`~SlotState()` now clears `NestedSlots_` before its
+existing detach logic runs) and a regression test for it.
+
+**Deliberately still deferred, not solved here:** a bare `<Slot>` as a raw list item (a
+list-returning `<Slot>` callable whose own list contains a `Slot`-tagged entry directly, not
+wrapped in an ordinary element) — real, separate, narrower gap; and rediscovery-avoidance for a
+nested `<Slot>` living under a widget that was reused unchanged (purely a performance concern).
+
+## Done: LIS-based minimal-move list diffing
+
+Full writeup: `docs/iris_lis_list_diff_decision.md`. Summary: closes the one item every Stage 3
+decision doc since `docs/iris_stage3_implementation_decision.md` had flagged as deliberately
+deferred — the list diff reused the right widget objects (correctness) but always removed and
+reinserted every list entry, matched or not. `Reconciler.cpp` gained `ReconcileChildrenAt`
+(`Reconciler.h`), the live-widget counterpart to the existing plain-vector `ReconcileChildren`:
+it computes the longest increasing subsequence of matched old positions (`ComputeKeepInPlace`,
+O(n log n) patience sorting) and leaves those entries completely untouched structurally — only
+`ApplyPropDiff`/child-recursion runs on them, via a new `ReconcileMatchedInPlace(Umbra::IWidget&,
+...)` that updates a matched pair in place without needing ownership. Every other position gets
+exactly one `RemoveChildAt`/`InsertChildAt` (a real move, or a fresh mount) — the minimum
+possible given `Umbra::IWidget`'s deliberately move-less API. `ReconcileWidget`'s own
+child-recursion and both of `SlotState::Reconcile`'s `AttachedParent_` branches
+(`SlotRuntime.cpp`) now call this instead of their old hand-rolled remove-all/insert-all
+sequences — the single-output attached case collapsed into a 0-or-1-element list reconciliation
+against the same function, deleting bespoke code rather than adding a parallel path. Verified
+with new `tests/ReconcilerTests.cpp` cases asserting actual `RemoveChildAt`/`InsertChildAt` call
+counts (not just end-state correctness) — appending touches nothing old, a single out-of-order
+move among four stable siblings costs exactly one remove + one insert, a no-op reconcile costs
+zero, and a non-zero base index (a `<Slot>` after a static sibling) leaves everything before it
+alone. Full suite (115 tests) clean under AddressSanitizer + UndefinedBehaviorSanitizer.
+
 ## Suggested order
 
-Starting from what's actually left:
+Both items this section used to list are now done (see above) — Stage 3 has no known open gaps
+left. What's actually left:
 
-1. **Nested `<Slot>` discovery** — finding and giving each nested `<Slot>` its own `SlotState`
-   within an arbitrary tree, rather than assuming a slot's own output is always already fully
-   resolved. The one remaining gap in Stage 3's own `<Slot>` wiring.
-2. **LIS-based minimal-move list diffing** — an optimization on top of the current
-   correct-but-not-optimal list diff, once real-world move patterns make the extra
-   `RemoveChildAt`/`InsertChildAt` traffic worth avoiding.
-3. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
-4. **Stage 5** — validate against one of the real consuming projects once (1)–(2) produce
-   something an actual `.iris` file can round-trip through, mount, and reconcile for real.
+1. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
+2. **Stage 5** — validate against one of the real consuming projects now that Stage 3's
+   reconciler is both correct and move-count-optimal, and an actual `.iris` file can round-trip
+   through, mount, and reconcile for real, arbitrarily-nested `<Slot>`s included.

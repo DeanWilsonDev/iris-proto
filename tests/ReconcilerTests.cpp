@@ -14,6 +14,12 @@ namespace {
 std::set<int> AliveWidgetIds;
 int           NextWidgetId = 0;
 
+// Counts structural mutations across every MockWidget, reset per test — lets the
+// LIS-based minimal-move tests below assert on the actual number of RemoveChildAt/
+// InsertChildAt calls, not merely on the end result being correct.
+int RemoveChildAtCallCount = 0;
+int InsertChildAtCallCount = 0;
+
 class MockWidget : public Umbra::IWidget {
 public:
     explicit MockWidget(std::string Tag) : Tag(std::move(Tag)), Id(NextWidgetId++) { AliveWidgetIds.insert(Id); }
@@ -33,10 +39,12 @@ public:
     Umbra::IWidget* GetChildAt(std::size_t Index) const override { return Children[Index].get(); }
 
     void InsertChildAt(std::size_t Index, std::unique_ptr<Umbra::IWidget> Child) override {
+        ++InsertChildAtCallCount;
         Children.insert(Children.begin() + static_cast<long>(Index), std::move(Child));
     }
 
     std::unique_ptr<Umbra::IWidget> RemoveChildAt(std::size_t Index) override {
+        ++RemoveChildAtCallCount;
         std::unique_ptr<Umbra::IWidget> Removed = std::move(Children[Index]);
         Children.erase(Children.begin() + static_cast<long>(Index));
         return Removed;
@@ -271,5 +279,112 @@ DESCRIBE("Reconciler", {
         ASSERT_EQUAL(Widgets.size(), static_cast<std::size_t>(2)); // still two widgets — one removed, one added
         ASSERT_EQUAL(AliveWidgetIds.count(RemovedId), static_cast<std::size_t>(0));
         // the widget for the removed key was actually unmounted
+    });
+
+    IT("ReconcileChildrenAt appending an item touches only the new one", {
+        int         MountCount = 0;
+        TestMounter Mount(&MountCount);
+        MockWidget  Parent("Frame");
+
+        std::vector<Iris::IrisComponent> OldList;
+        OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
+        OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
+        iris::ReconcileChildrenAt(Parent, 0, {}, OldList, Mount);
+        const int Id1 = dynamic_cast<MockWidget*>(Parent.GetChildAt(0))->Id;
+        const int Id2 = dynamic_cast<MockWidget*>(Parent.GetChildAt(1))->Id;
+
+        RemoveChildAtCallCount = 0;
+        InsertChildAtCallCount = 0;
+
+        std::vector<Iris::IrisComponent> NewList = OldList;
+        NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(3)));
+        iris::ReconcileChildrenAt(Parent, 0, OldList, NewList, Mount);
+
+        ASSERT_EQUAL(Parent.GetChildCount(), static_cast<std::size_t>(3));
+        ASSERT_EQUAL(dynamic_cast<MockWidget*>(Parent.GetChildAt(0))->Id, Id1);
+        ASSERT_EQUAL(dynamic_cast<MockWidget*>(Parent.GetChildAt(1))->Id, Id2);
+        // both existing widgets kept their exact position — no RemoveChildAt at all
+        ASSERT_EQUAL(RemoveChildAtCallCount, 0);
+        // the new third item needed exactly one InsertChildAt
+        ASSERT_EQUAL(InsertChildAtCallCount, 1);
+    });
+
+    IT("ReconcileChildrenAt reordering by key moves only the displaced entries", {
+        int         MountCount = 0;
+        TestMounter Mount(&MountCount);
+        MockWidget  Parent("Frame");
+
+        std::vector<Iris::IrisComponent> OldList;
+        for (int Key = 1; Key <= 4; ++Key) {
+            OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(Key)));
+        }
+        iris::ReconcileChildrenAt(Parent, 0, {}, OldList, Mount);
+        std::vector<int> OldIds;
+        for (std::size_t I = 0; I < 4; ++I) {
+            OldIds.push_back(dynamic_cast<MockWidget*>(Parent.GetChildAt(I))->Id);
+        }
+
+        // Move key 1 to the end; keys 2, 3, 4 stay in the same relative order — the
+        // LIS is {2, 3, 4}, so only key 1 should require an explicit move.
+        std::vector<Iris::IrisComponent> NewList;
+        NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
+        NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(3)));
+        NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(4)));
+        NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
+
+        RemoveChildAtCallCount = 0;
+        InsertChildAtCallCount = 0;
+        iris::ReconcileChildrenAt(Parent, 0, OldList, NewList, Mount);
+
+        ASSERT_EQUAL(Parent.GetChildCount(), static_cast<std::size_t>(4));
+        ASSERT_EQUAL(dynamic_cast<MockWidget*>(Parent.GetChildAt(0))->Id, OldIds[1]); // key 2
+        ASSERT_EQUAL(dynamic_cast<MockWidget*>(Parent.GetChildAt(1))->Id, OldIds[2]); // key 3
+        ASSERT_EQUAL(dynamic_cast<MockWidget*>(Parent.GetChildAt(2))->Id, OldIds[3]); // key 4
+        ASSERT_EQUAL(dynamic_cast<MockWidget*>(Parent.GetChildAt(3))->Id, OldIds[0]); // key 1, moved
+        // exactly one entry (key 1) needed to move: one RemoveChildAt, one InsertChildAt
+        ASSERT_EQUAL(RemoveChildAtCallCount, 1);
+        ASSERT_EQUAL(InsertChildAtCallCount, 1);
+    });
+
+    IT("ReconcileChildrenAt with no changes at all touches nothing structurally", {
+        int         MountCount = 0;
+        TestMounter Mount(&MountCount);
+        MockWidget  Parent("Frame");
+
+        std::vector<Iris::IrisComponent> List;
+        List.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
+        List.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
+        iris::ReconcileChildrenAt(Parent, 0, {}, List, Mount);
+
+        RemoveChildAtCallCount = 0;
+        InsertChildAtCallCount = 0;
+        iris::ReconcileChildrenAt(Parent, 0, List, List, Mount);
+
+        ASSERT_EQUAL(RemoveChildAtCallCount, 0);
+        ASSERT_EQUAL(InsertChildAtCallCount, 0);
+    });
+
+    IT("ReconcileChildrenAt operates at a non-zero base index among static siblings", {
+        int         MountCount = 0;
+        TestMounter Mount(&MountCount);
+        MockWidget  Parent("Frame");
+
+        // A static leading sibling occupies index 0, untouched by this call.
+        Parent.Children.push_back(std::make_unique<MockWidget>("Static"));
+        const int StaticId = dynamic_cast<MockWidget*>(Parent.GetChildAt(0))->Id;
+
+        std::vector<Iris::IrisComponent> OldList;
+        OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
+        iris::ReconcileChildrenAt(Parent, 1, {}, OldList, Mount);
+        ASSERT_EQUAL(Parent.GetChildCount(), static_cast<std::size_t>(2));
+
+        std::vector<Iris::IrisComponent> NewList;
+        NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
+        NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
+        iris::ReconcileChildrenAt(Parent, 1, OldList, NewList, Mount);
+
+        ASSERT_EQUAL(Parent.GetChildCount(), static_cast<std::size_t>(3));
+        ASSERT_EQUAL(dynamic_cast<MockWidget*>(Parent.GetChildAt(0))->Id, StaticId);
+        // the static leading sibling at index 0 was never touched
     });
 });
