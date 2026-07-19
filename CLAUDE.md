@@ -124,13 +124,16 @@ per `docs/iris_signal_lifetime_decision.md`: the macro binds `Name` to a referen
 heap-allocated `iris::ComponentInstance` tied to that component's own mounted lifetime, so
 `[&]` capture stays exactly as safe as every example assumes.
 
-**`<Slot>` is now wired into the Stage 2 walker**, for the single-`IrisComponent`-returning
-case (`docs/iris_slot_stage2_wiring_decision.md`): `iris::ResolveSlots()` (`include/Iris/
-SlotResolution.h`) walks a just-built static widget tree and its source `IrisComponent` tree in
-lockstep, constructs a `SlotState` for each `<Slot>` found, and attaches it to its exact
-position (`SlotState::AttachAt`) — every subsequent `Reconcile()`, including ones `iris::Tick()`
-triggers automatically, updates that real position in place. Verified against real Penumbra
-`Box`/`Label` objects, not just a mock: a live `iris::Signal` update reaching a real
-`Box::Children` vector end to end. Still open: list-returning `<Slot>` wiring (attaching at a
-stable index doesn't hold once list length changes) and nested-`<Slot>` discovery (a `<Slot>`
-inside another `<Slot>`'s own dynamic output) — both tracked in that decision doc.
+**`<Slot>` is now wired into the Stage 2 walker, for both callable shapes**
+(`docs/iris_slot_stage2_wiring_decision.md`, `docs/iris_slot_list_wiring_decision.md`):
+`iris::ResolveSlots()` (`include/Iris/SlotResolution.h`) walks a just-built static widget tree
+and its source `IrisComponent` tree in lockstep, constructs a `SlotState` for each `<Slot>`
+found, and attaches it to its exact position (`SlotState::AttachToGroup`) — every subsequent
+`Reconcile()`, including ones `iris::Tick()` triggers automatically, updates that real position
+in place. A `SlotSiblingGroup` shared by every `<Slot>` sibling under the same static parent
+recomputes each slot's absolute index fresh on every reconcile, so a list-returning `<Slot>`'s
+subsequent siblings shift correctly as its own length changes across re-renders. Verified
+against real Penumbra `Box`/`Label` objects, not just a mock: a live `iris::Signal` update
+reaching a real `Box::Children` vector end to end, and under AddressSanitizer (which caught and
+led to a fix for a real destruction-order use-after-free among sibling `<Slot>`s). Still open:
+nested-`<Slot>` discovery (a `<Slot>` inside another `<Slot>`'s own dynamic output).

@@ -48,6 +48,27 @@ private:
 
 } // namespace
 
+void SlotSiblingGroup::AddEntry(std::size_t StaticPrefixCount, SlotState* Slot) {
+    Entries_.push_back(Entry{StaticPrefixCount, Slot});
+}
+
+std::size_t SlotSiblingGroup::EntryCount() const { return Entries_.size(); }
+
+std::size_t SlotSiblingGroup::AbsoluteIndexOf(std::size_t GroupIndex) const {
+    std::size_t Index = Entries_[GroupIndex].StaticPrefixCount;
+    for (std::size_t I = 0; I < GroupIndex; ++I) {
+        // A destroyed sibling (MarkDestroyed) already removed its own widgets from the
+        // shared parent, so it contributes nothing from here on — and its SlotState is
+        // gone, so CurrentRealChildCount() can no longer be called on it at all.
+        if (Entries_[I].Slot != nullptr) {
+            Index += Entries_[I].Slot->CurrentRealChildCount();
+        }
+    }
+    return Index;
+}
+
+void SlotSiblingGroup::MarkDestroyed(std::size_t GroupIndex) { Entries_[GroupIndex].Slot = nullptr; }
+
 void TrackSignalDependency(const void* SignalIdentity) {
     if (SlotState* Active = IrisRuntime::Instance().ActiveSlot()) {
         SignalRegistry::Instance().TrackRead(SignalIdentity, Active);
@@ -64,10 +85,21 @@ SlotState::~SlotState() {
     IrisRuntime::Instance().UnregisterSlot(this);
 
     // Attached mode: whatever this slot last rendered lives inside AttachedParent_'s
-    // own children, not in SingleWidget_ — remove and drop it so the parent doesn't
-    // keep displaying content nothing manages anymore.
-    if (AttachedParent_ != nullptr && PreviousSingle_.Tag != Iris::IrisElementTag::None) {
-        AttachedParent_->RemoveChildAt(AttachedIndex_);
+    // own children, not in SingleWidget_/ListWidgets_ — remove and drop every real
+    // widget it currently owns so the parent doesn't keep displaying content nothing
+    // manages anymore. AttachedGroup_ may itself be gone already (a sibling slot could
+    // have been destroyed first) — indices below AttachedGroupIndex_'s own live count
+    // don't depend on it, since we always remove starting at our own base position and
+    // this slot's own AttachedCount_ is authoritative for how many are ours.
+    if (AttachedParent_ != nullptr && AttachedGroup_ != nullptr) {
+        const std::size_t Base = AttachedGroup_->AbsoluteIndexOf(AttachedGroupIndex_);
+        for (std::size_t I = 0; I < AttachedCount_; ++I) {
+            AttachedParent_->RemoveChildAt(Base);
+        }
+        // From here on, a sibling still to be destroyed (in either direction — nothing
+        // requires group-order teardown) must not dereference this now-about-to-be-freed
+        // SlotState via AttachedGroup_->AbsoluteIndexOf.
+        AttachedGroup_->MarkDestroyed(AttachedGroupIndex_);
     }
 }
 
@@ -76,12 +108,14 @@ void SlotState::MarkDirty() {
     IrisRuntime::Instance().RegisterDirtySlot(this);
 }
 
-void SlotState::AttachAt(Umbra::IWidget* Parent, std::size_t Index) {
+void SlotState::AttachToGroup(Umbra::IWidget* Parent, std::shared_ptr<SlotSiblingGroup> Group,
+                               std::size_t GroupIndex) {
     AttachedParent_ = Parent;
-    AttachedIndex_ = Index;
+    AttachedGroup_ = std::move(Group);
+    AttachedGroupIndex_ = GroupIndex;
 }
 
-bool SlotState::HasMountedContent() const { return PreviousSingle_.Tag != Iris::IrisElementTag::None; }
+std::size_t SlotState::CurrentRealChildCount() const { return AttachedCount_; }
 
 void SlotState::Reconcile() {
     if (Mounted_ && !Dirty_) {
@@ -98,18 +132,19 @@ void SlotState::Reconcile() {
         IrisRuntime::Instance().PopActiveSlot();
 
         if (AttachedParent_ != nullptr) {
-            // Only pull the current widget back out if something is actually there —
-            // a previous None output means AttachedIndex_ has no corresponding entry
-            // in AttachedParent_'s children at all (None contributes nothing, same as
-            // everywhere else in the reconciler).
+            // Ask the group fresh — an earlier sibling's own contribution may have
+            // changed (e.g. its own list grew) since the last time this slot
+            // reconciled, shifting where this slot's own content now lives.
+            const std::size_t Base = AttachedGroup_->AbsoluteIndexOf(AttachedGroupIndex_);
             std::unique_ptr<Umbra::IWidget> Current;
-            if (PreviousSingle_.Tag != Iris::IrisElementTag::None) {
-                Current = AttachedParent_->RemoveChildAt(AttachedIndex_);
+            if (AttachedCount_ != 0) {
+                Current = AttachedParent_->RemoveChildAt(Base);
             }
             ReconcileWidget(Current, PreviousSingle_, NewOutput, Mount_);
             if (Current != nullptr) {
-                AttachedParent_->InsertChildAt(AttachedIndex_, std::move(Current));
+                AttachedParent_->InsertChildAt(Base, std::move(Current));
             }
+            AttachedCount_ = (NewOutput.Tag != Iris::IrisElementTag::None) ? 1 : 0;
         } else {
             ReconcileWidget(SingleWidget_, PreviousSingle_, NewOutput, Mount_);
         }
@@ -119,7 +154,24 @@ void SlotState::Reconcile() {
             std::get<std::function<std::vector<Iris::IrisComponent>()>>(Callable_->Callable)();
         IrisRuntime::Instance().PopActiveSlot();
 
-        ReconcileChildren(ListWidgets_, PreviousList_, NewOutput, Mount_);
+        if (AttachedParent_ != nullptr) {
+            const std::size_t Base = AttachedGroup_->AbsoluteIndexOf(AttachedGroupIndex_);
+
+            std::vector<std::unique_ptr<Umbra::IWidget>> Current;
+            Current.reserve(AttachedCount_);
+            for (std::size_t I = 0; I < AttachedCount_; ++I) {
+                Current.push_back(AttachedParent_->RemoveChildAt(Base));
+            }
+
+            ReconcileChildren(Current, PreviousList_, NewOutput, Mount_);
+
+            for (std::size_t I = 0; I < Current.size(); ++I) {
+                AttachedParent_->InsertChildAt(Base + I, std::move(Current[I]));
+            }
+            AttachedCount_ = Current.size();
+        } else {
+            ReconcileChildren(ListWidgets_, PreviousList_, NewOutput, Mount_);
+        }
         PreviousList_ = std::move(NewOutput);
     }
 }

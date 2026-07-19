@@ -189,16 +189,101 @@ void TestNestedSlotInsideStaticChildIsResolved() {
     Expect(dynamic_cast<MockWidget*>(Inner->GetChildAt(0))->Text == "deep", "with the right content");
 }
 
-void TestListReturningSlotIsLeftUnresolved() {
+void TestListReturningSlotMountsAllItems() {
     iris::MountFn Mount = TestMounter();
 
-    Iris::IrisComponent RootNode = MakeFrame(
-        {MakeSlot(Iris::MakeSlotCallable([]() -> std::vector<Iris::IrisComponent> { return {MakeText("a")}; }))});
+    Iris::IrisComponent RootNode = MakeFrame({MakeSlot(Iris::MakeSlotCallable(
+        []() -> std::vector<Iris::IrisComponent> { return {MakeText("a"), MakeText("b"), MakeText("c")}; }))});
+    std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
+
+    auto Slots = iris::ResolveSlots(*Root, RootNode, Mount);
+    Expect(Slots.size() == 1, "one SlotState was created for the list-returning slot");
+    Expect(Root->GetChildCount() == 3, "all three list items were spliced in as real children");
+    Expect(dynamic_cast<MockWidget*>(Root->GetChildAt(0))->Text == "a", "first item");
+    Expect(dynamic_cast<MockWidget*>(Root->GetChildAt(1))->Text == "b", "second item");
+    Expect(dynamic_cast<MockWidget*>(Root->GetChildAt(2))->Text == "c", "third item");
+}
+
+void TestListReturningSlotBetweenTwoStaticSiblings() {
+    iris::MountFn Mount = TestMounter();
+
+    Iris::IrisComponent RootNode = MakeFrame({
+        MakeText("before"),
+        MakeSlot(Iris::MakeSlotCallable(
+            []() -> std::vector<Iris::IrisComponent> { return {MakeText("a"), MakeText("b")}; })),
+        MakeText("after"),
+    });
     std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
     auto                             Slots = iris::ResolveSlots(*Root, RootNode, Mount);
 
-    Expect(Slots.empty(), "a list-returning <Slot> is deliberately left unresolved by ResolveSlots");
-    Expect(Root->GetChildCount() == 0, "and contributes nothing, same as before ResolveSlots ran");
+    Expect(Root->GetChildCount() == 4, "two static siblings plus the two list items");
+    Expect(dynamic_cast<MockWidget*>(Root->GetChildAt(0))->Text == "before", "leading static sibling unchanged");
+    Expect(dynamic_cast<MockWidget*>(Root->GetChildAt(1))->Text == "a", "first list item in the middle");
+    Expect(dynamic_cast<MockWidget*>(Root->GetChildAt(2))->Text == "b", "second list item in the middle");
+    Expect(dynamic_cast<MockWidget*>(Root->GetChildAt(3))->Text == "after", "trailing static sibling unchanged");
+}
+
+void TestListReturningSlotGrowthShiftsTrailingStaticSibling() {
+    iris::MountFn Mount = TestMounter();
+
+    iris::Signal<int> Count = 1;
+    Iris::IrisComponent RootNode = MakeFrame({
+        MakeSlot(Iris::MakeSlotCallable([&]() -> std::vector<Iris::IrisComponent> {
+            std::vector<Iris::IrisComponent> Items;
+            for (int I = 0; I < Count.get(); ++I) {
+                Items.push_back(MakeText("item" + std::to_string(I)));
+            }
+            return Items;
+        })),
+        MakeText("after"),
+    });
+    std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
+    auto                             Slots = iris::ResolveSlots(*Root, RootNode, Mount);
+
+    Expect(Root->GetChildCount() == 2, "one list item plus the trailing static sibling");
+    Expect(dynamic_cast<MockWidget*>(Root->GetChildAt(1))->Text == "after", "trailing sibling right after one item");
+
+    Count.set(4);
+    iris::Tick();
+    Expect(Root->GetChildCount() == 5, "the list grew to four items, still plus the trailing static sibling");
+    Expect(dynamic_cast<MockWidget*>(Root->GetChildAt(4))->Text == "after",
+           "the trailing static sibling shifted along with the growing list");
+
+    Count.set(0);
+    iris::Tick();
+    Expect(Root->GetChildCount() == 1, "the list shrank to nothing");
+    Expect(dynamic_cast<MockWidget*>(Root->GetChildAt(0))->Text == "after",
+           "the trailing static sibling shifted back down to index zero");
+}
+
+void TestTwoListReturningSlotSiblingsShiftEachOther() {
+    iris::MountFn Mount = TestMounter();
+
+    iris::Signal<int> FirstCount = 2;
+    Iris::IrisComponent RootNode = MakeFrame({
+        MakeSlot(Iris::MakeSlotCallable([&]() -> std::vector<Iris::IrisComponent> {
+            std::vector<Iris::IrisComponent> Items;
+            for (int I = 0; I < FirstCount.get(); ++I) {
+                Items.push_back(MakeText("first" + std::to_string(I)));
+            }
+            return Items;
+        })),
+        MakeSlot(Iris::MakeSlotCallable(
+            []() -> std::vector<Iris::IrisComponent> { return {MakeText("second0")}; })),
+    });
+    std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
+    auto                             Slots = iris::ResolveSlots(*Root, RootNode, Mount);
+
+    Expect(Slots.size() == 2, "both list-returning slots were resolved");
+    Expect(Root->GetChildCount() == 3, "two items from the first slot plus one from the second");
+    Expect(dynamic_cast<MockWidget*>(Root->GetChildAt(2))->Text == "second0",
+           "the second slot's content sits right after the first slot's own live count");
+
+    FirstCount.set(0);
+    iris::Tick();
+    Expect(Root->GetChildCount() == 1, "the first slot shrank to nothing");
+    Expect(dynamic_cast<MockWidget*>(Root->GetChildAt(0))->Text == "second0",
+           "the second slot's content shifted down to index zero, following the first slot's live count");
 }
 
 void TestDestroyingSlotStateDetachesItsContent() {
@@ -222,6 +307,9 @@ void RunSlotResolutionTests() {
     TestSlotReturningNoneContributesNothing();
     TestSlotDrivenBySignalUpdatesRealTreeOnTick();
     TestNestedSlotInsideStaticChildIsResolved();
-    TestListReturningSlotIsLeftUnresolved();
+    TestListReturningSlotMountsAllItems();
+    TestListReturningSlotBetweenTwoStaticSiblings();
+    TestListReturningSlotGrowthShiftsTrailingStaticSibling();
+    TestTwoListReturningSlotSiblingsShiftEachOther();
     TestDestroyingSlotStateDetachesItsContent();
 }

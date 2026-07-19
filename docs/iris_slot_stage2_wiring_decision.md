@@ -1,8 +1,8 @@
 # Iris — Wiring `<Slot>` into the Stage 2 Walker
 
-> **Status:** Closed and implemented for the single-`IrisComponent`-returning case.
-> The list-returning case (`std::vector<IrisComponent>`) is deliberately deferred — see
-> "What remains deliberately deferred".
+> **Status:** Closed and implemented for the single-`IrisComponent`-returning case. The
+> list-returning case, and the "two sibling `<Slot>`s" limitation below, are now also
+> closed — see `docs/iris_slot_list_wiring_decision.md`.
 
 ---
 
@@ -97,19 +97,12 @@ real Penumbra `Box::Children` vector, verified by inspecting that real vector di
 
 ## What remains deliberately deferred
 
-- **List-returning `<Slot>`s** (`std::function<std::vector<IrisComponent>()>`) are not
-  resolved by `ResolveSlots` at all — left exactly as `BuildWidgetTree` already leaves
-  them (contributing nothing). Attaching one at a stable index doesn't hold once the
-  list's own length can change across re-renders; a real fix needs the parent's
-  subsequent static siblings to shift as the list grows/shrinks, which nothing tracks
-  today.
-- **Two sibling `<Slot>`s under the same static parent, where the earlier one toggles
-  between producing a widget and `None`.** The later sibling's own `AttachedIndex_`
-  goes stale — nothing renumbers it. Correct as long as either only one `<Slot>` sits
-  under a given parent, or any earlier ones never toggle to/from `None`. A full fix
-  would need sibling `SlotState`s to know about each other (or a shared coordinator) so
-  an index shift can propagate.
 - **Nested `<Slot>` discovery** (a `<Slot>` inside another `<Slot>`'s own dynamically
   produced output) — unchanged from `docs/iris_stage3_implementation_decision.md`.
   `ResolveSlots` only recurses into the *static* tree; it never looks inside what a
   `<Slot>`'s callable itself returns.
+
+List-returning `<Slot>`s, and sibling `<Slot>`s whose earlier one's real child count
+changes (list growth/shrink, or toggling to/from `None`), are now resolved correctly —
+see `docs/iris_slot_list_wiring_decision.md` for the `SlotSiblingGroup` mechanism that
+closed both gaps.

@@ -25,6 +25,45 @@ using MountFn = std::function<std::unique_ptr<Umbra::IWidget>(const Iris::IrisCo
 class SlotState;
 class ComponentInstance;
 
+// Coordinates a set of `<Slot>` siblings attached under the *same* static parent
+// (`SlotResolution.h`'s `ResolveSlots` builds one per parent's children list), so a
+// later sibling's absolute child index can account for how many real widgets earlier
+// siblings *currently* contribute — which, for a list-returning `<Slot>`, can change on
+// every re-render (docs/iris_slot_list_wiring_decision.md). A single-`IrisComponent`-
+// returning `<Slot>` with no siblings under its parent just uses a group with one entry
+// and nothing earlier to sum — the same mechanism handles both shapes uniformly.
+class SlotSiblingGroup {
+public:
+    // `StaticPrefixCount` is fixed: the number of *ordinary* (non-`Slot`, non-`None`)
+    // children directly preceding this slot — never changes after `ResolveSlots`
+    // finishes walking one parent's children. `Slot` is non-owning; whoever calls
+    // `ResolveSlots` owns every `SlotState` for the tree's whole mounted lifetime.
+    void AddEntry(std::size_t StaticPrefixCount, SlotState* Slot);
+
+    std::size_t EntryCount() const;
+
+    // The absolute index, within the shared parent's real children, that the slot at
+    // `GroupIndex` currently occupies: its own fixed static prefix, plus the *live*
+    // contribution of every earlier sibling in the group (`SlotState::
+    // CurrentRealChildCount()`) — recomputed fresh on every call, since an earlier
+    // sibling's contribution may have changed since the last time this was asked.
+    std::size_t AbsoluteIndexOf(std::size_t GroupIndex) const;
+
+    // Called by `SlotState::~SlotState()` once it has removed its own widgets from the
+    // shared parent, so a sibling destroyed afterward (in either direction — nothing
+    // requires siblings to tear down in group order) never dereferences this slot's now-
+    // freed `SlotState*`: from this point on, `AbsoluteIndexOf` treats this entry as
+    // contributing zero, which is correct since its widgets are already gone.
+    void MarkDestroyed(std::size_t GroupIndex);
+
+private:
+    struct Entry {
+        std::size_t StaticPrefixCount{0};
+        SlotState*   Slot{nullptr};
+    };
+    std::vector<Entry> Entries_;
+};
+
 // The ambient "active slot" tracking `iris::Signal<T>` (`Signal.h`) needs and nothing
 // else should call directly: `TrackSignalDependency` registers whichever `SlotState` is
 // currently invoking its callable (`IrisRuntime::ActiveSlot()`) as a dependent of the
@@ -72,28 +111,27 @@ public:
     // inside a signal's `set()`).
     void MarkDirty();
 
-    // Attaches this slot's output to a specific position within `Parent`'s own real
-    // children, rather than a standalone widget this `SlotState` owns privately — used
-    // when a `<Slot>` is found nested inside an otherwise-static tree
-    // (`SlotResolution.h`'s `ResolveSlots`). Every subsequent `Reconcile()` call —
-    // including ones triggered automatically by `IrisRuntime::ReconcileDirtySlots()`
-    // (e.g. via `iris::Tick()`) — updates `Parent`'s child at `Index` in place instead
-    // of this `SlotState`'s own private storage: `Parent->RemoveChildAt(Index)` right
-    // before invoking the callable (only if something is currently there — see below),
-    // `ReconcileWidget` as usual, `Parent->InsertChildAt(Index, ...)` right after (only
-    // if the new output isn't `None`). Must be called before the first `Reconcile()`,
-    // and only supports the single-`IrisComponent`-returning callable shape — a
-    // list-returning `<Slot>` attached this way would need `Index` (and every static
-    // sibling after it) to shift as the list grows/shrinks, which `ResolveSlots`
-    // deliberately doesn't attempt (see its own doc comment).
-    void AttachAt(Umbra::IWidget* Parent, std::size_t Index);
+    // Attaches this slot's output to a position within `Parent`'s own real children —
+    // coordinated through `Group` (`GroupIndex` is this slot's own position within it) —
+    // rather than a standalone widget this `SlotState` owns privately. Used when a
+    // `<Slot>` is found nested inside an otherwise-static tree (`SlotResolution.h`'s
+    // `ResolveSlots`, which constructs one `Group` per parent and registers every
+    // `<Slot>` sibling found under it). Every subsequent `Reconcile()` call — including
+    // ones triggered automatically by `IrisRuntime::ReconcileDirtySlots()` (e.g. via
+    // `iris::Tick()`) — asks `Group->AbsoluteIndexOf(GroupIndex)` fresh (an earlier
+    // sibling's own contribution may have changed since the last call) and updates
+    // `Parent`'s real children at that position in place: for the single-
+    // `IrisComponent`-returning shape, `ReconcileWidget` as before; for the
+    // list-returning shape, an equivalent extract/`ReconcileChildren`/reinsert dance
+    // over as many consecutive positions as this slot currently occupies. Must be
+    // called before the first `Reconcile()`.
+    void AttachToGroup(Umbra::IWidget* Parent, std::shared_ptr<SlotSiblingGroup> Group, std::size_t GroupIndex);
 
-    // True if this slot's most recent render produced a real widget (its callable
-    // didn't return `nullptr`/`IrisElementTag::None`) — meaningful only for the
-    // single-`IrisComponent`-returning callable shape (`SlotResolution.h`'s
-    // `ResolveSlots` uses this to know whether a subsequent static sibling's real
-    // child index needs to account for this slot's own contribution).
-    bool HasMountedContent() const;
+    // How many real widgets this slot currently contributes to its attached parent (or
+    // would, if standalone) — 0 or 1 for a single-`IrisComponent`-returning callable,
+    // 0..N for a list-returning one. `SlotSiblingGroup::AbsoluteIndexOf` calls this on
+    // every earlier sibling to compute a later one's current absolute position.
+    std::size_t CurrentRealChildCount() const;
 
 private:
     std::shared_ptr<Iris::IrisSlotCallable> Callable_;
@@ -101,14 +139,16 @@ private:
     bool                                      Mounted_{false};
     bool                                      Dirty_{false};
 
-    Umbra::IWidget* AttachedParent_{nullptr};
-    std::size_t      AttachedIndex_{0};
+    Umbra::IWidget*                    AttachedParent_{nullptr};
+    std::shared_ptr<SlotSiblingGroup>  AttachedGroup_;
+    std::size_t                         AttachedGroupIndex_{0};
+    std::size_t                         AttachedCount_{0}; // how many real widgets this slot currently owns, when attached
 
     // Exactly one of these two pairs is meaningful, matching which alternative
     // `Callable_->Callable` holds — mirrors `IrisSlotCallable`'s own variant shape
     // rather than introducing a parallel one. In attached mode (`AttachedParent_ !=
-    // nullptr`), `SingleWidget_` stays unused — the live widget lives inside
-    // `AttachedParent_`'s own children between `Reconcile()` calls, never here.
+    // nullptr`), `SingleWidget_`/`ListWidgets_` stay unused — the live widget(s) live
+    // inside `AttachedParent_`'s own children between `Reconcile()` calls, never here.
     Iris::IrisComponent                          PreviousSingle_{nullptr}; // starts at IrisElementTag::None — "nothing was here"
     std::unique_ptr<Umbra::IWidget>              SingleWidget_;
     std::vector<Iris::IrisComponent>             PreviousList_;

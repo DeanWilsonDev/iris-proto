@@ -329,26 +329,30 @@ reaching all the way through `IrisRuntime`/`iris::Tick()`/`SlotState`/the reconc
 `PenumbraWidget` to a real Penumbra `Box::Children` vector, confirmed by inspecting that
 vector directly.
 
-**Deliberately deferred, not solved here** (see the decision doc's own section for
-why): list-returning `<Slot>`s (attaching at a stable index doesn't hold once list
-length can change), two sibling `<Slot>`s under one parent where an earlier one toggles
-to/from `None` (the later one's attached index can go stale), and nested-`<Slot>`
-discovery (unchanged from before — `ResolveSlots` only walks the *static* tree, never a
-`<Slot>`'s own dynamically-produced output).
+**List-returning `<Slot>` wiring is now also closed** (`docs/iris_slot_list_wiring_
+decision.md`): a `SlotSiblingGroup`, shared by every `<Slot>` sibling under the same
+static parent, recomputes each slot's absolute position fresh on every reconcile by
+summing every earlier sibling's *current* real child count — so both a list-returning
+`<Slot>`'s own growth/shrinkage and a sibling `<Slot>` toggling to/from `None` correctly
+shift whatever comes after them. Verified against real Penumbra widgets and clean under
+AddressSanitizer + UndefinedBehaviorSanitizer, including a real destruction-order
+use-after-free ASan caught and that decision doc's fix for it (`SlotSiblingGroup::
+MarkDestroyed`).
+
+**Deliberately deferred, not solved here:** nested-`<Slot>` discovery (unchanged from
+before — `ResolveSlots` only walks the *static* tree, never a `<Slot>`'s own
+dynamically-produced output).
 
 ## Suggested order
 
 Starting from what's actually left:
 
-1. **List-returning `<Slot>` wiring** — the natural next increment on top of the
-   single-`IrisComponent` case just closed; needs a design for how a static sibling's
-   position shifts as the list's own length changes across re-renders.
-2. **Nested `<Slot>` discovery** — finding and giving each nested `<Slot>` its own `SlotState`
+1. **Nested `<Slot>` discovery** — finding and giving each nested `<Slot>` its own `SlotState`
    within an arbitrary tree, rather than assuming a slot's own output is always already fully
    resolved.
-3. **LIS-based minimal-move list diffing** — an optimization on top of the current
+2. **LIS-based minimal-move list diffing** — an optimization on top of the current
    correct-but-not-optimal list diff, once real-world move patterns make the extra
    `RemoveChildAt`/`InsertChildAt` traffic worth avoiding.
-4. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
-5. **Stage 5** — validate against one of the real consuming projects once (1)–(3) produce
+3. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
+4. **Stage 5** — validate against one of the real consuming projects once (1)–(2) produce
    something an actual `.iris` file can round-trip through, mount, and reconcile for real.

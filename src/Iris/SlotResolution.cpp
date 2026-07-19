@@ -9,26 +9,30 @@ namespace {
 
 void ResolveSlotsRecursive(Umbra::IWidget& Widget, const Iris::IrisComponent& Node, const MountFn& Mount,
                             std::vector<std::unique_ptr<SlotState>>& Out) {
+    // One group per parent's children list, shared by every <Slot> sibling found here —
+    // so a later sibling's absolute index can account for an earlier sibling's live,
+    // possibly-changing real-child-count contribution (docs/iris_slot_list_wiring_
+    // decision.md). Only actually used if at least one <Slot> child turns up; harmless
+    // to always allocate one.
+    auto Group = std::make_shared<SlotSiblingGroup>();
+
+    // Running count of real widgets contributed by *ordinary* children seen so far —
+    // both this child's own position within Widget's already-built static children, and
+    // (for a <Slot> child) its fixed StaticPrefixCount within Group.
     std::size_t RealIndex = 0;
+
     for (const Iris::IrisComponent& Child : Node.Children) {
         if (Child.Tag == Iris::IrisElementTag::None) {
             continue; // contributes nothing, both in the original static build and here
         }
 
         if (Child.Tag == Iris::IrisElementTag::Slot) {
-            // Only the single-IrisComponent-returning shape is resolved here — see
-            // SlotResolution.h's own doc comment for why the list-returning shape isn't.
-            if (!std::holds_alternative<std::function<Iris::IrisComponent()>>(Child.SlotCallable->Callable)) {
-                continue;
-            }
             auto Slot = std::make_unique<SlotState>(Child.SlotCallable, Mount);
-            Slot->AttachAt(&Widget, RealIndex);
-            Slot->Reconcile(); // initial mount — inserts at RealIndex unless the first render is None
-            const bool Mounted = Slot->HasMountedContent();
+            Group->AddEntry(RealIndex, Slot.get());
+            const std::size_t GroupIndex = Group->EntryCount() - 1;
+            Slot->AttachToGroup(&Widget, Group, GroupIndex);
+            Slot->Reconcile(); // initial mount — inserts at Group->AbsoluteIndexOf(GroupIndex)
             Out.push_back(std::move(Slot));
-            if (Mounted) {
-                ++RealIndex;
-            }
             continue;
         }
 
