@@ -267,20 +267,78 @@ existed), nested-`<Slot>` discovery within an arbitrary tree, and LIS-based mini
 diffing (the current list diff is correct — matched widgets are always reused — but not
 move-count-optimal).
 
+## Done: the Penumbra `Umbra::IWidget` adapter, in `iris-penumbra-backend`
+
+`PenumbraWidget` wraps a real `Penumbra::Widgets::WidgetBase` to satisfy `Umbra::IWidget`,
+verified against real `Box`/`Label` objects (not a mock) — a same-tag-same-key update reuses
+the literal same `Box*` address, a structural add actually grows the real `Box::Children`
+vector. Full writeup: `iris-penumbra-backend/docs/iris_penumbra_backend_adapter_decision.md`.
+Also fixed along the way: `iris::Signal<T>`'s constructor was `explicit`, silently rejecting
+the exact copy-initialization syntax (`iris::Signal<bool> settingsOpen = false;`) every example
+in `docs/iris_core_spec.md` §2.2 uses — caught only once a real generated `.iris` file was
+compiled against it, now fixed with a regression test.
+
+## Critical, newly discovered: `<Slot>` capturing a `Signal` by reference is dangling-reference UB
+
+Found while verifying the adapter against a genuine `.iris` → `iris_cc` → real-`Signal`-driven
+pipeline (not just hand-constructed `IrisComponent` trees) — confirmed with AddressSanitizer,
+not a fluke:
+
+```cpp
+IrisComponent Counter() {
+    iris::Signal<int> Count = 0;
+    render {
+        <Slot>!{[&]() -> IrisComponent { return <Text>{std::to_string(Count.get())}</Text>; }}</Slot>
+    }
+}
+```
+
+`docs/iris_stage3_decision_doc.md` §0 asserts `iris::Signal<T>` locals are "true long-lived
+locals... captured by reference in render lambdas" — but as currently specified *and*
+implemented, `Count` is an ordinary stack-local `int`-holding object. The component function
+runs exactly once and **returns** (per its own documented contract, and per how Stage 1 codegen
+actually rewrites `render { }` into `return <expr>;`) — the instant it does, `Count`'s stack
+storage is gone. Every `[&]`-capturing `<Slot>` lambda in every example in the spec holds a
+dangling reference from that point on. This isn't a corner case; it's the load-bearing pattern
+the entire reactive model is built around.
+
+**This is a Stage 3 foundational-design gap, not an implementation bug in this session's
+`Signal`/`SlotState`/reconciler work** — those faithfully implement what
+`docs/iris_stage3_decision_doc.md` §0 specifies; the spec's own claim of "genuinely persistent
+for free" doesn't hold for an ordinary C++ function returning by value. Fixing it needs a real
+design decision — candidates, none picked yet:
+
+- **Heap-allocate `Signal<T>`'s storage** so a `Signal<T>` local is really just a thin
+  handle/proxy over independently-owned heap state — the `[&]` capture would then be safe
+  because it doesn't actually reference stack memory, even after the declaring function returns.
+- **Keep the component function's activation frame alive** via C++20 coroutines (`co_return` at
+  the `render { }` boundary instead of an ordinary `return`) — a much larger change touching
+  Codegen's `return <expr>;` wrapping convention (`docs/iris_import_header_decision.md`'s
+  neighbor, Codegen.h's own documented convention) and every component function's declared
+  signature.
+- Something else not yet considered.
+
+Every `.iris` example that's been host-compiled and run *with a live signal update* so far in
+this project's history has actually hit this — the `HealthBar`/`StartMenu` end-to-end checks
+earlier in this doc never exercised a signal `.set()` after the declaring function returned, so
+they never triggered it. This blocks Stage 3 from being usable for real, ahead of any of the
+items below.
+
 ## Suggested order
 
 Starting from what's actually left:
 
-1. **A real Penumbra `IWidget` adapter, in `iris-penumbra-backend`** — the concrete next step
-   to make Stage 3's reconciler control actual Penumbra widgets instead of a test mock. Needs
-   to also teach the Stage 2 walker how to handle `<Slot>` (constructing a `SlotState` at that
-   position and splicing its widget(s) in) rather than asserting on it.
-2. **Nested `<Slot>` discovery** — finding and giving each nested `<Slot>` its own `SlotState`
+1. **Decide and fix the `Signal<T>` lifetime gap above** — blocks Stage 3 from being usable for
+   real; needs a real design decision, not a quick patch.
+2. **Wiring `<Slot>` into the Stage 2 walker** — nothing yet constructs a `SlotState` when
+   `BuildWidgetTree` encounters a `<Slot>` tag; it still asserts on one. The `Umbra::IWidget`
+   adapter that would receive that wiring is now ready; the wiring itself isn't done.
+3. **Nested `<Slot>` discovery** — finding and giving each nested `<Slot>` its own `SlotState`
    within an arbitrary tree, rather than assuming a slot's own output is always already fully
    resolved.
-3. **LIS-based minimal-move list diffing** — an optimization on top of the current
+4. **LIS-based minimal-move list diffing** — an optimization on top of the current
    correct-but-not-optimal list diff, once real-world move patterns make the extra
    `RemoveChildAt`/`InsertChildAt` traffic worth avoiding.
-4. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
-5. **Stage 5** — validate against one of the real consuming projects once (1)–(4) produce
+5. **Stage 4 (Lustre)** — needs its own design pass first, nothing to implement yet.
+6. **Stage 5** — validate against one of the real consuming projects once (1)–(4) produce
    something an actual `.iris` file can round-trip through, mount, and reconcile for real.

@@ -679,6 +679,18 @@ remains open is unrelated to Stage 1 and was never expected to block it:
   `onFocus`, `onChange`) extensible by component authors, or a closed list?
 - **Implicit children forwarding.** No mechanism specified for a generic wrapper component to
   forward arbitrary children it wasn't handed as a named prop.
+- **Critical: `iris::Signal<T>` locals captured by `<Slot>` are dangling-reference UB as
+  currently specified.** §2.2/§9.5 and `docs/iris_stage3_decision_doc.md` §0 assert a
+  `Signal<T>` local is "genuinely persistent" once captured `[&]` into a `<Slot>` lambda — but a
+  component function runs once and *returns* (§2.2's own contract; Stage 1 codegen literally
+  emits `return <expr>;` for the `render { }` block), at which point that local's stack storage
+  is gone. Confirmed with AddressSanitizer against real generated `.iris` output while verifying
+  `iris-penumbra-backend`'s `Umbra::IWidget` adapter — every `[&]`-capturing `<Slot>` example in
+  this spec is affected; this is the load-bearing pattern the whole reactive model depends on,
+  not a corner case. See `docs/iris_next_steps.md` for candidate fixes (none chosen yet) —
+  heap-allocating `Signal<T>`'s real storage behind a thin local handle, or keeping the
+  component function's frame alive via a coroutine-based `render { }` instead of an ordinary
+  `return`. Blocks Stage 3 from being usable for real.
 
 **Resolved:** `IrisComponent` had no `nullptr_t` constructor, so every conditional-rendering
 example in this spec (§1.5, §9) writing `return nullptr;` inside a `<Slot>` lambda declared to
