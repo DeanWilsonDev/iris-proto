@@ -67,6 +67,13 @@ DESCRIBE("Codegen", {
         // icon is wrapped in_place_type<std::string> with the quoted literal
     });
 
+    IT("Icon with a size prop codegens with no errors", {
+        const auto Result = Generate(R"(render { <Icon icon="chevron-down" size={14.0f} /> })");
+        ASSERT_TRUE(Result.Errors.empty()); // Icon with a size prop codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "std::in_place_type<float>, 14.0f"));
+        // size is wrapped in_place_type<float> with the escape-hatch expression verbatim
+    });
+
     IT("Icon with a child is an error", {
         const auto Result = Generate(R"(render { <Icon icon="chevron-down"><Frame /></Icon> })");
         ASSERT_FALSE(Result.Errors.empty()); // <Icon> (a leaf) with a child is a codegen error

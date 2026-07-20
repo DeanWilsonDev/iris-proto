@@ -520,9 +520,14 @@ the one exception to the shared method set — see its entry below.
 
 **`<Icon>`** — Renders a single vector glyph resolved by name from a backend/app-supplied icon
 catalog (`docs/penumbra_iris_lustre_componentization_gaps_requirements.md` §1).
-- Props: `icon` (string, required — the catalog key, e.g. `icon="chevron-down"`), `class`, `key`.
-  No event props, no `src`/`handle` — unlike `<Image>`, there is never a texture asset backing
-  it.
+- Props: `icon` (string, required — the catalog key, e.g. `icon="chevron-down"`), `size` (float,
+  optional — the glyph's logical-pixel square side; omitted means the backend's own default,
+  `Penumbra::Widgets::IconWidget::SizeLogical`'s `16.0f`), `class`, `key`. No event props, no
+  `src`/`handle` — unlike `<Image>`, there is never a texture asset backing it. `size` is a
+  fixed-value prop like `icon` itself, not a Lustre style property — there is still no general
+  `width`/`height` override for any Core primitive (`lustre_core_spec.md` §2's stub), this is
+  narrowly `<Icon>`'s own escape hatch for the one case (a procedurally-drawn glyph with no
+  intrinsic size at all) where "ask the backend's default" isn't good enough.
 - Children: none (leaf).
 - Backend requirement: Iris carries no icon catalog itself — resolving `icon` to an actual drawn
   glyph is entirely backend-side (Penumbra's `IconWidget` + an app-supplied `IconBackend`

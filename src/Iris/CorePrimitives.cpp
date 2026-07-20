@@ -19,6 +19,7 @@ const std::unordered_map<std::string, std::string>& PrimitivePropTypeNames() {
         {"class", "std::string"},
         {"src", "std::string"},
         {"icon", "std::string"},
+        {"size", "float"},
         {"checked", "bool"},
         {"handle", "iris::TextureHandle"},
         {"onPress", "std::function<void()>"},
