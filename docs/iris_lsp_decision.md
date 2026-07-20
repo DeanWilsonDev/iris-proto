@@ -3,12 +3,11 @@
 ## 0. Scope
 
 An LSP server for `.iris`/`.irisx` files (`tools/iris-lsp/`), built against `libiris`
-directly rather than reimplementing any part of the language. v1 target, driven by an
-explicit ask for Neovim support: diagnostics, completion, goto-definition. Syntax
-highlighting is left to the editor side (a tree-sitter `cpp` injection over the whole
-buffer is enough for most of a `.iris` file, since most of it *is* C++ — see §6) rather
-than built into the server; LSP has no syntax-highlighting method of its own to serve it
-from anyway (semantic tokens are the closest fit and are a fast-follow, not v1).
+directly rather than reimplementing any part of the language. Driven by an explicit ask
+for Neovim support: diagnostics, completion, goto-definition, and syntax highlighting.
+The last of those is split across two mechanisms — a tree-sitter `cpp` injection on the
+editor side for everything outside `render{}` (§6), and `iris-lsp`'s own semantic tokens
+(§7) for the JSX-flavored bits `cpp`'s grammar can't parse.
 
 ## 1. The one thing that makes this different from an ordinary language server
 
@@ -183,29 +182,71 @@ vim.api.nvim_create_autocmd("FileType", {
 })
 ```
 
-Syntax highlighting: no `.iris`-specific tree-sitter grammar exists yet (writing one from
-scratch was the alternative considered and rejected for v1 — most of a `.iris` file is
-already valid C++23, so a from-scratch grammar would be re-deriving `tree-sitter-cpp` for
-little benefit). Cheapest real option, left to the user's own Neovim config rather than
-shipped here: an injection query treating the whole buffer as `cpp`. The `render { }`
-block's JSX-flavored tags won't highlight quite right under plain C++ rules (a bare `<Tag
-prop="x">` doesn't parse as C++), but everything outside it — the actual bulk of most
-files — will. Real per-token highlighting for the JSX bits is better served later by LSP
-semantic tokens (`textDocument/semanticTokens`) than by hand-writing a second grammar,
-since `Server.cpp` already knows exactly which spans are tag names vs prop names vs plain
-text from the same `RenderBlockParser` tree it already builds for diagnostics.
+Syntax highlighting: no `.iris`-specific tree-sitter grammar exists (writing one from
+scratch was the alternative considered and rejected — most of a `.iris` file is already
+valid C++23, so a from-scratch grammar would be re-deriving `tree-sitter-cpp` for little
+benefit). Instead: register the `cpp` grammar for filetype `iris` (`editors/nvim/
+iris-treesitter.lua`) for everything outside `render { }`, and let `iris-lsp`'s own
+semantic tokens (§9) cover the JSX-flavored bits `cpp`'s grammar can't parse. Neovim's
+built-in LSP client applies semantic tokens automatically for any attached client that
+advertises `semanticTokensProvider` — no extra config beyond starting the client itself.
 
-## 7. Explicit non-goals for this pass
+## 7. Semantic tokens for `render{}`
 
-- Hover, rename, find-references, semantic tokens — none implemented; nothing about the
-  architecture blocks adding them later through the same local-vs-proxy split.
+`cpp`'s tree-sitter grammar has no way to parse `<Tag prop="x">` — it's not C++ syntax —
+so §6's injection approach leaves the exact region that most needs good highlighting
+(the JSX-flavored tags) looking the worst (tree-sitter `ERROR` nodes). `iris-lsp` closes
+that gap directly: it already builds a full `ElementNode` tree per `render{}` block for
+diagnostics (`RenderBlockParser`), and that tree already carries real source locations
+for everything worth highlighting — `textDocument/semanticTokens/full` was a matter of
+walking it, not new parsing.
+
+`SemanticTokens.h`/`.cpp` (`CollectRenderBlockSemanticTokens`) recursively walks every
+`render{}` block's `ElementNode` (including nested elements reached through a `!{ }`
+JSX-transform escape hatch's own `JsxSegments`) and emits one token per:
+
+- **tag name** (`Frame` in `<Frame ...>`) → `type`. `ElementNode::Location` is the `<`
+  itself (`RenderBlockParser`'s own convention), so the tag name's span starts exactly one
+  column after it — no whitespace is ever allowed between `<` and a tag name.
+- **prop name** (`class` in `class="a"`) → `property`. This needed a small core-library
+  addition: `Prop` previously only carried `Value.Location` (the value's position, via
+  `PropValue::Location`), not the name's own — `Prop::Location` was added
+  (`include/Iris/ElementNode.h`, `RenderBlockParser.cpp`) specifically for this.
+- **string-literal prop value** (`"a"` in `class="a"`, quotes included) → `string`. A
+  `{ }` escape-hatch prop value gets no token at all — it's ordinary host-language code,
+  left entirely to `cpp`'s own highlighting.
+
+Only three token types are declared in the legend (`type`, `property`, `string`) — enough
+to make the JSX shape read the way JSX reads elsewhere, not a general-purpose C++
+semantic highlighter (clangd's own semantic tokens, if forwarded, would be a much larger
+follow-up — not attempted here, same "don't merge clangd's own X" boundary diagnostics
+forwarding already drew in §4).
+
+Delta-encoding (LSP's wire format: `[deltaLine, deltaStartChar, length, tokenType,
+tokenModifiers]` per token, relative to the previous one) happens in
+`Server::HandleSemanticTokensFull`, not in the collector — `CollectRenderBlockSemanticTokens`
+returns plain absolute `(Line, Column, Length, Type)` structs, sorted ascending, so it
+stays independently testable without needing to reason about delta arithmetic.
+
+Hand-verified against the real binary through a real Neovim session running the user's
+own config (not just the raw stdio protocol): `vim.lsp.semantic_tokens.get_at_pos`
+resolves `type`/`property`/`string` at exactly the right buffer positions once
+`iris-lsp` attaches, no additional Neovim configuration needed beyond starting the
+client — Neovim auto-enables semantic-token highlighting for any attached client
+advertising the capability.
+
+## 8. Explicit non-goals for this pass
+
+- Hover, rename, find-references — none implemented; nothing about the architecture
+  blocks adding them later through the same local-vs-proxy split. (Semantic tokens *are*
+  implemented — §9.)
 - clangd-backed behavior (host-language completion/definition/diagnostics, §4) has no
   automated coverage in `tools/iris-lsp/tests/` -- spawning a real clangd in a unit-test
   suite would trade determinism for coverage of code this repo doesn't own. Verified by
   hand-driving the server over its real stdio protocol instead (initialize → didOpen →
   completion/definition/diagnostics → shutdown) against a small throwaway project.
 
-## 8. Test suite
+## 9. Test suite
 
 `tools/iris-lsp/tests/` (a `iris_lsp_lib` static library split out of the `iris_lsp`
 executable specifically so the tests can link the real implementation, mirroring how

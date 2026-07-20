@@ -59,6 +59,7 @@ private:
     void HandleDidClose(const Amanuensis::Value& Params);
     void HandleCompletion(const Amanuensis::Value& Id, const Amanuensis::Value& Params);
     void HandleDefinition(const Amanuensis::Value& Id, const Amanuensis::Value& Params);
+    void HandleSemanticTokensFull(const Amanuensis::Value& Id, const Amanuensis::Value& Params);
 
     // Rebuilds Documents_[Uri]'s VirtualDocument from Text and publishes fresh
     // diagnostics -- the one path both didOpen and didChange funnel through. Locks

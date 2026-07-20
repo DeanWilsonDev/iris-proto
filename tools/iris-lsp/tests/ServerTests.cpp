@@ -59,6 +59,14 @@ Amanuensis::Value MakeTextDocument(const std::string& FileUri, const std::string
     return Params;
 }
 
+Amanuensis::Value MakeTextDocumentParams(const std::string& FileUri) {
+    Amanuensis::Value TextDocument = Amanuensis::Value::MakeObject();
+    TextDocument.Insert("uri", Amanuensis::Value(FileUri));
+    Amanuensis::Value Params = Amanuensis::Value::MakeObject();
+    Params.Insert("textDocument", std::move(TextDocument));
+    return Params;
+}
+
 Amanuensis::Value MakePositionParams(const std::string& FileUri, std::uint32_t Line0, std::uint32_t Char0) {
     Amanuensis::Value TextDocument = Amanuensis::Value::MakeObject();
     TextDocument.Insert("uri", Amanuensis::Value(FileUri));
@@ -293,5 +301,42 @@ DESCRIBE("Server.definition", {
         const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
         ASSERT_TRUE(Reply->Get("result").IsNull());
+    });
+});
+
+DESCRIBE("Server.semanticTokens", {
+    IT("emits Type/Property/String tokens for render{}'s tags/props/string values", {
+        const std::string FileUri = Uri("/scratch/Foo.iris");
+        const auto         Outputs =
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+                       MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, SimpleComponentSource)),
+                       MakeRequest(2, "textDocument/semanticTokens/full", MakeTextDocumentParams(FileUri)),
+                       MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+
+        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
+        REQUIRE_TRUE(Reply != nullptr);
+        const Amanuensis::Value& Data = Reply->Get("result").Get("data");
+        // SimpleComponentSource has one outer <Frame class="a"> (tag, prop, string) and
+        // one inner <Frame /> (tag only) -- 4 tokens, 5 wire-format integers each.
+        REQUIRE_TRUE(Data.Size() == 20);
+        ASSERT_TRUE(Data.At(3).AsInteger() == 0);  // outer tag -- Type
+        ASSERT_TRUE(Data.At(8).AsInteger() == 1);  // "class" -- Property
+        ASSERT_TRUE(Data.At(13).AsInteger() == 2); // "a" -- String
+        ASSERT_TRUE(Data.At(18).AsInteger() == 0); // inner tag -- Type
+    });
+
+    IT("declares its legend during initialize", {
+        const auto Outputs = RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
+                                         MakeRequest(2, "shutdown", Amanuensis::Value()),
+                                         MakeMessage("exit", Amanuensis::Value())});
+        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 1);
+        REQUIRE_TRUE(Reply != nullptr);
+        const Amanuensis::Value& TokenTypes =
+            Reply->Get("result").Get("capabilities").Get("semanticTokensProvider").Get("legend").Get("tokenTypes");
+        REQUIRE_TRUE(TokenTypes.Size() == 3);
+        ASSERT_TRUE(TokenTypes.At(0).AsString() == "type");
+        ASSERT_TRUE(TokenTypes.At(1).AsString() == "property");
+        ASSERT_TRUE(TokenTypes.At(2).AsString() == "string");
     });
 });

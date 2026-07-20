@@ -6,6 +6,11 @@
 -- repo) and, for host-language (non-render{}) completion/goto-definition, `clangd` on
 -- PATH too -- iris-lsp degrades gracefully (render{}/import features still work) if
 -- clangd isn't found.
+--
+-- Syntax highlighting is separate -- see iris-treesitter.lua alongside this file. Its
+-- own gap (render{}'s JSX-flavored tags, which the cpp grammar can't parse) is covered
+-- by this server's own semantic tokens (docs/iris_lsp_decision.md §7) -- nothing extra
+-- to configure for that; Neovim applies them automatically once attached.
 
 vim.filetype.add({ extension = { iris = "iris", irisx = "iris" } })
 

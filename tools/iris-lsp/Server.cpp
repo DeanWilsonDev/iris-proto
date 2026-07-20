@@ -4,6 +4,7 @@
 #include "Iris/IrisConfig.h"
 #include "JsonRpc.h"
 #include "RenderTextHeuristics.h"
+#include "SemanticTokens.h"
 
 #include <algorithm>
 #include <cctype>
@@ -154,6 +155,8 @@ void Server::HandleMessage(const Amanuensis::Value& Message) {
         HandleCompletion(Id, Params);
     } else if (Method == "textDocument/definition") {
         HandleDefinition(Id, Params);
+    } else if (Method == "textDocument/semanticTokens/full") {
+        HandleSemanticTokensFull(Id, Params);
     } else if (IsRequest) {
         ReplyError(Id, -32601, "method not found: " + Method);
     }
@@ -168,10 +171,22 @@ void Server::HandleInitialize(const Amanuensis::Value& Id, const Amanuensis::Val
     TriggerChars.PushBack(Amanuensis::Value(" "));
     Completion.Insert("triggerCharacters", std::move(TriggerChars));
 
+    Amanuensis::Value TokenTypes = Amanuensis::Value::MakeArray();
+    for (const char* Name : SemanticTokenTypeNames) {
+        TokenTypes.PushBack(Amanuensis::Value(Name));
+    }
+    Amanuensis::Value Legend = Amanuensis::Value::MakeObject();
+    Legend.Insert("tokenTypes", std::move(TokenTypes));
+    Legend.Insert("tokenModifiers", Amanuensis::Value::MakeArray()); // none defined yet
+    Amanuensis::Value SemanticTokensProvider = Amanuensis::Value::MakeObject();
+    SemanticTokensProvider.Insert("legend", std::move(Legend));
+    SemanticTokensProvider.Insert("full", Amanuensis::Value(true));
+
     Amanuensis::Value Capabilities = Amanuensis::Value::MakeObject();
     Capabilities.Insert("textDocumentSync", Amanuensis::Value(1)); // Full
     Capabilities.Insert("completionProvider", std::move(Completion));
     Capabilities.Insert("definitionProvider", Amanuensis::Value(true));
+    Capabilities.Insert("semanticTokensProvider", std::move(SemanticTokensProvider));
 
     Amanuensis::Value ServerInfo = Amanuensis::Value::MakeObject();
     ServerInfo.Insert("name", Amanuensis::Value("iris-lsp"));
@@ -538,6 +553,47 @@ void Server::HandleDefinition(const Amanuensis::Value& Id, const Amanuensis::Val
         Location.Insert("range", MakeRange(Result->Line, Result->Column));
     }
     Reply(Id, std::move(Location));
+}
+
+void Server::HandleSemanticTokensFull(const Amanuensis::Value& Id, const Amanuensis::Value& Params) {
+    const std::string Uri = Params.Get("textDocument").Get("uri").AsString();
+
+    std::vector<SemanticToken> Tokens;
+    {
+        std::lock_guard<std::mutex> Lock(DocumentsMutex_);
+        const auto DocIt = Documents_.find(Uri);
+        if (DocIt != Documents_.end() && DocIt->second.Virtual) {
+            Tokens = CollectRenderBlockSemanticTokens(DocIt->second.Virtual->RenderBlocks());
+        }
+    }
+
+    // LSP's delta encoding: each token is [deltaLine, deltaStartChar, length, tokenType,
+    // tokenModifiers] relative to the *previous* token -- deltaStartChar is relative to
+    // the previous token's start column only when they're on the same line, else it's
+    // the token's own absolute (0-based) column. Tokens is already sorted ascending by
+    // (Line, Column) (CollectRenderBlockSemanticTokens's own contract).
+    Amanuensis::Value Data = Amanuensis::Value::MakeArray();
+    std::uint32_t     PrevLine0 = 0;
+    std::uint32_t     PrevChar0 = 0;
+    for (const SemanticToken& Token : Tokens) {
+        const std::uint32_t Line0 = Token.Line - 1;
+        const std::uint32_t Char0 = Token.Column - 1;
+        const std::uint32_t DeltaLine = Line0 - PrevLine0;
+        const std::uint32_t DeltaChar = (DeltaLine == 0) ? (Char0 - PrevChar0) : Char0;
+
+        Data.PushBack(Amanuensis::Value(static_cast<long long>(DeltaLine)));
+        Data.PushBack(Amanuensis::Value(static_cast<long long>(DeltaChar)));
+        Data.PushBack(Amanuensis::Value(static_cast<long long>(Token.Length)));
+        Data.PushBack(Amanuensis::Value(static_cast<long long>(Token.Type)));
+        Data.PushBack(Amanuensis::Value(0)); // no token modifiers defined yet
+
+        PrevLine0 = Line0;
+        PrevChar0 = Char0;
+    }
+
+    Amanuensis::Value Result = Amanuensis::Value::MakeObject();
+    Result.Insert("data", std::move(Data));
+    Reply(Id, std::move(Result));
 }
 
 } // namespace IrisLsp

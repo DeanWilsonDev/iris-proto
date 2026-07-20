@@ -97,7 +97,8 @@ add_library(iris_lsp_lib STATIC
     tools/iris-lsp/VirtualDocument.cpp
     tools/iris-lsp/ClangdProxy.cpp
     tools/iris-lsp/JsonRpc.cpp
-    tools/iris-lsp/RenderTextHeuristics.cpp)
+    tools/iris-lsp/RenderTextHeuristics.cpp
+    tools/iris-lsp/SemanticTokens.cpp)
 target_include_directories(iris_lsp_lib PUBLIC tools/iris-lsp)
 target_link_libraries(iris_lsp_lib PUBLIC iris amanuensis Threads::Threads)
 
@@ -150,6 +151,7 @@ add_executable(iris_lsp_tests
     tools/iris-lsp/tests/JsonRpcTests.cpp
     tools/iris-lsp/tests/VirtualDocumentTests.cpp
     tools/iris-lsp/tests/RenderTextHeuristicsTests.cpp
+    tools/iris-lsp/tests/SemanticTokensTests.cpp
     tools/iris-lsp/tests/ServerTests.cpp)
 target_link_libraries(iris_lsp_tests PRIVATE iris_lsp_lib cimmerian)
 set_target_properties(iris_lsp_tests PROPERTIES
