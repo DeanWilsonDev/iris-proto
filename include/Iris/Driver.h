@@ -24,7 +24,7 @@ struct DriverResult {
 // The full `.iris`/`.irisx` -> generated-header pipeline for one source file:
 // `ScanImports`, `RenderBlockParser`, `ValidateElementTree` (against `Config.Target` and
 // the scanned import names), and `GenerateComponentExpression` for every `render { }`
-// block found. On success, each block's generated `Iris::IrisComponent`-constructing
+// block found. On success, each block's generated `Iris::Component`-constructing
 // expression is spliced back into the original source as `return <expr>;` in place of the
 // `render { ... }` block it replaces (docs/iris_core_spec.md §0's "rewrites the file into
 // valid host-language source"; Codegen.h's own doc comment specifies this exact wrapping).

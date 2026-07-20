@@ -29,7 +29,7 @@ public:
 };
 
 iris::MountFn StubMount(int* MountCount) {
-    return [MountCount](const Iris::IrisComponent& Node) -> std::unique_ptr<Umbra::IWidget> {
+    return [MountCount](const Iris::Component& Node) -> std::unique_ptr<Umbra::IWidget> {
         if (MountCount != nullptr) {
             ++*MountCount;
         }
@@ -44,10 +44,10 @@ iris::MountFn StubMount(int* MountCount) {
     };
 }
 
-Iris::IrisComponent MakeFrame(const std::string& ClassName) {
+Iris::Component MakeFrame(const std::string& ClassName) {
     Iris::IrisProps Props;
     Props["class"] = Iris::IrisPropValue{ClassName};
-    return Iris::IrisComponent(Iris::IrisElementTag::Frame, Props, {}, nullptr);
+    return Iris::Component(Iris::IrisElementTag::Frame, Props, {}, nullptr);
 }
 
 } // namespace
@@ -66,7 +66,7 @@ DESCRIBE("SlotRuntime", {
         int         MountCount = 0;
         iris::MountFn Mount = StubMount(&MountCount);
 
-        auto Callable = Iris::MakeSlotCallable([]() -> Iris::IrisComponent { return MakeFrame("a"); });
+        auto Callable = Iris::MakeSlotCallable([]() -> Iris::Component { return MakeFrame("a"); });
         iris::SlotState Slot(Callable, Mount);
 
         Slot.Reconcile();
@@ -81,7 +81,7 @@ DESCRIBE("SlotRuntime", {
 
         iris::Signal<std::string> ClassName("initial");
         int                        InvocationCount = 0;
-        auto                       Callable = Iris::MakeSlotCallable([&]() -> Iris::IrisComponent {
+        auto                       Callable = Iris::MakeSlotCallable([&]() -> Iris::Component {
             ++InvocationCount;
             return MakeFrame(ClassName.get());
         });
@@ -113,7 +113,7 @@ DESCRIBE("SlotRuntime", {
 
         iris::Signal<std::string> ClassName("initial");
         int                        InvocationCount = 0;
-        auto                       Callable = Iris::MakeSlotCallable([&]() -> Iris::IrisComponent {
+        auto                       Callable = Iris::MakeSlotCallable([&]() -> Iris::Component {
             ++InvocationCount;
             return MakeFrame(ClassName.get());
         });
@@ -144,7 +144,7 @@ DESCRIBE("SlotRuntime", {
 
         iris::Signal<int> Counter(0);
         int                InvocationCount = 0;
-        auto               Callable = Iris::MakeSlotCallable([&]() -> Iris::IrisComponent {
+        auto               Callable = Iris::MakeSlotCallable([&]() -> Iris::Component {
             ++InvocationCount;
             return MakeFrame(std::to_string(Counter.get()));
         });

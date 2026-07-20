@@ -17,8 +17,8 @@ Reading the Stage 3 decision docs closely (rather than assuming their code sampl
 implementation-ready) surfaced several real gaps between "the shape is specified" and
 "there's a working mechanism":
 
-1. **`key` never reached `IrisComponent`.** `docs/iris_props_decision.md` states `key`
-   is stripped before codegen, and `include/Iris/IrisComponent.h` had no `Key` field at
+1. **`key` never reached `Component`.** `docs/iris_props_decision.md` states `key`
+   is stripped before codegen, and `include/Iris/Component.h` had no `Key` field at
    all. The reconciler's entire matching rule ("same tag + same key") had nothing to
    match on.
 2. **How a `Signal` knows which `<Slot>`s to mark dirty was never specified.** The docs
@@ -77,9 +77,9 @@ that a Penumbra-side adapter should be straightforward. `MoveChild` is expressed
 `RemoveChildAt` + `InsertChildAt` rather than its own primitive, keeping the interface
 smaller.
 
-## Decision 3: `key` representation on `IrisComponent`
+## Decision 3: `key` representation on `Component`
 
-`IrisComponent` gained a `std::optional<IrisPropValue> Key;` field — reusing the
+`Component` gained a `std::optional<IrisPropValue> Key;` field — reusing the
 already-closed `IrisPropValue` variant (`string`, `int`, `float`, `bool`,
 `function<void()>`, `TextureHandle`) rather than inventing a new type, since every real
 example in the spec uses a plain `string`- or `int`-shaped key
@@ -93,11 +93,11 @@ expression first (a primitive's aggregate-style construction, or a component
 invocation's function call — unchanged), and only when `Node.Key` is present wraps it:
 
 ```cpp
-[&]() { Iris::IrisComponent Node = <base expression>; Node.Key = Iris::IrisPropValue(<key expression>); return Node; }()
+[&]() { Iris::Component Node = <base expression>; Node.Key = Iris::IrisPropValue(<key expression>); return Node; }()
 ```
 
 This means a component invocation's `key` (`<HealthBar key={member.id} .../>`) works
-identically to a primitive's — the key is set on whatever `IrisComponent` came back,
+identically to a primitive's — the key is set on whatever `Component` came back,
 regardless of how it was built. Tested in `tests/CodegenTests.cpp`
 (`TestKeyedPrimitiveWrapsBaseExpressionAndSetsKey`,
 `TestKeyedComponentInvocationAlsoWrapsWithKey`), and verified end-to-end: a real `.iris`
@@ -217,13 +217,13 @@ Scoped out of this pass, each a real, separate piece of work:
   existed. Making a `<Slot>`-containing tree actually mountable means teaching that
   walker (or something layered in front of it) to construct a `SlotState` at each
   `<Slot>` position and splice its own widget(s) in.~~ **Done**, for both the
-  single-`IrisComponent`- and list-returning callable shapes —
+  single-`Component`- and list-returning callable shapes —
   `docs/iris_slot_stage2_wiring_decision.md` and `docs/iris_slot_list_wiring_decision.md`.
 - **Nested `<Slot>` discovery.** ~~`SlotState`/`Reconciler` assume the trees a slot's
   callable produces contain no further `<Slot>` tags — matching Stage 2's own
   documented precondition ("the tree a backend pass ever sees is fully concrete — no
   Slot nodes"). Recursively finding nested `<Slot>` tags within an arbitrary
-  `IrisComponent` tree and giving each its own independent `SlotState` (per the spec's
+  `Component` tree and giving each its own independent `SlotState` (per the spec's
   own `<Slot>`-scoped-diffing design) is real, separate work this pass doesn't attempt.~~
   **Done** — `docs/iris_nested_slot_discovery_decision.md`. That pass also fixed a
   latent `Reconciler.cpp` correctness gap this exposed (Slot-tagged children weren't

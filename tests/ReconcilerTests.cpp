@@ -78,29 +78,29 @@ std::string TagName(Iris::IrisElementTag Tag) {
     return "?";
 }
 
-Iris::IrisComponent MakeNode(Iris::IrisElementTag Tag, Iris::IrisProps Props = {},
-                              std::vector<Iris::IrisComponent> Children = {},
+Iris::Component MakeNode(Iris::IrisElementTag Tag, Iris::IrisProps Props = {},
+                              std::vector<Iris::Component> Children = {},
                               std::optional<Iris::IrisPropValue> Key = std::nullopt) {
-    Iris::IrisComponent Node(Tag, std::move(Props), std::move(Children), nullptr);
+    Iris::Component Node(Tag, std::move(Props), std::move(Children), nullptr);
     Node.Key = std::move(Key);
     return Node;
 }
 
 // Builds a whole subtree recursively, mirroring what a real Stage 2 walker's MountFn
-// contract requires: given ANY IrisComponent node, build its entire subtree, since
+// contract requires: given ANY Component node, build its entire subtree, since
 // ReconcileWidget never recurses into New.Children on the "no old to diff against" path.
 class TestMounter {
 public:
     explicit TestMounter(int* MountCount) : MountCount_(MountCount) {}
 
-    std::unique_ptr<Umbra::IWidget> operator()(const Iris::IrisComponent& Node) {
+    std::unique_ptr<Umbra::IWidget> operator()(const Iris::Component& Node) {
         if (MountCount_ != nullptr) {
             ++*MountCount_;
         }
         auto Widget = std::make_unique<MockWidget>(TagName(Node.Tag));
         Umbra::IrisPropDiff Diff = iris::ComputePropDiff({}, Node.Props);
         Widget->ApplyPropDiff(Diff);
-        for (const Iris::IrisComponent& Child : Node.Children) {
+        for (const Iris::Component& Child : Node.Children) {
             Widget->Children.push_back((*this)(Child));
         }
         return Widget;
@@ -136,7 +136,7 @@ DESCRIBE("Reconciler", {
         int                              MountCount = 0;
         TestMounter                       Mount(&MountCount);
         std::unique_ptr<Umbra::IWidget>  Widget;
-        const auto                        Old = Iris::IrisComponent(nullptr);
+        const auto                        Old = Iris::Component(nullptr);
         const auto                        New = MakeNode(Iris::IrisElementTag::Frame);
 
         iris::ReconcileWidget(Widget, Old, New, Mount);
@@ -153,7 +153,7 @@ DESCRIBE("Reconciler", {
         const auto Old = MakeNode(Iris::IrisElementTag::Frame, InitialProps, {}, Iris::IrisPropValue(1));
 
         std::unique_ptr<Umbra::IWidget> Widget;
-        iris::ReconcileWidget(Widget, Iris::IrisComponent(nullptr), Old, Mount);
+        iris::ReconcileWidget(Widget, Iris::Component(nullptr), Old, Mount);
         const int OriginalMountCount = MountCount;
         const auto* AsMock = dynamic_cast<MockWidget*>(Widget.get());
         const int   OriginalId = AsMock->Id;
@@ -175,7 +175,7 @@ DESCRIBE("Reconciler", {
 
         const auto Old = MakeNode(Iris::IrisElementTag::Frame);
         std::unique_ptr<Umbra::IWidget> Widget;
-        iris::ReconcileWidget(Widget, Iris::IrisComponent(nullptr), Old, Mount);
+        iris::ReconcileWidget(Widget, Iris::Component(nullptr), Old, Mount);
         const int OldId = dynamic_cast<MockWidget*>(Widget.get())->Id;
         ASSERT_EQUAL(AliveWidgetIds.count(OldId), static_cast<std::size_t>(1));
         // the original widget is alive before the remount
@@ -195,10 +195,10 @@ DESCRIBE("Reconciler", {
 
         const auto Old = MakeNode(Iris::IrisElementTag::Frame);
         std::unique_ptr<Umbra::IWidget> Widget;
-        iris::ReconcileWidget(Widget, Iris::IrisComponent(nullptr), Old, Mount);
+        iris::ReconcileWidget(Widget, Iris::Component(nullptr), Old, Mount);
         const int OldId = dynamic_cast<MockWidget*>(Widget.get())->Id;
 
-        const Iris::IrisComponent NewNone(nullptr);
+        const Iris::Component NewNone(nullptr);
         iris::ReconcileWidget(Widget, Old, NewNone, Mount);
 
         ASSERT_EQUAL(AliveWidgetIds.count(OldId), static_cast<std::size_t>(0));
@@ -210,17 +210,17 @@ DESCRIBE("Reconciler", {
         int         MountCount = 0;
         TestMounter Mount(&MountCount);
 
-        std::vector<Iris::IrisComponent> OldChildren;
+        std::vector<Iris::Component> OldChildren;
         OldChildren.push_back(MakeNode(Iris::IrisElementTag::Text));
         const auto Old = MakeNode(Iris::IrisElementTag::Frame, {}, std::move(OldChildren));
 
         std::unique_ptr<Umbra::IWidget> Widget;
-        iris::ReconcileWidget(Widget, Iris::IrisComponent(nullptr), Old, Mount);
+        iris::ReconcileWidget(Widget, Iris::Component(nullptr), Old, Mount);
         const int ChildId = dynamic_cast<MockWidget*>(Widget->GetChildAt(0))->Id;
 
         Iris::IrisProps ChildProps;
         ChildProps["text"] = Iris::IrisPropValue{std::string("updated")};
-        std::vector<Iris::IrisComponent> NewChildren;
+        std::vector<Iris::Component> NewChildren;
         NewChildren.push_back(MakeNode(Iris::IrisElementTag::Text, ChildProps));
         const auto New = MakeNode(Iris::IrisElementTag::Frame, {}, std::move(NewChildren));
 
@@ -236,7 +236,7 @@ DESCRIBE("Reconciler", {
         int         MountCount = 0;
         TestMounter Mount(&MountCount);
 
-        std::vector<Iris::IrisComponent> OldList;
+        std::vector<Iris::Component> OldList;
         OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
         OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
 
@@ -247,7 +247,7 @@ DESCRIBE("Reconciler", {
         const int Id2 = dynamic_cast<MockWidget*>(Widgets[1].get())->Id; // key 2
 
         // Reordered: key 2 now comes first.
-        std::vector<Iris::IrisComponent> NewList;
+        std::vector<Iris::Component> NewList;
         NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
         NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
 
@@ -263,7 +263,7 @@ DESCRIBE("Reconciler", {
         int         MountCount = 0;
         TestMounter Mount(&MountCount);
 
-        std::vector<Iris::IrisComponent> OldList;
+        std::vector<Iris::Component> OldList;
         OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
         OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
 
@@ -271,7 +271,7 @@ DESCRIBE("Reconciler", {
         iris::ReconcileChildren(Widgets, {}, OldList, Mount);
         const int RemovedId = dynamic_cast<MockWidget*>(Widgets[1].get())->Id; // key 2 will be removed
 
-        std::vector<Iris::IrisComponent> NewList;
+        std::vector<Iris::Component> NewList;
         NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
         NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(3))); // new key
 
@@ -286,7 +286,7 @@ DESCRIBE("Reconciler", {
         TestMounter Mount(&MountCount);
         MockWidget  Parent("Frame");
 
-        std::vector<Iris::IrisComponent> OldList;
+        std::vector<Iris::Component> OldList;
         OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
         OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
         iris::ReconcileChildrenAt(Parent, 0, {}, OldList, Mount);
@@ -296,7 +296,7 @@ DESCRIBE("Reconciler", {
         RemoveChildAtCallCount = 0;
         InsertChildAtCallCount = 0;
 
-        std::vector<Iris::IrisComponent> NewList = OldList;
+        std::vector<Iris::Component> NewList = OldList;
         NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(3)));
         iris::ReconcileChildrenAt(Parent, 0, OldList, NewList, Mount);
 
@@ -314,7 +314,7 @@ DESCRIBE("Reconciler", {
         TestMounter Mount(&MountCount);
         MockWidget  Parent("Frame");
 
-        std::vector<Iris::IrisComponent> OldList;
+        std::vector<Iris::Component> OldList;
         for (int Key = 1; Key <= 4; ++Key) {
             OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(Key)));
         }
@@ -326,7 +326,7 @@ DESCRIBE("Reconciler", {
 
         // Move key 1 to the end; keys 2, 3, 4 stay in the same relative order — the
         // LIS is {2, 3, 4}, so only key 1 should require an explicit move.
-        std::vector<Iris::IrisComponent> NewList;
+        std::vector<Iris::Component> NewList;
         NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
         NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(3)));
         NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(4)));
@@ -351,7 +351,7 @@ DESCRIBE("Reconciler", {
         TestMounter Mount(&MountCount);
         MockWidget  Parent("Frame");
 
-        std::vector<Iris::IrisComponent> List;
+        std::vector<Iris::Component> List;
         List.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
         List.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
         iris::ReconcileChildrenAt(Parent, 0, {}, List, Mount);
@@ -373,12 +373,12 @@ DESCRIBE("Reconciler", {
         Parent.Children.push_back(std::make_unique<MockWidget>("Static"));
         const int StaticId = dynamic_cast<MockWidget*>(Parent.GetChildAt(0))->Id;
 
-        std::vector<Iris::IrisComponent> OldList;
+        std::vector<Iris::Component> OldList;
         OldList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
         iris::ReconcileChildrenAt(Parent, 1, {}, OldList, Mount);
         ASSERT_EQUAL(Parent.GetChildCount(), static_cast<std::size_t>(2));
 
-        std::vector<Iris::IrisComponent> NewList;
+        std::vector<Iris::Component> NewList;
         NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(1)));
         NewList.push_back(MakeNode(Iris::IrisElementTag::Frame, {}, {}, Iris::IrisPropValue(2)));
         iris::ReconcileChildrenAt(Parent, 1, OldList, NewList, Mount);

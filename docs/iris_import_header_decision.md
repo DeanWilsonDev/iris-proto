@@ -59,7 +59,7 @@ everything, with only `render { }` blocks touched) becomes the header body, wrap
 stay one-definition-rule-safe once the header is `#include`d by more than one translation
 unit. Iris does **not** inject `inline` itself — doing so would mean parsing the function
 signature it's committed not to touch. This is a convention the component's author applies
-themselves (`inline IrisComponent Button(ButtonProps props) { ... }`), the same way any
+themselves (`inline Component Button(ButtonProps props) { ... }`), the same way any
 other host-language detail already passes through Iris untouched. Documented here rather
 than silently assumed.
 

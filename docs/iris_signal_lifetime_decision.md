@@ -15,10 +15,10 @@ long-lived locals... captured by reference in render lambdas," and every example
 `docs/iris_core_spec.md` writes this pattern:
 
 ```cpp
-IrisComponent StartMenu() {
+Component StartMenu() {
     iris::Signal<bool> settingsOpen = false;
     render {
-        <Slot>{[&]() -> IrisComponent { return settingsOpen.get() ? ... : nullptr; }}</Slot>
+        <Slot>{[&]() -> Component { return settingsOpen.get() ? ... : nullptr; }}</Slot>
     }
 }
 ```
@@ -108,20 +108,20 @@ already fully controls the shape of: every component invocation it emits. `<Heal
 current={...} />` no longer becomes just `HealthBar(HealthBarProps{...})` — it becomes:
 
 ```cpp
-iris::MountComponentInstance([&]() -> Iris::IrisComponent { return HealthBar(HealthBarProps{...}); })
+iris::MountComponentInstance([&]() -> Iris::Component { return HealthBar(HealthBarProps{...}); })
 ```
 
 `MountComponentInstance` pushes a fresh `ComponentInstance`, calls the lambda (any
 `IRIS_SIGNAL` inside `HealthBar()`'s body registers against it), pops the stack, and
-stashes the instance on the result (`IrisComponent::Instance`, a new
+stashes the instance on the result (`Component::Instance`, a new
 `std::shared_ptr<iris::ComponentInstance>` field). This is the same category of change
 as the existing `key`-setting IIFE `Codegen.h` already wraps invocations in
 (`docs/iris_stage3_implementation_decision.md`'s Decision 3) — not new territory.
 
 **Lifetime needs no separate "on unmount" hook.** `SlotState` (`SlotRuntime.h`) already
-retains the last-rendered `IrisComponent` tree between reconcile passes
+retains the last-rendered `Component` tree between reconcile passes
 (`PreviousSingle_`/`PreviousList_`) purely for diffing purposes — and since that tree
-recursively carries every nested `IrisComponent::Instance` shared_ptr within it,
+recursively carries every nested `Component::Instance` shared_ptr within it,
 ordinary reference counting through storage that already existed is what keeps each
 component's signals alive for exactly as long as it stays in the tree. The moment a
 component leaves the tree (a `Reconcile()` call replaces `PreviousSingle_`/
@@ -144,7 +144,7 @@ for it.
   returns (the exact shape of the original bug); multiple signals in one component all
   survive independently; `set()`/`get()` both work long after the declaring function
   returned; the `ComponentInstance` (and its signals) are freed exactly when the owning
-  `IrisComponent` is dropped (verified via `shared_ptr::use_count()`).
+  `Component` is dropped (verified via `shared_ptr::use_count()`).
 - The same test file, compiled standalone under AddressSanitizer + LeakSanitizer:
   clean exit, zero errors — both the original crash class and any new leak from the
   heap allocation this fix introduces.
@@ -166,7 +166,7 @@ syntax rather than rewritten.
 
 Consuming code (whatever assembles the final translation unit around generated
 `.iris.h` output) now also needs `#include "Iris/ComponentInstance.h"` — the existing
-convention already requires manually including `Iris/IrisComponent.h` before pulling in
+convention already requires manually including `Iris/Component.h` before pulling in
 generated headers (Driver.cpp doesn't auto-inject Iris runtime includes), so this isn't
 a new category of requirement, just one more header in that same list.
 

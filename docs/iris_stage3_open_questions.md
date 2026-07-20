@@ -25,7 +25,7 @@ Resolved by `docs/iris_stage3_decision_slot.md`, reaffirmed by `docs/iris_stage3
 documented:** the Iris runtime's `key → live widget` identity map (built in Stage 2) must be
 typed `IWidget*` — a new backend-agnostic interface — never a concrete Penumbra type like
 `WidgetBase*`. The Iris runtime must not reference Penumbra types anywhere, not just at the
-`IrisComponent` IR level. Propagated to `docs/iris_core_spec.md` §2.3, §10 and
+`Component` IR level. Propagated to `docs/iris_core_spec.md` §2.3, §10 and
 `docs/iris_handoff.md` §5.
 
 ## Resolution table

@@ -105,13 +105,13 @@ private:
     // function call alike — so rather than threading key-emission through every
     // `Emit*` function individually, `Emit()` always computes the base expression first
     // and, only when a key is present, wraps it in an immediately-invoked lambda that
-    // sets `IrisComponent::Key` on the already-built value before returning it.
+    // sets `Component::Key` on the already-built value before returning it.
     // `IrisPropValue`'s ordinary converting constructor (no `in_place_type` needed) picks
     // the right variant alternative from the key expression's own type, exactly the way
     // `key={item.id}` (an `int`) and `key="bar"` (a `std::string`) both need to work
     // without codegen ever knowing which one it's looking at.
     std::string EmitWithKey(const std::string& BaseExpression, const PropValue& KeyValue) {
-        return "[&]() { Iris::IrisComponent Node = " + BaseExpression + "; Node.Key = Iris::IrisPropValue(" +
+        return "[&]() { Iris::Component Node = " + BaseExpression + "; Node.Key = Iris::IrisPropValue(" +
                EmitPropValueExpression(KeyValue) + "); return Node; }()";
     }
 
@@ -138,13 +138,13 @@ private:
         return Result;
     }
 
-    // A single child position's contribution as a synthetic `<Text>` `IrisComponent`
+    // A single child position's contribution as a synthetic `<Text>` `Component`
     // node — for a `Text`/`EscapeHatch` child of a primitive other than `<Text>` itself
     // (docs/iris_stage1_codegen_decision.md, Gap 2).
     std::string EmitSyntheticTextNode(const ElementChild& Child) {
         const std::string Expr =
             Child.Kind == ElementChildKind::Text ? QuoteLiteral(Child.Text) : EmitEscapeHatchExpression(*Child.EscapeHatch);
-        return "Iris::IrisComponent{Iris::IrisElementTag::Text, "
+        return "Iris::Component{Iris::IrisElementTag::Text, "
                "Iris::IrisProps{{\"text\", Iris::IrisPropValue{std::in_place_type<std::string>, " +
                Expr + "}}}, {}, nullptr}";
     }
@@ -183,7 +183,7 @@ private:
     }
 
     std::string EmitOrdinaryPrimitive(const ElementNode& Node) {
-        return "Iris::IrisComponent{" + TagToIrisElementTag(Node.Tag) + ", " + EmitPrimitiveProps(Node) + ", " +
+        return "Iris::Component{" + TagToIrisElementTag(Node.Tag) + ", " + EmitPrimitiveProps(Node) + ", " +
                EmitChildrenList(Node) + ", nullptr}";
     }
 
@@ -225,7 +225,7 @@ private:
         (void)First;
         Props += "{\"text\", Iris::IrisPropValue{std::in_place_type<std::string>, " + TextExpr + "}}}";
 
-        return "Iris::IrisComponent{Iris::IrisElementTag::Text, " + Props + ", {}, nullptr}";
+        return "Iris::Component{Iris::IrisElementTag::Text, " + Props + ", {}, nullptr}";
     }
 
     // `<Slot>`'s single escape-hatch child becomes a `MakeSlotCallable(...)` call
@@ -238,10 +238,10 @@ private:
         }
         if (Node.Children.size() != 1 || Node.Children[0].Kind != ElementChildKind::EscapeHatch) {
             AddError("<Slot> must have exactly one { } escape-hatch child", Node.Location);
-            return "Iris::IrisComponent{Iris::IrisElementTag::Slot, Iris::IrisProps{}, {}, nullptr}";
+            return "Iris::Component{Iris::IrisElementTag::Slot, Iris::IrisProps{}, {}, nullptr}";
         }
         const std::string Lambda = EmitEscapeHatchExpression(*Node.Children[0].EscapeHatch);
-        return "Iris::IrisComponent{Iris::IrisElementTag::Slot, Iris::IrisProps{}, {}, Iris::MakeSlotCallable(" +
+        return "Iris::Component{Iris::IrisElementTag::Slot, Iris::IrisProps{}, {}, Iris::MakeSlotCallable(" +
                Lambda + ")}";
     }
 
@@ -273,7 +273,7 @@ private:
         // unconditionally — Codegen has no visibility into whether <Name>'s body actually
         // declares any signals, and wrapping a signal-free component is harmless (an
         // empty ComponentInstance, freed immediately on unmount).
-        return "iris::MountComponentInstance([&]() -> Iris::IrisComponent { return " + Node.Tag + "(" +
+        return "iris::MountComponentInstance([&]() -> Iris::Component { return " + Node.Tag + "(" +
                Initializer + "); })";
     }
 

@@ -1,8 +1,8 @@
 # Iris — Wiring List-Returning `<Slot>`s Into the Stage 2 Walker
 
 > **Status:** Closed and implemented. Extends
-> `docs/iris_slot_stage2_wiring_decision.md`'s single-`IrisComponent`-returning case to
-> the list-returning one (`std::function<std::vector<IrisComponent>()>`), and fixes the
+> `docs/iris_slot_stage2_wiring_decision.md`'s single-`Component`-returning case to
+> the list-returning one (`std::function<std::vector<Component>()>`), and fixes the
 > "two sibling `<Slot>`s" limitation that doc's own single-callable case had already
 > flagged as deferred.
 
@@ -12,11 +12,11 @@
 
 `docs/iris_slot_stage2_wiring_decision.md`'s original `SlotState::AttachAt(Parent,
 Index)` assumed a fixed `Index`, set once and never revisited. That holds for a
-single-`IrisComponent`-returning `<Slot>` with no siblings under its parent, but breaks
+single-`Component`-returning `<Slot>` with no siblings under its parent, but breaks
 in two related ways once either condition is relaxed:
 
 - **A list-returning `<Slot>`'s own length can change across re-renders** (it's a
-  `std::vector<IrisComponent>()>`, not a fixed 0-or-1 output) — so even its *own*
+  `std::vector<Component>()>`, not a fixed 0-or-1 output) — so even its *own*
   attachment point can't be a single fixed index once it produces more than one item.
 - **Any static sibling positioned after a `<Slot>`, or another `<Slot>`, has to shift**
   whenever an earlier `<Slot>` (list-returning or not) changes how many real widgets it
@@ -44,7 +44,7 @@ under that parent, in the order they're encountered. Each entry records:
 position within the shared parent's real children as `StaticPrefixCount + Σ` of every
 earlier sibling's `SlotState::CurrentRealChildCount()` — recomputed fresh on every call,
 since an earlier sibling's own contribution may have changed since the last one.
-`CurrentRealChildCount()` is 0 or 1 for a single-`IrisComponent`-returning `<Slot>`, 0..N
+`CurrentRealChildCount()` is 0 or 1 for a single-`Component`-returning `<Slot>`, 0..N
 for a list-returning one — the same mechanism handles both shapes uniformly, and a
 `<Slot>` with no siblings just gets a group with one entry and nothing earlier to sum
 (no behavior change from the single-callable case).
@@ -54,7 +54,7 @@ Group, GroupIndex)`. Every `Reconcile()` call now asks `Group->AbsoluteIndexOf
 (GroupIndex)` for its base position immediately before touching `Parent`'s children,
 rather than trusting a value cached at attach time:
 
-- **Single-`IrisComponent`-returning shape:** same extract/`ReconcileWidget`/reinsert
+- **Single-`Component`-returning shape:** same extract/`ReconcileWidget`/reinsert
   dance as before, just at a freshly computed `Base` instead of a fixed `AttachedIndex_`.
 - **List-returning shape (new):** extracts however many widgets this slot currently owns
   (`AttachedCount_`, tracked per-slot) via repeated `RemoveChildAt(Base)`, runs the

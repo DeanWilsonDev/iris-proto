@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Iris/IrisComponent.h"
+#include "Iris/Component.h"
 
 #include "Umbra/IWidget.h"
 
@@ -11,7 +11,7 @@
 namespace iris {
 
 // Supplied by whoever embeds Iris (e.g. `iris-penumbra-backend`) to build a fresh
-// `Umbra::IWidget`-conforming widget for an `IrisComponent` subtree that has no
+// `Umbra::IWidget`-conforming widget for an `Component` subtree that has no
 // existing widget to diff against — a fresh mount, or a remount because the tag/key at
 // some position changed. Builds the *whole* subtree, recursively — the reconciler
 // (`Reconciler.h`) never recurses into `New.Children` itself on this path, it hands the
@@ -20,7 +20,7 @@ namespace iris {
 // asks this callback to (mirroring `Codegen`/`SemanticValidator`'s own "never inspect
 // escape hatch contents" posture: the runtime doesn't know what a widget *is*, only
 // what `Umbra::IWidget` says it can do).
-using MountFn = std::function<std::unique_ptr<Umbra::IWidget>(const Iris::IrisComponent&)>;
+using MountFn = std::function<std::unique_ptr<Umbra::IWidget>(const Iris::Component&)>;
 
 class SlotState;
 class ComponentInstance;
@@ -29,7 +29,7 @@ class ComponentInstance;
 // (`SlotResolution.h`'s `ResolveSlots` builds one per parent's children list), so a
 // later sibling's absolute child index can account for how many real widgets earlier
 // siblings *currently* contribute — which, for a list-returning `<Slot>`, can change on
-// every re-render (docs/iris_slot_list_wiring_decision.md). A single-`IrisComponent`-
+// every re-render (docs/iris_slot_list_wiring_decision.md). A single-`Component`-
 // returning `<Slot>` with no siblings under its parent just uses a group with one entry
 // and nothing earlier to sum — the same mechanism handles both shapes uniformly.
 class SlotSiblingGroup {
@@ -77,7 +77,7 @@ void TrackSignalDependency(const void* SignalIdentity);
 void NotifySignalDependents(const void* SignalIdentity);
 
 // One `<Slot>`'s live reactive state (docs/iris_stage3_decision_doc.md's `SlotState`).
-// Owns the callable, the last `IrisComponent` tree(s) it produced (diffed against on
+// Owns the callable, the last `Component` tree(s) it produced (diffed against on
 // re-invocation — "`<Slot>`-scoped diffing": never mixed with a sibling slot's own
 // state or the static tree around it), and the live widget(s) built/reconciled from
 // that output.
@@ -121,14 +121,14 @@ public:
     // `iris::Tick()`) — asks `Group->AbsoluteIndexOf(GroupIndex)` fresh (an earlier
     // sibling's own contribution may have changed since the last call) and updates
     // `Parent`'s real children at that position in place: for the single-
-    // `IrisComponent`-returning shape, `ReconcileWidget` as before; for the
+    // `Component`-returning shape, `ReconcileWidget` as before; for the
     // list-returning shape, an equivalent extract/`ReconcileChildren`/reinsert dance
     // over as many consecutive positions as this slot currently occupies. Must be
     // called before the first `Reconcile()`.
     void AttachToGroup(Umbra::IWidget* Parent, std::shared_ptr<SlotSiblingGroup> Group, std::size_t GroupIndex);
 
     // How many real widgets this slot currently contributes to its attached parent (or
-    // would, if standalone) — 0 or 1 for a single-`IrisComponent`-returning callable,
+    // would, if standalone) — 0 or 1 for a single-`Component`-returning callable,
     // 0..N for a list-returning one. `SlotSiblingGroup::AbsoluteIndexOf` calls this on
     // every earlier sibling to compute a later one's current absolute position.
     std::size_t CurrentRealChildCount() const;
@@ -136,11 +136,11 @@ public:
 private:
     // Walks `Widget` (this slot's own just-reconciled real widget, for one position of
     // its current output — the single widget, or one list item) alongside `Node` (the
-    // matching `IrisComponent`) via `ResolveSlots` to find every `<Slot>` nested inside
+    // matching `Component`) via `ResolveSlots` to find every `<Slot>` nested inside
     // it, and appends the resulting `SlotState`s to `NestedSlots_`
     // (docs/iris_nested_slot_discovery_decision.md). Called once per position, per
     // `Reconcile()` call, after `NestedSlots_` has already been cleared for this render.
-    void DiscoverNestedSlots(Umbra::IWidget& Widget, const Iris::IrisComponent& Node);
+    void DiscoverNestedSlots(Umbra::IWidget& Widget, const Iris::Component& Node);
 
     std::shared_ptr<Iris::IrisSlotCallable> Callable_;
     MountFn                                  Mount_;
@@ -157,9 +157,9 @@ private:
     // rather than introducing a parallel one. In attached mode (`AttachedParent_ !=
     // nullptr`), `SingleWidget_`/`ListWidgets_` stay unused — the live widget(s) live
     // inside `AttachedParent_`'s own children between `Reconcile()` calls, never here.
-    Iris::IrisComponent                          PreviousSingle_{nullptr}; // starts at IrisElementTag::None — "nothing was here"
+    Iris::Component                          PreviousSingle_{nullptr}; // starts at IrisElementTag::None — "nothing was here"
     std::unique_ptr<Umbra::IWidget>              SingleWidget_;
-    std::vector<Iris::IrisComponent>             PreviousList_;
+    std::vector<Iris::Component>             PreviousList_;
     std::vector<std::unique_ptr<Umbra::IWidget>> ListWidgets_;
 
     // Every `<Slot>` found nested inside this slot's own *current* rendered output —

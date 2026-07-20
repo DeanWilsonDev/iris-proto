@@ -23,7 +23,7 @@ using IrisPropValue = std::variant<
     iris::TextureHandle
 >;
 
-// key-value prop map for one `IrisComponent` node — `key` is never an entry here, it's
+// key-value prop map for one `Component` node — `key` is never an entry here, it's
 // stripped by the preprocessor before codegen (docs/iris_core_spec.md §2.3,
 // docs/iris_stage1_codegen_decision.md).
 using IrisProps = std::unordered_map<std::string, IrisPropValue>;

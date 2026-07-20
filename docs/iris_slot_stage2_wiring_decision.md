@@ -1,6 +1,6 @@
 # Iris — Wiring `<Slot>` into the Stage 2 Walker
 
-> **Status:** Closed and implemented for the single-`IrisComponent`-returning case. The
+> **Status:** Closed and implemented for the single-`Component`-returning case. The
 > list-returning case, and the "two sibling `<Slot>`s" limitation below, are now also
 > closed — see `docs/iris_slot_list_wiring_decision.md`.
 
@@ -9,7 +9,7 @@
 ## The problem
 
 Stage 2's `BuildWidgetTree` (`iris-penumbra-backend`) builds a widget tree from an
-`IrisComponent` tree bottom-up: children are built first, then attached to their parent
+`Component` tree bottom-up: children are built first, then attached to their parent
 via Penumbra's `Box::Builder`. `<Slot>` never fit into this — its content isn't known
 until its callable is invoked, and per `docs/iris_core_spec.md` §2.5 the backend is
 never supposed to see a `Slot`-tagged node at all. Until now, `BuildWidgetTree` simply
@@ -33,7 +33,7 @@ built children. The static tree gets built completely, with `<Slot>` positions s
 absent.
 
 **Phase 2 (new):** `iris::ResolveSlots(Widget, Node, Mount)` (`include/Iris/
-SlotResolution.h`) walks the just-built widget tree and the original `IrisComponent`
+SlotResolution.h`) walks the just-built widget tree and the original `Component`
 tree in lockstep. Since `None` and `Slot` children both contributed zero widgets during
 Phase 1, walking the two trees together recovers the correspondence: for each ordinary
 static child, advance both cursors together (and recurse, in case a `<Slot>` sits

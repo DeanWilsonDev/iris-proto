@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Iris/IrisComponent.h"
+#include "Iris/Component.h"
 #include "Iris/SlotRuntime.h"
 
 #include "Umbra/IWidget.h"
@@ -36,8 +36,8 @@ Umbra::IrisPropDiff ComputePropDiff(const Iris::IrisProps& Old, const Iris::Iris
 //     unmount whatever `Widget` currently holds (if anything) and mount a fresh widget
 //     for the whole of `New` via `Mount` — there's no "old" to diff against, so no
 //     partial update is attempted.
-void ReconcileWidget(std::unique_ptr<Umbra::IWidget>& Widget, const Iris::IrisComponent& Old,
-                      const Iris::IrisComponent& New, const MountFn& Mount);
+void ReconcileWidget(std::unique_ptr<Umbra::IWidget>& Widget, const Iris::Component& Old,
+                      const Iris::Component& New, const MountFn& Mount);
 
 // Diffs a `<Slot>`'s list-returning case, or any widget's own children list: `OldList`/
 // `NewList` matched primarily by `Key` (docs/iris_stage3_decision_doc.md §3), any
@@ -56,8 +56,8 @@ void ReconcileWidget(std::unique_ptr<Umbra::IWidget>& Widget, const Iris::IrisCo
 // matters, which operates against a real widget's children and does compute the
 // minimum `RemoveChildAt`/`InsertChildAt` set.
 void ReconcileChildren(std::vector<std::unique_ptr<Umbra::IWidget>>& Widgets,
-                        const std::vector<Iris::IrisComponent>& OldList,
-                        const std::vector<Iris::IrisComponent>& NewList, const MountFn& Mount);
+                        const std::vector<Iris::Component>& OldList,
+                        const std::vector<Iris::Component>& NewList, const MountFn& Mount);
 
 // The live-widget counterpart to `ReconcileChildren`: `Parent`'s real children at
 // `[Base, Base + OldList.size())` correspond 1:1 to `OldList` (same precondition
@@ -78,7 +78,7 @@ void ReconcileChildren(std::vector<std::unique_ptr<Umbra::IWidget>>& Widgets,
 // operations needed, not merely a correct one — the gap `ReconcileList`'s
 // remove-everything/reinsert-everything approach left open.
 void ReconcileChildrenAt(Umbra::IWidget& Parent, std::size_t Base,
-                          const std::vector<Iris::IrisComponent>& OldList,
-                          const std::vector<Iris::IrisComponent>& NewList, const MountFn& Mount);
+                          const std::vector<Iris::Component>& OldList,
+                          const std::vector<Iris::Component>& NewList, const MountFn& Mount);
 
 } // namespace iris

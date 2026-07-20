@@ -95,10 +95,10 @@ DESCRIBE("Codegen", {
 
     IT("Slot with a single escape-hatch child", {
         const auto Result = Generate(R"(render {
-            <Slot>{[&]() -> IrisComponent { return nullptr; }}</Slot>
+            <Slot>{[&]() -> Component { return nullptr; }}</Slot>
         })");
         ASSERT_TRUE(Result.Errors.empty()); // <Slot> with exactly one escape-hatch child codegens with no errors
-        ASSERT_TRUE(Contains(Result.Source, "Iris::MakeSlotCallable([&]() -> IrisComponent { return nullptr; })"));
+        ASSERT_TRUE(Contains(Result.Source, "Iris::MakeSlotCallable([&]() -> Component { return nullptr; })"));
         // the lambda is passed to Iris::MakeSlotCallable verbatim
     });
 
@@ -129,7 +129,7 @@ DESCRIBE("Codegen", {
         // ComponentInstance instead of a stack local.
         const auto Result = Generate(R"(render { <HealthBar current={1} max={2} /> })");
         ASSERT_TRUE(Result.Errors.empty()); // codegens with no errors
-        ASSERT_TRUE(Contains(Result.Source, "iris::MountComponentInstance([&]() -> Iris::IrisComponent { return "
+        ASSERT_TRUE(Contains(Result.Source, "iris::MountComponentInstance([&]() -> Iris::Component { return "
                                             "HealthBar(HealthBarProps{"));
         // the invocation is wrapped in iris::MountComponentInstance
     });
@@ -151,7 +151,7 @@ DESCRIBE("Codegen", {
             <Frame class="party-screen">
                 <Button label="Details" onPress={[&]() { detailsOpen.set(true); }} />
                 <Slot>
-                    {[&]() -> IrisComponent {
+                    {[&]() -> Component {
                         if (!detailsOpen.get()) return nullptr;
                         return <Frame class="details-panel"></Frame>;
                     }}
@@ -168,12 +168,12 @@ DESCRIBE("Codegen", {
     IT("a !{ } JSX-transform escape hatch splices in the generated nested element", {
         // Same shape as the outer-level PartyScreen test above, but with `!{ }` instead
         // of `{ }` — this time the nested <Frame> JSX must actually be transformed into
-        // a real Iris::IrisComponent-constructing expression and spliced back into
+        // a real Iris::Component-constructing expression and spliced back into
         // the surrounding lambda text (docs/iris_next_steps.md, "Resolved: JSX inside
         // escape hatches"), not passed through verbatim.
         const auto Result = Generate(R"(render {
             <Slot>
-                !{[&]() -> IrisComponent {
+                !{[&]() -> Component {
                     if (!detailsOpen.get()) return nullptr;
                     return <Frame class="details-panel"></Frame>;
                 }}
@@ -182,10 +182,10 @@ DESCRIBE("Codegen", {
         ASSERT_TRUE(Result.Errors.empty()); // <Slot> with a !{ } JSX-transform escape hatch codegens with no errors
         ASSERT_TRUE(Contains(Result.Source, "Iris::MakeSlotCallable")); // the Slot is emitted with MakeSlotCallable
         ASSERT_FALSE(Contains(Result.Source, "<Frame")); // the raw <Frame ...> JSX text is gone from the generated source
-        ASSERT_TRUE(Contains(Result.Source, "Iris::IrisComponent{Iris::IrisElementTag::Frame"));
-        // the nested <Frame> was transformed into a real Iris::IrisComponent-constructing expression
+        ASSERT_TRUE(Contains(Result.Source, "Iris::Component{Iris::IrisElementTag::Frame"));
+        // the nested <Frame> was transformed into a real Iris::Component-constructing expression
         ASSERT_TRUE(Contains(Result.Source, "if (!detailsOpen.get()) return nullptr;") &&
-                    Contains(Result.Source, "return Iris::IrisComponent{Iris::IrisElementTag::Frame"));
+                    Contains(Result.Source, "return Iris::Component{Iris::IrisElementTag::Frame"));
         // the surrounding lambda text is preserved around the spliced-in expression
     });
 
@@ -198,12 +198,12 @@ DESCRIBE("Codegen", {
             <Frame class="party-screen">
                 <Button label="Details" onPress={[&]() { detailsOpen.set(true); }} />
                 <Slot>
-                    !{[&]() -> IrisComponent {
+                    !{[&]() -> Component {
                         if (!detailsOpen.get()) return nullptr;
                         return <Frame class="details-panel">
                             <Slot>
-                                !{[&]() -> std::vector<IrisComponent> {
-                                    std::vector<IrisComponent> rows;
+                                !{[&]() -> std::vector<Component> {
+                                    std::vector<Component> rows;
                                     for (auto& member : props.members) {
                                         rows.push_back(
                                             <Frame key={member.id} class="party-row">
@@ -227,7 +227,7 @@ DESCRIBE("Codegen", {
         // the innermost <HealthBar> component invocation was generated
 
         // Every <Frame> in the source (root, details-panel, and the per-row Frame
-        // inside the list) must have become a real IrisComponent-constructing
+        // inside the list) must have become a real Component-constructing
         // expression, not opaque text.
         std::size_t FrameExpressionCount = 0;
         std::size_t SearchPos = 0;
@@ -242,7 +242,7 @@ DESCRIBE("Codegen", {
     IT("a keyed primitive wraps the base expression and sets the key", {
         const auto Result = Generate(R"(render { <Frame key={member.id} class="party-row" /> })");
         ASSERT_TRUE(Result.Errors.empty()); // a keyed primitive codegens with no errors
-        ASSERT_TRUE(Contains(Result.Source, "[&]() { Iris::IrisComponent Node = Iris::IrisComponent{Iris::IrisElementTag::"
+        ASSERT_TRUE(Contains(Result.Source, "[&]() { Iris::Component Node = Iris::Component{Iris::IrisElementTag::"
                                             "Frame,"));
         // the base primitive expression is wrapped in the key-setting IIFE
         ASSERT_TRUE(Contains(Result.Source, "Node.Key = Iris::IrisPropValue(member.id); return Node; }()"));
@@ -252,13 +252,13 @@ DESCRIBE("Codegen", {
     IT("a keyed component invocation also wraps with the key", {
         const auto Result = Generate(R"(render { <HealthBar key={member.id} current={1} max={2} /> })");
         ASSERT_TRUE(Result.Errors.empty()); // a keyed component invocation codegens with no errors
-        ASSERT_TRUE(Contains(Result.Source, "[&]() { Iris::IrisComponent Node = iris::MountComponentInstance([&]() -> "
-                                            "Iris::IrisComponent { return HealthBar(HealthBarProps{"));
+        ASSERT_TRUE(Contains(Result.Source, "[&]() { Iris::Component Node = iris::MountComponentInstance([&]() -> "
+                                            "Iris::Component { return HealthBar(HealthBarProps{"));
         // the base component-invocation call (itself wrapped in iris::MountComponentInstance,
         // docs/iris_signal_lifetime_decision.md) is wrapped in the key-setting IIFE the same way
         // a primitive's is — key handling is uniform across every element kind
         ASSERT_TRUE(Contains(Result.Source, "Node.Key = Iris::IrisPropValue(member.id); return Node; }()"));
-        // and the key is set on the invocation's returned IrisComponent afterward
+        // and the key is set on the invocation's returned Component afterward
     });
 
     IT("an unkeyed element gets no IIFE wrapping", {

@@ -14,7 +14,7 @@ ______________________________________________________________________
 
 | # | Question | Resolution |
 |---|---|---|
-| 1 | List/loop rendering mechanism | `std::vector<IrisComponent>` escape hatch. See §1. |
+| 1 | List/loop rendering mechanism | `std::vector<Component>` escape hatch. See §1. |
 | 2 | `render {` detection robustness | `IHostLanguageTokenizer` abstract interface. See §2. |
 | 3 | Brace balancing robustness | Resolved by the same tokenizer as question 2. Collapse with §2 in the doc. |
 | 4 | Error source mapping | Day one — `Token` carries `SourceLocation`, preprocessor emits `#line` directives. See §4. |
@@ -25,19 +25,19 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 1. List/loop rendering — `std::vector<IrisComponent>`
+## 1. List/loop rendering — `std::vector<Component>`
 
 **Decision:** A `{ }` escape hatch that needs to produce multiple sibling components
-returns `std::vector<IrisComponent>`. `Frame`'s children API gains an overload accepting
-`std::vector<IrisComponent>`.
+returns `std::vector<Component>`. `Frame`'s children API gains an overload accepting
+`std::vector<Component>`.
 
 **Example:**
 
 ```cpp
 render {
     <Frame class="item-list">
-        { [&]() -> std::vector<IrisComponent> {
-            std::vector<IrisComponent> result;
+        { [&]() -> std::vector<Component> {
+            std::vector<Component> result;
             for (auto& item : props.items) {
                 result.push_back(<Item key={item.id} label={item.name} />);
             }
@@ -57,8 +57,8 @@ will express this as a clean `props.items.map()` call — the Iris mechanism is 
 the host language is just less verbose. Baking `iris::each()` into the runtime would be
 a C++23 polyfill that Nyx makes redundant, which is the wrong kind of coupling.
 
-**Implication for the runtime:** `IrisComponent` children API must support both a single
-child and a `std::vector<IrisComponent>`. This affects the runtime library design, not
+**Implication for the runtime:** `Component` children API must support both a single
+child and a `std::vector<Component>`. This affects the runtime library design, not
 the preprocessor.
 
 ______________________________________________________________________
@@ -172,7 +172,7 @@ without adding real safety.
 
 **On missing `key` in loops (question 6):** The preprocessor cannot see inside escape
 hatches, so it cannot statically detect that a `{ }` block returns a
-`std::vector<IrisComponent>` and therefore that its children should carry `key`. This
+`std::vector<Component>` and therefore that its children should carry `key`. This
 enforcement is architecturally impossible at compile time under the preprocessor model.
 
 **Runtime behaviour:** The reconciler warns when two elements land at the same tree
@@ -218,7 +218,7 @@ render {
         <Button label="Settings" onPress={[&]() { settingsOpen.set(true); }} />
 
         /* Conditionally render the settings page */
-        { [&]() -> IrisComponent {
+        { [&]() -> Component {
             if (settingsOpen.get()) return <SettingsPage />;
             return nullptr;
         }() }

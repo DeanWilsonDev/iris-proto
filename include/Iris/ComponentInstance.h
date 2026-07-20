@@ -40,13 +40,13 @@ public:
 // capture semantics, no coroutines.
 //
 // Instances are never explicitly "freed on unmount" — there's no separate hook for
-// that anywhere. `IrisComponent::Instance` (a `shared_ptr<ComponentInstance>`, set by
+// that anywhere. `Component::Instance` (a `shared_ptr<ComponentInstance>`, set by
 // `MountComponentInstance` below) is what keeps one alive, via perfectly ordinary
-// `shared_ptr` refcounting through wherever that `IrisComponent` value is retained —
+// `shared_ptr` refcounting through wherever that `Component` value is retained —
 // chiefly `SlotState::PreviousSingle_`/`PreviousList_`, which already keep the
 // last-rendered tree around for diffing. When a component leaves the tree (a
 // different tag wins at its position, or its parent scope is torn down), the
-// `IrisComponent` value holding its `Instance` stops being retained and this object —
+// `Component` value holding its `Instance` stops being retained and this object —
 // and every `Signal` it owns — is destroyed automatically, exactly when appropriate.
 class ComponentInstance {
 public:
@@ -97,13 +97,13 @@ public:
 // Wraps a component invocation — what `Codegen.h` emits for every `<Name .../>` — so
 // any `IRIS_SIGNAL` declarations inside the component function `Fn` calls register
 // against a fresh `ComponentInstance`, then ties that instance's lifetime to the
-// returned `Iris::IrisComponent` (`IrisComponent::Instance`) rather than to `Fn`'s own
-// stack frame. `Fn` must return `Iris::IrisComponent` — the same contract every
+// returned `Iris::Component` (`Component::Instance`) rather than to `Fn`'s own
+// stack frame. `Fn` must return `Iris::Component` — the same contract every
 // component function already has.
 template <typename Callable>
-Iris::IrisComponent MountComponentInstance(Callable&& Fn) {
+Iris::Component MountComponentInstance(Callable&& Fn) {
     auto Instance = std::make_shared<ComponentInstance>();
-    Iris::IrisComponent Result = [&]() -> Iris::IrisComponent {
+    Iris::Component Result = [&]() -> Iris::Component {
         Detail::ScopedComponentInstance Guard(Instance.get());
         return Fn();
     }();
@@ -116,7 +116,7 @@ Iris::IrisComponent MountComponentInstance(Callable&& Fn) {
 // `MountComponentInstance` above — a distinct name only so an app's own `main()` has an
 // obvious, documented thing to call rather than reaching for internal machinery.
 template <typename Callable>
-Iris::IrisComponent Mount(Callable&& RootComponentFn) {
+Iris::Component Mount(Callable&& RootComponentFn) {
     return MountComponentInstance(std::forward<Callable>(RootComponentFn));
 }
 

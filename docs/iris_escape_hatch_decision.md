@@ -21,7 +21,7 @@ conditional and list rendering — is written as JSX *inside* that escape hatch:
 
 ```cpp
 <Slot>
-    {[&]() -> IrisComponent {
+    {[&]() -> Component {
         if (settingsOpen.get()) {
             return <SettingsPage onClose={[&]() { settingsOpen.set(false); }} />;
         }
@@ -43,7 +43,7 @@ contain JSX — recursively transform it." `{ }` is unchanged and stays fully op
 - `{ }` — regular escape hatch. Opaque, verbatim, unchanged from before this decision.
 - `!{ }` — JSX-transform escape hatch. The parser scans its body for `<Tag>` runs and
   recursively parses each one back into the ordinary element-tree grammar (§1.4); codegen
-  then transforms each parsed run into an `Iris::IrisComponent`-constructing expression and
+  then transforms each parsed run into an `Iris::Component`-constructing expression and
   splices it back into the surrounding verbatim text. Closes on the matching `}`. Valid
   anywhere a regular `{ }` is valid — prop values, child positions, lambda bodies.
 - Nesting composes normally: once inside a `!{ }`, a nested `{ }` (e.g. an event-handler
@@ -74,9 +74,9 @@ written) and `Element` holding a fully parsed nested `ElementNode`.
 
 ### Disambiguating a JSX element start from a template argument list
 
-`std::vector<IrisComponent>` — a real pattern in the spec's own `PartyScreen` example,
-where `<Slot>`'s list-rendering lambda returns `std::vector<IrisComponent>` — has exactly
-the same `< Identifier >` shape as an attribute-less opening tag like `<IrisComponent>`.
+`std::vector<Component>` — a real pattern in the spec's own `PartyScreen` example,
+where `<Slot>`'s list-rendering lambda returns `std::vector<Component>` — has exactly
+the same `< Identifier >` shape as an attribute-less opening tag like `<Component>`.
 Naively treating every whitespace-agnostic `<Identifier` as a JSX start misparses the
 template argument list as an element, which then fails to find its (nonexistent) matching
 close tag.
@@ -84,7 +84,7 @@ close tag.
 The fix: require whitespace immediately before the `<` for it to count as a JSX start.
 Every JSX use in the spec is written with a space or newline before it (`return <Frame
 ...`, `push_back(\n    <Frame ...`), while a template argument list never has one
-(`vector<IrisComponent>`, `map<int, T>`). This is a heuristic, not a proof — a
+(`vector<Component>`, `map<int, T>`). This is a heuristic, not a proof — a
 whitespace-free JSX element (`push_back(<Frame/>)`) would be misread as a template — but it
 matches every example in the spec and codebase, and is cheap to revisit if a real case
 needs it. Covered by `TestJsxTransformEscapeHatchDoesNotMisreadTemplateAnglesAsJsx`
@@ -106,16 +106,16 @@ prop values, component-invocation prop values) now goes through this method inst
 
 `tests/CodegenTests.cpp`'s `TestPartyScreenFullyCodegensWithJsxTransformEscapeHatches`
 covers the full two-level §9 example (both `<Slot>`s using `!{ }`, including the
-`std::vector<IrisComponent>` return type on the inner one) and asserts no raw `<Tag>` text
+`std::vector<Component>` return type on the inner one) and asserts no raw `<Tag>` text
 survives anywhere in the output. Beyond the string-shape assertions the test suite already
 does for every other codegen case, this example's generated output was manually verified
-to actually compile as real C++23 against a stub `Button`/`HealthBar`/`IrisComponent`
+to actually compile as real C++23 against a stub `Button`/`HealthBar`/`Component`
 harness — the first time a `<Slot>`-using component's full generated `.cpp` has been
 confirmed compilable, not just structurally plausible. (That manual compile surfaced one
-separate, pre-existing gap *not* part of this decision — `IrisComponent` had no `nullptr_t`
-constructor, so the spec's own `return nullptr;` inside an `-> IrisComponent` lambda didn't
+separate, pre-existing gap *not* part of this decision — `Component` had no `nullptr_t`
+constructor, so the spec's own `return nullptr;` inside an `-> Component` lambda didn't
 compile as written — closed separately, see `docs/iris_core_spec.md` §8 and
-`tests/IrisComponentTests.cpp`. Re-running the same manual compile after that fix now
+`tests/ComponentTests.cpp`. Re-running the same manual compile after that fix now
 succeeds with no workarounds.)
 
 ## What is now unblocked
@@ -126,7 +126,7 @@ Per `docs/iris_next_steps.md`'s suggested order:
 2. ~~Implement `!{ }` in `RenderBlockParser`~~ — **done**, this document
 3. Semantic validation pass in `iris`
 4. Stage 2 walker in `iris-penumbra-backend`, consuming codegen's
-   `Iris::IrisComponent`-constructing output
+   `Iris::Component`-constructing output
 5. Stage 3 reactive runtime
 
 ## What remains deliberately deferred

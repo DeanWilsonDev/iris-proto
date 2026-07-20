@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Iris/IrisComponent.h"
+#include "Iris/Component.h"
 #include "Iris/SlotRuntime.h"
 
 #include "Umbra/IWidget.h"
@@ -18,7 +18,7 @@ namespace iris {
 // (`SlotState::AttachToGroup`), and performs its initial mount, splicing its own
 // rendered content into `Widget`'s real children at exactly the position that `<Slot>`
 // currently occupies among its siblings. Both callable shapes are resolved here — a
-// single-`IrisComponent`-returning `<Slot>` contributes 0 or 1 real widgets, a
+// single-`Component`-returning `<Slot>` contributes 0 or 1 real widgets, a
 // list-returning one contributes 0..N; either way, `SlotSiblingGroup::AbsoluteIndexOf`
 // recomputes each slot's absolute position fresh on every reconcile by summing every
 // earlier sibling's *current* real child count, so later siblings shift correctly as an
@@ -47,7 +47,7 @@ namespace iris {
 // Returns every `SlotState` created, in tree order. The caller owns them for exactly as
 // long as the tree they were resolved against stays mounted — destroying one detaches
 // and drops whatever it last rendered (`SlotState`'s own destructor).
-std::vector<std::unique_ptr<SlotState>> ResolveSlots(Umbra::IWidget& Widget, const Iris::IrisComponent& Node,
+std::vector<std::unique_ptr<SlotState>> ResolveSlots(Umbra::IWidget& Widget, const Iris::Component& Node,
                                                        MountFn Mount);
 
 } // namespace iris

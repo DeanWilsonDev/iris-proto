@@ -48,7 +48,7 @@ DESCRIBE("ImportResolver", {
 import Button
 import SettingsPage
 
-IrisComponent StartMenu() {
+Component StartMenu() {
     render { <Button /> }
 }
 )",
@@ -68,7 +68,7 @@ const char* Note = "import Button";
     });
 
     IT("ScanImports with no imports is empty", {
-        const auto Imports = Iris::ScanImports("IrisComponent Foo() { render { <Frame /> } }", "test.iris");
+        const auto Imports = Iris::ScanImports("Component Foo() { render { <Frame /> } }", "test.iris");
         ASSERT_TRUE(Imports.empty()); // a file with no import statements yields no results
     });
 

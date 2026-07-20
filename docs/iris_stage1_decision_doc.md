@@ -170,7 +170,7 @@ The answer turned out to be: almost everything except the element tree itself.
 ### What Iris owns
 
 - `render { }` blocks — the Iris preprocessor finds these and rewrites the element tree
-  inside them into C++23 `IrisComponent` construction calls
+  inside them into C++23 `Component` construction calls
 - PascalCase element tags inside render blocks — primitives or imported components
 - `{ }` escape hatches inside render blocks — balanced brace match, contents emitted
   verbatim as C++23
@@ -179,7 +179,7 @@ The answer turned out to be: almost everything except the element tree itself.
 
 ### What the host language (C++23) owns
 
-- Component declaration — a component is a C++23 function returning `IrisComponent`
+- Component declaration — a component is a C++23 function returning `Component`
 - Props — C++23 structs with standard member types and default initialisers
 - State — C++23 member variables, wrapped in `iris::Signal<T>` for reconciler notification
 - Event handlers — C++23 lambdas passed as props
@@ -197,7 +197,7 @@ lambdas.
 
 ```cpp
 // What you write in a .iris file
-IrisComponent HealthBar(HealthBarProps props) {
+Component HealthBar(HealthBarProps props) {
     render {
         <Frame class="health-bar-container">
             <Inline class="label">{props.label}</Inline>
@@ -206,23 +206,23 @@ IrisComponent HealthBar(HealthBarProps props) {
 }
 
 // What the Iris preprocessor emits as .cpp
-IrisComponent HealthBar(HealthBarProps props) {
+Component HealthBar(HealthBarProps props) {
     return Frame("health-bar-container")
         .child(Inline("label").child(props.label));
 }
 ```
 
 Control flow, conditional rendering, and list rendering are handled by the host language
-via expression blocks `{ }` that return `IrisComponent`:
+via expression blocks `{ }` that return `Component`:
 
 ```cpp
-IrisComponent StartMenu() {
+Component StartMenu() {
     iris::Signal<bool> settingsOpen = false;
 
     render {
         <Frame class="start-menu">
             <Button label="Settings" onPress={[&]() { settingsOpen.set(true); }} />
-            { [&]() -> IrisComponent {
+            { [&]() -> Component {
                 if (settingsOpen.get()) {
                     return <SettingsPage onClose={[&]() { settingsOpen.set(false); }} />;
                 }
@@ -283,7 +283,7 @@ changed. This is preferable to re-diffing every component every frame.
 **Penumbra note:** Penumbra is retained mode and re-renders every frame regardless.
 For the Penumbra backend, signals do not trigger a visual re-render — they trigger
 reconciliation. When a signal fires, the Iris runtime re-runs the component's render
-function, diffs the new `IrisComponent` tree against the previous one, and applies
+function, diffs the new `Component` tree against the previous one, and applies
 minimal mutations to the live Penumbra widget tree. Penumbra then reflects those
 mutations in its next frame automatically.
 

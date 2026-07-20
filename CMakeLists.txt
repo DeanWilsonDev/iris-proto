@@ -47,7 +47,7 @@ add_subdirectory(libs/cimmerian)
 # Iris preprocessor/runtime — static library. Nothing in here references
 # demo/ or tests/, and nothing in here references Penumbra or any other
 # backend — Iris's core is backend-agnostic by design (docs/iris_core_spec.md
-# §2.5). The Penumbra backend (the IrisComponent-IR-to-widget-tree walker) is
+# §2.5). The Penumbra backend (the Component-IR-to-widget-tree walker) is
 # a separate repo, iris-penumbra-backend, which depends on this repo and on
 # penumbra-proto — never the other way around.
 # ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ add_executable(test_iris
     tests/IrisConfigTests.cpp
     tests/ImportResolverTests.cpp
     tests/CodegenTests.cpp
-    tests/IrisComponentTests.cpp
+    tests/ComponentTests.cpp
     tests/SemanticValidatorTests.cpp
     tests/DriverTests.cpp
     tests/ReconcilerTests.cpp

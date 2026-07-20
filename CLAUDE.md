@@ -46,7 +46,7 @@ some other call's own parens) splits into extra macro arguments and fails to com
 "macro 'IT' passed N arguments" error. Fix by wrapping the literal in an extra pair of parens
 (`SomeType({a, b})`) or moving it into a small helper function outside the `DESCRIBE` block —
 several existing tests do exactly this (e.g. `tests/ImportResolverTests.cpp`'s `OneImport`/
-`SearchPaths` helpers, `tests/IrisComponentTests.cpp`'s parenthesized constructor call).
+`SearchPaths` helpers, `tests/ComponentTests.cpp`'s parenthesized constructor call).
 
 Previously split across a hand-rolled `iris_tests` executable (predating Cimmerian being
 vendored — each `TestXxx()` called a hand-rolled `Expect(condition, description)`, no
@@ -75,7 +75,7 @@ intended Cimmerian as the long-term tool).
   vendored `penumbra-proto` as a git submodule directly — that was corrected: a project meant
   to stay backend-agnostic shouldn't have to pull in one specific backend's whole build just to
   compile its own preprocessor. The Stage 2 "Penumbra backend" — the code that walks
-  `IrisComponent` IR and calls Penumbra's fluent `Builder` API (`Box::Builder`,
+  `Component` IR and calls Penumbra's fluent `Builder` API (`Box::Builder`,
   `Label::Builder`, etc.) — lives in a separate sibling repo, `iris-penumbra-backend`
   (`../iris-penumbra-backend`), which vendors both this repo and `penumbra-proto` as
   submodules. Neither Iris nor Penumbra depends on the other, or on that bridge repo; real
@@ -95,7 +95,7 @@ intended Cimmerian as the long-term tool).
 - **`.iris.json`** (project root) declares the compile target (`"target": "penumbra"`) and
   module `searchPaths` for `import` resolution. This is project-level, not per-file — a
   project is either a Penumbra tool or an Umbra Engine game UI, never both.
-- **`IrisComponent`** (`docs/iris_core_spec.md` §2.5) is the backend-agnostic IR that sits
+- **`Component`** (`docs/iris_core_spec.md` §2.5) is the backend-agnostic IR that sits
   between the parsed component tree and any backend's codegen. It carries no Penumbra (or any
   other backend) type anywhere in this repo — a backend-mapping pass in the relevant bridge
   repo (`iris-penumbra-backend` for Penumbra) is what turns it into real widgets. The runtime's
@@ -120,15 +120,15 @@ matching what `docs/iris_core_spec.md` §10 / `docs/iris_stage3_decision_doc.md`
 this was the last known Penumbra-side blocker for Stage 3 lifecycle work.
 
 Stage 2 (the Penumbra backend itself: `IrisPenumbraBackend::BuildWidgetTree()`, walking a single
-`IrisComponent` node and building the equivalent real Penumbra widget tree via each Core
+`Component` node and building the equivalent real Penumbra widget tree via each Core
 primitive's own fluent `Builder`) is implemented in `iris-penumbra-backend`, not here — this
-repo only ever produces the backend-agnostic `IrisComponent` IR. It's a one-shot static build —
+repo only ever produces the backend-agnostic `Component` IR. It's a one-shot static build —
 `<Slot>` contributes nothing during it (same as `IrisElementTag::None`); `iris::ResolveSlots`
 (below) splices real content in afterward.
 
 Stage 3's core engine (`iris::Signal<T>`, ambient dependency tracking, batching, `iris::Tick()`,
 the reconciler) is implemented here — see `docs/iris_stage3_implementation_decision.md`. `key`
-now does reach `IrisComponent` (`IrisComponent::Key`, set via a small IIFE `Codegen.h` wraps
+now does reach `Component` (`Component::Key`, set via a small IIFE `Codegen.h` wraps
 around any keyed element's base expression) — the reconciler's `Umbra::IWidget`-based
 `key`→live-widget matching is real and tested. A real Penumbra `IWidget` adapter is also
 implemented (in `iris-penumbra-backend`) and tested against actual `Penumbra::Widgets::Box`/
@@ -146,7 +146,7 @@ heap-allocated `iris::ComponentInstance` tied to that component's own mounted li
 **`<Slot>` is now wired into the Stage 2 walker, for both callable shapes**
 (`docs/iris_slot_stage2_wiring_decision.md`, `docs/iris_slot_list_wiring_decision.md`):
 `iris::ResolveSlots()` (`include/Iris/SlotResolution.h`) walks a just-built static widget tree
-and its source `IrisComponent` tree in lockstep, constructs a `SlotState` for each `<Slot>`
+and its source `Component` tree in lockstep, constructs a `SlotState` for each `<Slot>`
 found, and attaches it to its exact position (`SlotState::AttachToGroup`) — every subsequent
 `Reconcile()`, including ones `iris::Tick()` triggers automatically, updates that real position
 in place. A `SlotSiblingGroup` shared by every `<Slot>` sibling under the same static parent

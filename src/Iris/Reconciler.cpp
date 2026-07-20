@@ -83,8 +83,8 @@ struct ListMatch {
     std::vector<int>  NewToOld; // -1 == no match, needs a fresh mount
 };
 
-ListMatch MatchLists(const std::vector<Iris::IrisComponent>& OldList,
-                      const std::vector<Iris::IrisComponent>& NewList) {
+ListMatch MatchLists(const std::vector<Iris::Component>& OldList,
+                      const std::vector<Iris::Component>& NewList) {
     ListMatch Match;
     Match.OldMatched.assign(OldList.size(), false);
     Match.NewToOld.assign(NewList.size(), -1);
@@ -171,8 +171,8 @@ std::vector<bool> ComputeKeepInPlace(const std::vector<int>& NewToOld) {
 }
 
 std::vector<std::unique_ptr<Umbra::IWidget>> ReconcileList(std::vector<std::unique_ptr<Umbra::IWidget>> OldWidgets,
-                                                             const std::vector<Iris::IrisComponent>& OldList,
-                                                             const std::vector<Iris::IrisComponent>& NewList,
+                                                             const std::vector<Iris::Component>& OldList,
+                                                             const std::vector<Iris::Component>& NewList,
                                                              const MountFn& Mount) {
     const ListMatch Match = MatchLists(OldList, NewList);
 
@@ -187,7 +187,7 @@ std::vector<std::unique_ptr<Umbra::IWidget>> ReconcileList(std::vector<std::uniq
             Result.push_back(std::move(Reused));
         } else {
             std::unique_ptr<Umbra::IWidget> Fresh;
-            ReconcileWidget(Fresh, Iris::IrisComponent(nullptr), NewList[NewIndex], Mount);
+            ReconcileWidget(Fresh, Iris::Component(nullptr), NewList[NewIndex], Mount);
             Result.push_back(std::move(Fresh));
         }
     }
@@ -199,13 +199,13 @@ std::vector<std::unique_ptr<Umbra::IWidget>> ReconcileList(std::vector<std::uniq
 // A `Slot`-tagged child contributes zero real widgets — same convention `BuildWidgetTree`/
 // `ResolveSlotsRecursive` already apply to the static tree (docs/iris_slot_stage2_wiring_
 // decision.md) — so it must never reach `ReconcileList`'s own tag+key matching, which assumes
-// 1:1 alignment between an `IrisComponent` list and its matched widget's real children. A
+// 1:1 alignment between an `Component` list and its matched widget's real children. A
 // nested `<Slot>` found this way gets its own `SlotState` entirely separately
 // (docs/iris_nested_slot_discovery_decision.md's `SlotState::NestedSlots_`), never through
 // this list-diffing path.
-std::vector<Iris::IrisComponent> FilterOrdinary(const std::vector<Iris::IrisComponent>& Children) {
-    std::vector<Iris::IrisComponent> Ordinary;
-    for (const Iris::IrisComponent& Child : Children) {
+std::vector<Iris::Component> FilterOrdinary(const std::vector<Iris::Component>& Children) {
+    std::vector<Iris::Component> Ordinary;
+    for (const Iris::Component& Child : Children) {
         if (Child.Tag != Iris::IrisElementTag::Slot) {
             Ordinary.push_back(Child);
         }
@@ -219,7 +219,7 @@ std::vector<Iris::IrisComponent> FilterOrdinary(const std::vector<Iris::IrisComp
 // which is exactly why callers that already know they have a match (a kept-in-place
 // LIS entry, or a matched-but-moved entry about to be reinserted) can call this
 // through a non-owning reference instead of `ReconcileWidget`'s `unique_ptr&`.
-void ReconcileMatchedInPlace(Umbra::IWidget& Widget, const Iris::IrisComponent& Old, const Iris::IrisComponent& New,
+void ReconcileMatchedInPlace(Umbra::IWidget& Widget, const Iris::Component& Old, const Iris::Component& New,
                              const MountFn& Mount) {
     Widget.ApplyPropDiff(ComputePropDiff(Old.Props, New.Props));
     ReconcileChildrenAt(Widget, 0, FilterOrdinary(Old.Children), FilterOrdinary(New.Children), Mount);
@@ -242,8 +242,8 @@ Umbra::IrisPropDiff ComputePropDiff(const Iris::IrisProps& Old, const Iris::Iris
     return Diff;
 }
 
-void ReconcileWidget(std::unique_ptr<Umbra::IWidget>& Widget, const Iris::IrisComponent& Old,
-                      const Iris::IrisComponent& New, const MountFn& Mount) {
+void ReconcileWidget(std::unique_ptr<Umbra::IWidget>& Widget, const Iris::Component& Old,
+                      const Iris::Component& New, const MountFn& Mount) {
     if (New.Tag == Iris::IrisElementTag::None) {
         Widget.reset();
         return;
@@ -259,14 +259,14 @@ void ReconcileWidget(std::unique_ptr<Umbra::IWidget>& Widget, const Iris::IrisCo
 }
 
 void ReconcileChildren(std::vector<std::unique_ptr<Umbra::IWidget>>& Widgets,
-                        const std::vector<Iris::IrisComponent>& OldList,
-                        const std::vector<Iris::IrisComponent>& NewList, const MountFn& Mount) {
+                        const std::vector<Iris::Component>& OldList,
+                        const std::vector<Iris::Component>& NewList, const MountFn& Mount) {
     Widgets = ReconcileList(std::move(Widgets), OldList, NewList, Mount);
 }
 
 void ReconcileChildrenAt(Umbra::IWidget& Parent, std::size_t Base,
-                          const std::vector<Iris::IrisComponent>& OldList,
-                          const std::vector<Iris::IrisComponent>& NewList, const MountFn& Mount) {
+                          const std::vector<Iris::Component>& OldList,
+                          const std::vector<Iris::Component>& NewList, const MountFn& Mount) {
     const ListMatch         Match = MatchLists(OldList, NewList);
     const std::vector<bool> Keep  = ComputeKeepInPlace(Match.NewToOld);
 

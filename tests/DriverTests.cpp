@@ -56,16 +56,16 @@ Iris::IrisConfig PenumbraConfig() {
 DESCRIBE("Driver", {
     IT("a simple render block compiles", {
         const Iris::DriverResult Result =
-            Iris::CompileFile("IrisComponent Foo() {\n    render { <Frame class=\"a\" /> }\n}\n", "test.iris",
+            Iris::CompileFile("Component Foo() {\n    render { <Frame class=\"a\" /> }\n}\n", "test.iris",
                                PenumbraConfig(), "/nonexistent");
         ASSERT_TRUE(Result.Diagnostics.empty()); // a plain Core-primitive render block compiles with no diagnostics
-        ASSERT_TRUE(Contains(Result.Output, "return Iris::IrisComponent{Iris::IrisElementTag::Frame"));
+        ASSERT_TRUE(Contains(Result.Output, "return Iris::Component{Iris::IrisElementTag::Frame"));
         // the render{ } block becomes a return statement constructing the component
         ASSERT_FALSE(Contains(Result.Output, "render {")); // the literal render{ } text is gone from the output
     });
 
     IT("the output has #line directives", {
-        const Iris::DriverResult Result = Iris::CompileFile("IrisComponent Foo() {\n    render { <Frame /> }\n}\n",
+        const Iris::DriverResult Result = Iris::CompileFile("Component Foo() {\n    render { <Frame /> }\n}\n",
                                                               "test.iris", PenumbraConfig(), "/nonexistent");
         ASSERT_TRUE(Contains(Result.Output, "#line 1 \"test.iris\"")); // output starts with a #line directive for the file
         ASSERT_TRUE(Contains(Result.Output, "#line 2 \"test.iris\""));
@@ -77,7 +77,7 @@ DESCRIBE("Driver", {
         Project.WriteComponent("Button");
 
         const Iris::DriverResult Result =
-            Iris::CompileFile("import Button\nIrisComponent Foo() {\n    render { <Button label=\"x\" /> }\n}\n",
+            Iris::CompileFile("import Button\nComponent Foo() {\n    render { <Button label=\"x\" /> }\n}\n",
                                "test.iris", PenumbraConfig(), Project.RootPath());
         ASSERT_TRUE(Result.Diagnostics.empty()); // a render block using an imported component compiles with no diagnostics
         ASSERT_FALSE(Contains(Result.Output, "import Button"));
@@ -92,7 +92,7 @@ DESCRIBE("Driver", {
 
     IT("an unresolved import is a diagnostic and blocks output", {
         const Iris::DriverResult Result =
-            Iris::CompileFile("import NoSuchComponent\nIrisComponent Foo() { render { <Frame/> } }\n", "test.iris",
+            Iris::CompileFile("import NoSuchComponent\nComponent Foo() { render { <Frame/> } }\n", "test.iris",
                                PenumbraConfig(), "/nonexistent");
         ASSERT_FALSE(Result.Diagnostics.empty()); // an unresolvable import is a diagnostic
         ASSERT_TRUE(Result.Output.empty());       // no output is produced when there are diagnostics
@@ -102,7 +102,7 @@ DESCRIBE("Driver", {
 
     IT("an unimported component reference is a diagnostic", {
         const Iris::DriverResult Result = Iris::CompileFile(
-            "IrisComponent Foo() { render { <HealthBar current={1} max={2} /> } }\n", "test.iris", PenumbraConfig(),
+            "Component Foo() { render { <HealthBar current={1} max={2} /> } }\n", "test.iris", PenumbraConfig(),
             "/nonexistent");
         ASSERT_FALSE(Result.Diagnostics.empty()); // an unimported, non-Core-primitive tag is a diagnostic
         ASSERT_TRUE(Result.Output.empty());       // no output is produced when there are diagnostics
@@ -111,7 +111,7 @@ DESCRIBE("Driver", {
     });
 
     IT("a parse error is a diagnostic and blocks output", {
-        const Iris::DriverResult Result = Iris::CompileFile("IrisComponent Foo() { render { <A/> <B/> } }\n", "test.iris",
+        const Iris::DriverResult Result = Iris::CompileFile("Component Foo() { render { <A/> <B/> } }\n", "test.iris",
                                                               PenumbraConfig(), "/nonexistent");
         ASSERT_FALSE(Result.Diagnostics.empty()); // a multi-root render block is a diagnostic
         ASSERT_TRUE(Result.Output.empty());       // no output is produced when there are diagnostics
@@ -128,19 +128,19 @@ DESCRIBE("Driver", {
             R"(import HealthBar
 import Button
 
-IrisComponent PartyScreen(PartyScreenProps props) {
+Component PartyScreen(PartyScreenProps props) {
     iris::Signal<bool> detailsOpen = false;
 
     render {
         <Frame class="party-screen">
             <Button label="Details" onPress={[&]() { detailsOpen.set(true); }} />
             <Slot>
-                !{[&]() -> IrisComponent {
+                !{[&]() -> Component {
                     if (!detailsOpen.get()) return nullptr;
                     return <Frame class="details-panel">
                         <Slot>
-                            !{[&]() -> std::vector<IrisComponent> {
-                                std::vector<IrisComponent> rows;
+                            !{[&]() -> std::vector<Component> {
+                                std::vector<Component> rows;
                                 for (auto& member : props.members) {
                                     rows.push_back(
                                         <Frame key={member.id} class="party-row">

@@ -14,7 +14,7 @@ closes that gap.
 ## Two separate problems, easy to conflate
 
 1. **Widget-tree correctness.** `Reconciler.cpp`'s `ReconcileWidget`/`ReconcileList` assume a
-   1:1 index correspondence between an `IrisComponent`'s `Children` and its matched widget's
+   1:1 index correspondence between an `Component`'s `Children` and its matched widget's
    real children. That's true for a tree with no `<Slot>` children (today's precondition) but
    false the moment one appears: a `<Slot>` child contributes **zero** real widgets (same
    convention as `None`, and as `BuildWidgetTree`/`ResolveSlotsRecursive` already implement for

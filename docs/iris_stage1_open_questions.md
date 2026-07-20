@@ -30,7 +30,7 @@ be the same underlying question):
 
 | # | Question | Resolution |
 | --- | --- | --- |
-| 1 | List/loop rendering mechanism | A `{ }` escape hatch may return `std::vector<IrisComponent>`; container primitives' children API gains a matching overload. See `docs/iris_core_spec.md` §1.5. |
+| 1 | List/loop rendering mechanism | A `{ }` escape hatch may return `std::vector<Component>`; container primitives' children API gains a matching overload. See `docs/iris_core_spec.md` §1.5. |
 | 2/3 | `render {` detection robustness / brace balancing | Both solved by one `IHostLanguageTokenizer` abstraction (string/char/comment-aware), pluggable per file extension (`CppTokenizer` for `.iris`, future `NyxTokenizer` for `.irisx`). See §1.3. |
 | 4 | Error source mapping | Ships day one. Every `Token` carries a `SourceLocation`; the preprocessor emits `#line` directives into generated output so host-compiler errors point at the original `.iris` file. See §6. |
 | 5/6 | `key` struct-field enforcement / missing `key` in loops | Dropped entirely as compile-time checks — `key` uniqueness/presence is a runtime reconciler warning only, the same posture React takes. See §2.3. |

@@ -7,7 +7,7 @@ namespace iris {
 
 namespace {
 
-void ResolveSlotsRecursive(Umbra::IWidget& Widget, const Iris::IrisComponent& Node, const MountFn& Mount,
+void ResolveSlotsRecursive(Umbra::IWidget& Widget, const Iris::Component& Node, const MountFn& Mount,
                             std::vector<std::unique_ptr<SlotState>>& Out) {
     // One group per parent's children list, shared by every <Slot> sibling found here —
     // so a later sibling's absolute index can account for an earlier sibling's live,
@@ -21,7 +21,7 @@ void ResolveSlotsRecursive(Umbra::IWidget& Widget, const Iris::IrisComponent& No
     // (for a <Slot> child) its fixed StaticPrefixCount within Group.
     std::size_t RealIndex = 0;
 
-    for (const Iris::IrisComponent& Child : Node.Children) {
+    for (const Iris::Component& Child : Node.Children) {
         if (Child.Tag == Iris::IrisElementTag::None) {
             continue; // contributes nothing, both in the original static build and here
         }
@@ -46,7 +46,7 @@ void ResolveSlotsRecursive(Umbra::IWidget& Widget, const Iris::IrisComponent& No
 
 } // namespace
 
-std::vector<std::unique_ptr<SlotState>> ResolveSlots(Umbra::IWidget& Widget, const Iris::IrisComponent& Node,
+std::vector<std::unique_ptr<SlotState>> ResolveSlots(Umbra::IWidget& Widget, const Iris::Component& Node,
                                                        MountFn Mount) {
     std::vector<std::unique_ptr<SlotState>> Result;
     ResolveSlotsRecursive(Widget, Node, Mount, Result);

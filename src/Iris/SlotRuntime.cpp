@@ -125,7 +125,7 @@ void SlotState::AttachToGroup(Umbra::IWidget* Parent, std::shared_ptr<SlotSiblin
 
 std::size_t SlotState::CurrentRealChildCount() const { return AttachedCount_; }
 
-void SlotState::DiscoverNestedSlots(Umbra::IWidget& Widget, const Iris::IrisComponent& Node) {
+void SlotState::DiscoverNestedSlots(Umbra::IWidget& Widget, const Iris::Component& Node) {
     std::vector<std::unique_ptr<SlotState>> Found = ResolveSlots(Widget, Node, Mount_);
     for (std::unique_ptr<SlotState>& Nested : Found) {
         NestedSlots_.push_back(std::move(Nested));
@@ -149,8 +149,8 @@ void SlotState::Reconcile() {
     SignalRegistry::Instance().ClearSlot(this);
     IrisRuntime::Instance().PushActiveSlot(this);
 
-    if (std::holds_alternative<std::function<Iris::IrisComponent()>>(Callable_->Callable)) {
-        Iris::IrisComponent NewOutput = std::get<std::function<Iris::IrisComponent()>>(Callable_->Callable)();
+    if (std::holds_alternative<std::function<Iris::Component()>>(Callable_->Callable)) {
+        Iris::Component NewOutput = std::get<std::function<Iris::Component()>>(Callable_->Callable)();
         IrisRuntime::Instance().PopActiveSlot();
 
         if (AttachedParent_ != nullptr) {
@@ -159,12 +159,12 @@ void SlotState::Reconcile() {
             // reconciled, shifting where this slot's own content now lives.
             const std::size_t Base = AttachedGroup_->AbsoluteIndexOf(AttachedGroupIndex_);
 
-            const std::vector<Iris::IrisComponent> OldAsList =
-                (AttachedCount_ != 0) ? std::vector<Iris::IrisComponent>{PreviousSingle_}
-                                      : std::vector<Iris::IrisComponent>{};
-            const std::vector<Iris::IrisComponent> NewAsList =
-                (NewOutput.Tag != Iris::IrisElementTag::None) ? std::vector<Iris::IrisComponent>{NewOutput}
-                                                               : std::vector<Iris::IrisComponent>{};
+            const std::vector<Iris::Component> OldAsList =
+                (AttachedCount_ != 0) ? std::vector<Iris::Component>{PreviousSingle_}
+                                      : std::vector<Iris::Component>{};
+            const std::vector<Iris::Component> NewAsList =
+                (NewOutput.Tag != Iris::IrisElementTag::None) ? std::vector<Iris::Component>{NewOutput}
+                                                               : std::vector<Iris::Component>{};
             ReconcileChildrenAt(*AttachedParent_, Base, OldAsList, NewAsList, Mount_);
 
             if (!NewAsList.empty()) {
@@ -179,8 +179,8 @@ void SlotState::Reconcile() {
         }
         PreviousSingle_ = std::move(NewOutput);
     } else {
-        std::vector<Iris::IrisComponent> NewOutput =
-            std::get<std::function<std::vector<Iris::IrisComponent>()>>(Callable_->Callable)();
+        std::vector<Iris::Component> NewOutput =
+            std::get<std::function<std::vector<Iris::Component>()>>(Callable_->Callable)();
         IrisRuntime::Instance().PopActiveSlot();
 
         if (AttachedParent_ != nullptr) {

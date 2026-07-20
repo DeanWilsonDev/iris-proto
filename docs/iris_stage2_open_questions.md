@@ -24,7 +24,7 @@ Per `docs/iris_stage2_decision_doc.md`:
 | 1 | Generic interactive-element mechanism | `WidgetBase` gains five null-by-default `std::function<void()>` callbacks (`OnPressed`/`OnReleased`/`OnHovered`/`OnFocused`/`OnChanged`) | **Yes** — landed exactly as decided |
 | 2 | `<Image>` backend | Decided: build a minimal `IImageBackend`/`Image` widget with PNG/JPG-from-path loading | **No** — see "New gaps" below |
 | 3 | `<Grid>` layout | Deferred; stubbed as plain `Box` with `LayoutMode::HorizontalStack` | Yes — nothing to build, decision itself is the resolution |
-| 4 | What is `IrisComponent` concretely | Lightweight backend-agnostic IR node (tag/props/children) | N/A — Iris-side design decision, not Penumbra code |
+| 4 | What is `Component` concretely | Lightweight backend-agnostic IR node (tag/props/children) | N/A — Iris-side design decision, not Penumbra code |
 | 5 | Component invocation codegen convention | `<Name>Props` required naming rule | N/A — Iris-side convention |
 | 6 | `<Inline>` vs `<Text>` mapping | Distinct — `<Inline>` maps to a new `InlineContainer` widget | **Yes** — `InlineContainer` landed as a real wrapping inline-flow layout, not a stub |
 | 7 | Styling stub strategy | Both: Cimmerian tests + visible demo with hardcoded placeholder styles | Not re-verified — implementation-phase concern, not blocking further doc updates |
@@ -71,7 +71,7 @@ Kept for reference; see `docs/iris_stage2_decision_doc.md` for complete reasonin
 1. Generic interactive-element mechanism → `docs/iris_core_spec.md` §4.
 2. `<Image>` backend → §3.1 (partially — see "New gaps" above).
 3. `<Grid>` layout → §3.1.
-4. `IrisComponent` representation → §2.5.
+4. `Component` representation → §2.5.
 5. Component invocation codegen convention → §2.6.
 6. `<Inline>` vs `<Text>` mapping → §3.1.
 7. Styling stub strategy → decision doc §7 (not yet reflected in the language spec — an

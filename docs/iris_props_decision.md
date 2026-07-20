@@ -6,7 +6,7 @@
 >
 > **Blocks resolved:**
 > - Stage 1 codegen in `iris` — turning a parsed `ElementNode` into `.cpp` that
->   constructs real `IrisComponent` values now has a concrete target type to emit against.
+>   constructs real `Component` values now has a concrete target type to emit against.
 > - Stage 2 walker in `iris-penumbra-backend` — reading prop values back out to call
 >   `Box::Builder().className(...).onPress(...)` now has a known storage shape to read from.
 
@@ -106,7 +106,7 @@ sync — a prop type that can be constructed but never diffed is a bug waiting t
 
 ## Stage 1 codegen implications
 
-The preprocessor emits C++23 that constructs `IrisComponent` values. For each prop on
+The preprocessor emits C++23 that constructs `Component` values. For each prop on
 an element, it emits an `IrisProps` entry using the lookup table above:
 
 ```cpp
@@ -114,7 +114,7 @@ an element, it emits an `IrisProps` entry using the lookup table above:
 <Frame class="button" onPress={[&]() { props.onPress(); }}>
 
 // Emitted .cpp
-IrisComponent{
+Component{
     IrisElementTag::Frame,
     IrisProps{
         { "class",   IrisPropValue{ std::string("button") } },

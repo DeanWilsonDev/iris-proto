@@ -370,7 +370,7 @@ PropValue RenderBlockParser::ParseJsxEscapeHatch() {
         }
 
         // A JSX element start is disambiguated from a template angle bracket
-        // (`std::vector<IrisComponent>` has exactly the same `< Identifier >`
+        // (`std::vector<Component>` has exactly the same `< Identifier >`
         // shape as an attribute-less opening tag) by requiring whitespace
         // before the `<` — every JSX use in the spec is written with a space
         // or newline before it (`return <Frame ...`, `push_back(\n <Frame

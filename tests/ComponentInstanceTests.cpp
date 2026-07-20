@@ -13,10 +13,10 @@ DESCRIBE("ComponentInstance", {
     // this the same pattern every real component uses.
     IT("a signal survives the declaring function's return", {
         std::function<int()> Getter;
-        Iris::IrisComponent  Node = iris::MountComponentInstance([&]() -> Iris::IrisComponent {
+        Iris::Component  Node = iris::MountComponentInstance([&]() -> Iris::Component {
             IRIS_SIGNAL(int, Count, 42);
             Getter = [&]() { return Count.get(); }; // captured [&], exactly like every spec example
-            return Iris::IrisComponent(nullptr);
+            return Iris::Component(nullptr);
         });
         // Node (and its Instance) are still in scope here, but the *declaring lambda* that
         // ran IRIS_SIGNAL has already returned — its own stack frame is gone. Before the
@@ -25,16 +25,16 @@ DESCRIBE("ComponentInstance", {
         ASSERT_EQUAL(Getter(), 42); // the signal is readable after the declaring lambda returns — no dangling reference
     });
 
-    IT("the ComponentInstance is freed when its IrisComponent is dropped", {
+    IT("the ComponentInstance is freed when its Component is dropped", {
         std::function<int()> Getter;
         auto                  DestroyedFlag = std::make_shared<bool>(false);
         {
-            Iris::IrisComponent Node = iris::MountComponentInstance([&]() -> Iris::IrisComponent {
+            Iris::Component Node = iris::MountComponentInstance([&]() -> Iris::Component {
                 IRIS_SIGNAL(std::shared_ptr<bool>, Flag, DestroyedFlag);
                 Getter = [&]() { return static_cast<int>(Flag.get().use_count()); };
-                return Iris::IrisComponent(nullptr);
+                return Iris::Component(nullptr);
             });
-            REQUIRE_TRUE(Node.Instance != nullptr); // MountComponentInstance populates IrisComponent::Instance
+            REQUIRE_TRUE(Node.Instance != nullptr); // MountComponentInstance populates Component::Instance
             // DestroyedFlag is held by: the local variable here, the Signal's own copy
             // inside the ComponentInstance, and Getter's lambda closure over Flag (which is
             // a reference, not a copy) -- so refcount should be 2 (local + Signal's copy).
@@ -42,19 +42,19 @@ DESCRIBE("ComponentInstance", {
         } // Node goes out of scope here -- its Instance shared_ptr drops to zero, freeing
           // the ComponentInstance and every Signal it owns.
         ASSERT_EQUAL(static_cast<int>(DestroyedFlag.use_count()), 1);
-        // once the IrisComponent (and its Instance) is dropped, the ComponentInstance and its
+        // once the Component (and its Instance) is dropped, the ComponentInstance and its
         // Signal are freed too -- refcount back down to just the local DestroyedFlag
     });
 
     IT("multiple signals in one component all survive independently", {
         std::function<int()> GetA;
         std::function<int()> GetB;
-        Iris::IrisComponent  Node = iris::MountComponentInstance([&]() -> Iris::IrisComponent {
+        Iris::Component  Node = iris::MountComponentInstance([&]() -> Iris::Component {
             IRIS_SIGNAL(int, A, 1);
             IRIS_SIGNAL(int, B, 2);
             GetA = [&]() { return A.get(); };
             GetB = [&]() { return B.get(); };
-            return Iris::IrisComponent(nullptr);
+            return Iris::Component(nullptr);
         });
         (void)Node;
         ASSERT_TRUE(GetA() == 1 && GetB() == 2);
@@ -63,11 +63,11 @@ DESCRIBE("ComponentInstance", {
     IT("set() and get() both work after the component function has returned", {
         std::function<void(int)> SetIt;
         std::function<int()>      GetIt;
-        Iris::IrisComponent       Node = iris::MountComponentInstance([&]() -> Iris::IrisComponent {
+        Iris::Component       Node = iris::MountComponentInstance([&]() -> Iris::Component {
             IRIS_SIGNAL(int, Count, 0);
             SetIt = [&](int V) { Count.set(V); };
             GetIt = [&]() { return Count.get(); };
-            return Iris::IrisComponent(nullptr);
+            return Iris::Component(nullptr);
         });
         (void)Node;
         SetIt(99);

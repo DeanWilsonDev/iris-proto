@@ -84,7 +84,7 @@ DESCRIBE("RenderBlockParser", {
         const auto Result = ParseSource(
             R"(render {
                 <Slot>
-                    {[&]() -> IrisComponent {
+                    {[&]() -> Component {
                         if (settingsOpen.get()) {
                             return <SettingsPage onClose={[&]() { settingsOpen.set(false); }} />;
                         }
@@ -109,7 +109,7 @@ DESCRIBE("RenderBlockParser", {
         const auto Result = ParseSource(
             R"(render {
                 <Slot>
-                    !{[&]() -> IrisComponent {
+                    !{[&]() -> Component {
                         if (settingsOpen.get()) {
                             return <SettingsPage onClose={[&]() { settingsOpen.set(false); }} />;
                         }
@@ -143,7 +143,7 @@ DESCRIBE("RenderBlockParser", {
     });
 
     IT("a !{ } JSX-transform escape hatch does not misread template angles as JSX", {
-        // `std::vector<IrisComponent>` has exactly the same `< Identifier >` shape as
+        // `std::vector<Component>` has exactly the same `< Identifier >` shape as
         // an attribute-less opening tag, but with no whitespace before the `<` — the
         // signal ParseJsxEscapeHatch uses to tell a template argument list apart from
         // a real JSX element start (every JSX use in the spec has a space or newline
@@ -151,19 +151,19 @@ DESCRIBE("RenderBlockParser", {
         const auto Result = ParseSource(
             R"(render {
                 <Slot>
-                    !{[&]() -> std::vector<IrisComponent> {
-                        std::vector<IrisComponent> rows;
+                    !{[&]() -> std::vector<Component> {
+                        std::vector<Component> rows;
                         return rows;
                     }}
                 </Slot>
             })");
-        ASSERT_TRUE(Result.Errors.empty()); // a !{ } body containing std::vector<IrisComponent> parses with no errors
+        ASSERT_TRUE(Result.Errors.empty()); // a !{ } body containing std::vector<Component> parses with no errors
         REQUIRE_TRUE(!Result.Blocks.empty());
 
         const Iris::PropValue& Value = *Result.Blocks[0].Root.Children[0].EscapeHatch;
         for (const Iris::JsxSegment& Segment : Value.JsxSegments) {
             ASSERT_TRUE(Segment.Kind == Iris::JsxSegmentKind::RawText);
-            // no segment is misread as an element — std::vector<IrisComponent> stays raw text
+            // no segment is misread as an element — std::vector<Component> stays raw text
         }
     });
 
@@ -229,12 +229,12 @@ DESCRIBE("RenderBlockParser", {
                 <Frame class="party-screen">
                     <Button label="Details" onPress={[&]() { detailsOpen.set(true); }} />
                     <Slot>
-                        {[&]() -> IrisComponent {
+                        {[&]() -> Component {
                             if (!detailsOpen.get()) return nullptr;
                             return <Frame class="details-panel">
                                 <Slot>
-                                    {[&]() -> std::vector<IrisComponent> {
-                                        std::vector<IrisComponent> rows;
+                                    {[&]() -> std::vector<Component> {
+                                        std::vector<Component> rows;
                                         for (auto& member : props.members) {
                                             rows.push_back(
                                                 <Frame key={member.id} class="party-row">

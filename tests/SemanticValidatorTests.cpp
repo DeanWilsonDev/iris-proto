@@ -101,7 +101,7 @@ DESCRIBE("SemanticValidator", {
         const auto Errors = Validate(
             R"(render {
                 <Slot>
-                    !{[&]() -> IrisComponent {
+                    !{[&]() -> Component {
                         return <NotImported/>;
                     }}
                 </Slot>
@@ -119,7 +119,7 @@ DESCRIBE("SemanticValidator", {
         const auto Errors = Validate(
             R"(render {
                 <Slot>
-                    {[&]() -> IrisComponent {
+                    {[&]() -> Component {
                         return <NotImported/>;
                     }}
                 </Slot>
@@ -133,12 +133,12 @@ DESCRIBE("SemanticValidator", {
             <Frame class="party-screen">
                 <Button label="Details" onPress={[&]() { detailsOpen.set(true); }} />
                 <Slot>
-                    !{[&]() -> IrisComponent {
+                    !{[&]() -> Component {
                         if (!detailsOpen.get()) return nullptr;
                         return <Frame class="details-panel">
                             <Slot>
-                                !{[&]() -> std::vector<IrisComponent> {
-                                    std::vector<IrisComponent> rows;
+                                !{[&]() -> std::vector<Component> {
+                                    std::vector<Component> rows;
                                     for (auto& member : props.members) {
                                         rows.push_back(
                                             <Frame key={member.id} class="party-row">

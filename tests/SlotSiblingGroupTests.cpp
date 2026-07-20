@@ -12,7 +12,7 @@
 // Additional coverage for the SlotSiblingGroup mechanism
 // (docs/iris_slot_list_wiring_decision.md), written against Cimmerian rather than the
 // hand-rolled framework tests/SlotResolutionTests.cpp otherwise uses — exercising a
-// three-sibling case (two list-returning, one single-IrisComponent-returning) that
+// three-sibling case (two list-returning, one single-Component-returning) that
 // wasn't covered there.
 
 namespace {
@@ -63,10 +63,10 @@ std::string TagName(Iris::IrisElementTag Tag) {
 
 class TestMounter {
 public:
-    std::unique_ptr<Umbra::IWidget> operator()(const Iris::IrisComponent& Node) {
+    std::unique_ptr<Umbra::IWidget> operator()(const Iris::Component& Node) {
         auto Widget = std::make_unique<MockWidget>(TagName(Node.Tag));
         Widget->ApplyPropDiff(iris::ComputePropDiff({}, Node.Props));
-        for (const Iris::IrisComponent& Child : Node.Children) {
+        for (const Iris::Component& Child : Node.Children) {
             if (Child.Tag == Iris::IrisElementTag::None || Child.Tag == Iris::IrisElementTag::Slot) {
                 continue;
             }
@@ -76,18 +76,18 @@ public:
     }
 };
 
-Iris::IrisComponent MakeFrame(std::vector<Iris::IrisComponent> Children = {}) {
-    return Iris::IrisComponent(Iris::IrisElementTag::Frame, {}, std::move(Children), nullptr);
+Iris::Component MakeFrame(std::vector<Iris::Component> Children = {}) {
+    return Iris::Component(Iris::IrisElementTag::Frame, {}, std::move(Children), nullptr);
 }
 
-Iris::IrisComponent MakeText(const std::string& Content) {
+Iris::Component MakeText(const std::string& Content) {
     Iris::IrisProps Props;
     Props["text"] = Iris::IrisPropValue{Content};
-    return Iris::IrisComponent(Iris::IrisElementTag::Text, Props, {}, nullptr);
+    return Iris::Component(Iris::IrisElementTag::Text, Props, {}, nullptr);
 }
 
-Iris::IrisComponent MakeSlot(std::shared_ptr<Iris::IrisSlotCallable> Callable) {
-    return Iris::IrisComponent(Iris::IrisElementTag::Slot, {}, {}, std::move(Callable));
+Iris::Component MakeSlot(std::shared_ptr<Iris::IrisSlotCallable> Callable) {
+    return Iris::Component(Iris::IrisElementTag::Slot, {}, {}, std::move(Callable));
 }
 
 std::vector<std::string> TextsOf(Umbra::IWidget& Widget) {
@@ -101,19 +101,19 @@ std::vector<std::string> TextsOf(Umbra::IWidget& Widget) {
 } // namespace
 
 DESCRIBE("SlotSiblingGroup", {
-    IT("shifts a later single-IrisComponent slot when an earlier list slot changes length", {
+    IT("shifts a later single-Component slot when an earlier list slot changes length", {
         iris::MountFn Mount = TestMounter();
 
         iris::Signal<int> FirstCount = 1;
-        Iris::IrisComponent RootNode = MakeFrame({
-            MakeSlot(Iris::MakeSlotCallable([&]() -> std::vector<Iris::IrisComponent> {
-                std::vector<Iris::IrisComponent> Items;
+        Iris::Component RootNode = MakeFrame({
+            MakeSlot(Iris::MakeSlotCallable([&]() -> std::vector<Iris::Component> {
+                std::vector<Iris::Component> Items;
                 for (int I = 0; I < FirstCount.get(); ++I) {
                     Items.push_back(MakeText("list" + std::to_string(I)));
                 }
                 return Items;
             })),
-            MakeSlot(Iris::MakeSlotCallable([]() -> Iris::IrisComponent { return MakeText("single"); })),
+            MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component { return MakeText("single"); })),
         });
 
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
@@ -135,17 +135,17 @@ DESCRIBE("SlotSiblingGroup", {
         iris::MountFn Mount = TestMounter();
 
         iris::Signal<int> LeadingCount = 2;
-        Iris::IrisComponent RootNode = MakeFrame({
-            MakeSlot(Iris::MakeSlotCallable([&]() -> std::vector<Iris::IrisComponent> {
-                std::vector<Iris::IrisComponent> Items;
+        Iris::Component RootNode = MakeFrame({
+            MakeSlot(Iris::MakeSlotCallable([&]() -> std::vector<Iris::Component> {
+                std::vector<Iris::Component> Items;
                 for (int I = 0; I < LeadingCount.get(); ++I) {
                     Items.push_back(MakeText("lead" + std::to_string(I)));
                 }
                 return Items;
             })),
-            MakeSlot(Iris::MakeSlotCallable([]() -> Iris::IrisComponent { return MakeText("middle"); })),
+            MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component { return MakeText("middle"); })),
             MakeSlot(Iris::MakeSlotCallable(
-                []() -> std::vector<Iris::IrisComponent> { return {MakeText("trail0"), MakeText("trail1")}; })),
+                []() -> std::vector<Iris::Component> { return {MakeText("trail0"), MakeText("trail1")}; })),
         });
 
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
@@ -164,11 +164,11 @@ DESCRIBE("SlotSiblingGroup", {
     IT("tears down three list/single sibling slots without a use-after-free, in any order", {
         iris::MountFn Mount = TestMounter();
 
-        Iris::IrisComponent RootNode = MakeFrame({
+        Iris::Component RootNode = MakeFrame({
             MakeSlot(Iris::MakeSlotCallable(
-                []() -> std::vector<Iris::IrisComponent> { return {MakeText("a0"), MakeText("a1")}; })),
-            MakeSlot(Iris::MakeSlotCallable([]() -> Iris::IrisComponent { return MakeText("b"); })),
-            MakeSlot(Iris::MakeSlotCallable([]() -> std::vector<Iris::IrisComponent> { return {MakeText("c0")}; })),
+                []() -> std::vector<Iris::Component> { return {MakeText("a0"), MakeText("a1")}; })),
+            MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component { return MakeText("b"); })),
+            MakeSlot(Iris::MakeSlotCallable([]() -> std::vector<Iris::Component> { return {MakeText("c0")}; })),
         });
 
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);

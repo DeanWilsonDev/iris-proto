@@ -18,7 +18,7 @@
     runtime shape), `docs/iris_stage1_codegen_decision.md` (two follow-on gaps that decision
     left open), and `docs/iris_escape_hatch_decision.md` (the `!{ }` JSX-transform escape
     hatch — see below) are all closed and implemented. `Codegen.h`/`GenerateComponentExpression()`
-    walks an `ElementNode` and emits a C++23 expression constructing `Iris::IrisComponent` —
+    walks an `ElementNode` and emits a C++23 expression constructing `Iris::Component` —
     Core primitives (including `<Slot>` via `Iris::MakeSlotCallable`), the `<Name>Props`
     component-invocation convention, text/interpolation-child concatenation, the closed
     prop-name lookup table, and `!{ }`-transformed nested JSX are all tested
@@ -35,30 +35,30 @@
     primitive checks, the `<Text font=...>` and inline-style errors) — **done**. See below.
   - Preprocessor driver/CLI — **done**. See below.
 - **Stage 2 (Penumbra backend)** — **done**, in the sibling `iris-penumbra-backend` repo (not
-  this one). `IrisPenumbraBackend::BuildWidgetTree()` walks a single `IrisComponent` node and
+  this one). `IrisPenumbraBackend::BuildWidgetTree()` walks a single `Component` node and
   recursively builds the equivalent real Penumbra widget tree via each Core primitive's own
   fluent `Builder` (`Frame`→`Box`, `Inline`→`InlineContainer`, `Grid`→`Box` stub, `Image`→
   `ImageWidget`, `Text`→`Label`; `Slot` never reaches it, `None` builds to `nullptr` and is
   skipped as a child). One-shot tree build only — no diffing, no identity tracking; `key`
-  reaching `IrisComponent` at all (needed for the reconciler's matching rule) landed as part
+  reaching `Component` at all (needed for the reconciler's matching rule) landed as part
   of Stage 3, below — this walker still doesn't use it, since it never diffs anything. Verified
   against the full pipeline: a real `.iris` component compiled through this repo's own `iris_cc`,
-  `#include`d, called, and the resulting `IrisComponent` fed through `BuildWidgetTree` produced a
+  `#include`d, called, and the resulting `Component` fed through `BuildWidgetTree` produced a
   real `Box`/`Label` tree with correct class name, child count, and interpolated text — first
   time output has been traced from `.iris` source all the way to a real Penumbra widget.
   `iris-penumbra-backend`'s vendored `iris` submodule was also bumped from this repo's very
-  first commit (which predates `IrisComponent` having its current shape) to current `main`.
+  first commit (which predates `Component` having its current shape) to current `main`.
 - **Stage 3 (reactive runtime)** — **done, including both items this doc used to list as
   remaining.** `Signal<T>`, ambient dependency tracking, batching, `iris::Tick()`, and the
   reconciler (prop diffing, same-tag-key matching, keyed list diffing, now LIS-based
   minimal-move — see below) are implemented and tested against a mock `Umbra::IWidget` — see
   `docs/iris_stage3_implementation_decision.md`. A real Penumbra `IWidget` adapter
   (`iris-penumbra-backend`'s `PenumbraWidget`) and `<Slot>` wiring into the Stage 2 walker
-  (`iris::ResolveSlots`, both the single-`IrisComponent`- and list-returning callable shapes,
+  (`iris::ResolveSlots`, both the single-`Component`- and list-returning callable shapes,
   plus nested `<Slot>` discovery within a `<Slot>`'s own dynamically-produced output) are also
   done and verified against real `Penumbra::Widgets::Box`/`Label` objects under
   AddressSanitizer — see the "Done" sections below. Three real gaps the decision docs left open
-  got resolved along the way: `key` never actually reached `IrisComponent` (fixed — see below),
+  got resolved along the way: `key` never actually reached `Component` (fixed — see below),
   no mechanism was ever specified for how a signal knows which `<Slot>`s to mark dirty (ambient
   "active slot" tracking, the user's explicit choice), and `IWidget`/`IrisPropDiff` were said to
   belong in a not-yet-existing `umbra-interfaces` package that conflicted with this repo's
@@ -90,16 +90,16 @@ both closed in `docs/iris_stage1_codegen_decision.md`:
 
 1. `<Slot>`'s callable child doesn't fit in `Props` (whose one callable variant member is
    zero-argument, shaped for event handlers) or in `Children` (which holds already-constructed
-   `IrisComponent` values, not an unevaluated callable) — resolved by adding a `SlotCallable`
-   field to `IrisComponent`, populated via a `Iris::MakeSlotCallable()` helper that defers the
-   `IrisComponent` vs. `vector<IrisComponent>` return-type choice to the host compiler.
+   `Component` values, not an unevaluated callable) — resolved by adding a `SlotCallable`
+   field to `Component`, populated via a `Iris::MakeSlotCallable()` helper that defers the
+   `Component` vs. `vector<Component>` return-type choice to the host compiler.
 2. Literal text and `{ }` interpolation as element children have nowhere to go in a shape where
-   `Children` only holds `IrisComponent` values — resolved per-primitive: `<Text>` concatenates
+   `Children` only holds `Component` values — resolved per-primitive: `<Text>` concatenates
    its children into its own `"text"` prop; every other children-accepting primitive (chiefly
-   `<Inline>`) wraps a text/escape-hatch child as a synthetic `<Text>` `IrisComponent` node
+   `<Inline>`) wraps a text/escape-hatch child as a synthetic `<Text>` `Component` node
    appended to `Children` instead.
 
-Both `IrisComponent`'s revised shape (`include/Iris/IrisComponent.h`) and `Codegen.h` are
+Both `Component`'s revised shape (`include/Iris/Component.h`) and `Codegen.h` are
 implemented and tested.
 
 ## Resolved and implemented: JSX inside escape hatches (`!{ }` transform escape hatch)
@@ -117,10 +117,10 @@ normally. Implemented in `RenderBlockParser::ParseJsxEscapeHatch`
 (`src/Iris/RenderBlockParser.cpp`) and `Codegen.cpp`'s `EmitEscapeHatchExpression`, tested in
 both `tests/RenderBlockParserTests.cpp` and `tests/CodegenTests.cpp` — including an end-to-end
 test against the full spec §9 `PartyScreen` example (both `<Slot>`s, two levels of nesting,
-`std::vector<IrisComponent>` correctly *not* misread as a JSX element) whose generated output
+`std::vector<Component>` correctly *not* misread as a JSX element) whose generated output
 was manually confirmed to host-compile as real C++23.
 
-One implementation wrinkle worth knowing: `std::vector<IrisComponent>` (a real return type used
+One implementation wrinkle worth knowing: `std::vector<Component>` (a real return type used
 in the spec's own list-rendering `<Slot>`) has the exact same `< Identifier >` shape as an
 attribute-less JSX opening tag. Disambiguated by requiring whitespace immediately before the
 `<` for it to count as a JSX start — true of every JSX use in the spec, never true of a template
@@ -128,24 +128,24 @@ argument list. See the decision doc for the one known edge case this doesn't cov
 (whitespace-free JSX like `push_back(<Frame/>)`), deliberately deferred since nothing in the
 spec needs it.
 
-## Resolved: `IrisComponent` had no `nullptr_t` constructor
+## Resolved: `Component` had no `nullptr_t` constructor
 
 Surfaced by manually host-compiling the §9 `PartyScreen` example while verifying `!{ }` above —
-`IrisComponent` had no `nullptr_t` constructor, so the spec's own `return nullptr;` inside a
-`<Slot>` lambda declared to return `IrisComponent` (§1.5, §9 — every conditional-rendering
-example) didn't actually compile as written. An `IrisComponent`-shape gap, not an escape-hatch
+`Component` had no `nullptr_t` constructor, so the spec's own `return nullptr;` inside a
+`<Slot>` lambda declared to return `Component` (§1.5, §9 — every conditional-rendering
+example) didn't actually compile as written. An `Component`-shape gap, not an escape-hatch
 one; unrelated to the `!{ }` decision itself.
 
 Fixed with a new `IrisElementTag::None` sentinel (`include/Iris/IrisElementTag.h`) plus an
-implicit `IrisComponent(std::nullptr_t)` converting constructor
-(`include/Iris/IrisComponent.h`) that produces it — a walker/reconciler must treat a
+implicit `Component(std::nullptr_t)` converting constructor
+(`include/Iris/Component.h`) that produces it — a walker/reconciler must treat a
 `None`-tagged node as "unmount whatever was here, mount nothing" and never hand it to a backend
-`Builder`. Adding that constructor loses `IrisComponent`'s aggregate-ness, so an explicit
-4-field constructor was added alongside it to keep Codegen.h's emitted `IrisComponent{Tag,
+`Builder`. Adding that constructor loses `Component`'s aggregate-ness, so an explicit
+4-field constructor was added alongside it to keep Codegen.h's emitted `Component{Tag,
 Props, Children, SlotCallable}` call shape compiling unchanged.
 
-Also added: `tests/IrisComponentTests.cpp`, a first-of-its-kind test file that host-compiles
-`IrisComponent.h` directly — previously nothing did, since Codegen's own tests only ever check
+Also added: `tests/ComponentTests.cpp`, a first-of-its-kind test file that host-compiles
+`Component.h` directly — previously nothing did, since Codegen's own tests only ever check
 the shape of generated *text*, never compile it, which is exactly how this gap went unnoticed
 until a manual compile check found it. Re-running that same manual compile against the full
 `PartyScreen` example after this fix now succeeds with no workarounds, `nullptr` line included.
@@ -250,7 +250,7 @@ glue, no hand-written declarations, confirmed to compile with `g++ -std=c++23`. 
   methods (`GetChildCount`/`GetChildAt`/`InsertChildAt`/`RemoveChildAt`) it didn't have before —
   needed for the reconciler's "recurse into children" rule, mirrored against Penumbra's own
   `Box` methods.
-- **`key` now actually reaches `IrisComponent`** — it didn't before (`Codegen` dropped it
+- **`key` now actually reaches `Component`** — it didn't before (`Codegen` dropped it
   entirely). `Emit()` wraps any keyed element's base expression in a small IIFE that sets
   `.Key` afterward, uniformly across primitives and component invocations alike. Verified
   end-to-end: a real `.iris` file with `key={props.id}` compiled through `iris_cc` and
@@ -314,7 +314,7 @@ Full writeup: `docs/iris_slot_stage2_wiring_decision.md`. Summary: `BuildWidgetT
 treats `IrisElementTag::Slot` exactly like `None` during the static build (contributes
 nothing, no more assert) — a new `iris::ResolveSlots(Widget, Node, Mount)`
 (`include/Iris/SlotResolution.h`) then walks the just-built widget tree and the original
-`IrisComponent` tree in lockstep, and for each `<Slot>` found, constructs a `SlotState`,
+`Component` tree in lockstep, and for each `<Slot>` found, constructs a `SlotState`,
 tells it exactly where it lives (originally `SlotState::AttachAt(Parent, Index)`, a new
 "attached" mode alongside the existing standalone one — since generalized to
 `AttachToGroup`, see the list-wiring paragraph below), and performs its initial mount —

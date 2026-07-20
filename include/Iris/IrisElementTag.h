@@ -2,7 +2,7 @@
 
 namespace Iris {
 
-// The Core primitive tag set an `IrisComponent` (`IrisComponent.h`) node can carry
+// The Core primitive tag set an `Component` (`Component.h`) node can carry
 // (docs/iris_core_spec.md §3.1). An element tag that isn't one of these is a
 // component invocation (§2.6), not an `IrisElementTag` value at all — see
 // `Codegen.h`.
@@ -14,7 +14,7 @@ namespace Iris {
 enum class IrisElementTag {
     // Sentinel: "no component was produced here" — what a `<Slot>` callable's
     // `return nullptr;` (docs/iris_core_spec.md §1.5, §9) becomes via
-    // `IrisComponent`'s `nullptr_t` converting constructor
+    // `Component`'s `nullptr_t` converting constructor
     // (docs/iris_escape_hatch_decision.md's Verification section; the gap is
     // tracked and closed in docs/iris_core_spec.md §8). Not a real Core
     // primitive — a walker/reconciler must treat it as "unmount whatever was

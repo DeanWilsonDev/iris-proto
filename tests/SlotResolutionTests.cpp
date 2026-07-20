@@ -61,10 +61,10 @@ std::string TagName(Iris::IrisElementTag Tag) {
 
 class TestMounter {
 public:
-    std::unique_ptr<Umbra::IWidget> operator()(const Iris::IrisComponent& Node) {
+    std::unique_ptr<Umbra::IWidget> operator()(const Iris::Component& Node) {
         auto Widget = std::make_unique<MockWidget>(TagName(Node.Tag));
         Widget->ApplyPropDiff(iris::ComputePropDiff({}, Node.Props));
-        for (const Iris::IrisComponent& Child : Node.Children) {
+        for (const Iris::Component& Child : Node.Children) {
             if (Child.Tag == Iris::IrisElementTag::None || Child.Tag == Iris::IrisElementTag::Slot) {
                 continue; // matches BuildWidgetTree's own real behavior for these two
             }
@@ -74,18 +74,18 @@ public:
     }
 };
 
-Iris::IrisComponent MakeFrame(std::vector<Iris::IrisComponent> Children = {}) {
-    return Iris::IrisComponent(Iris::IrisElementTag::Frame, {}, std::move(Children), nullptr);
+Iris::Component MakeFrame(std::vector<Iris::Component> Children = {}) {
+    return Iris::Component(Iris::IrisElementTag::Frame, {}, std::move(Children), nullptr);
 }
 
-Iris::IrisComponent MakeText(const std::string& Content) {
+Iris::Component MakeText(const std::string& Content) {
     Iris::IrisProps Props;
     Props["text"] = Iris::IrisPropValue{Content};
-    return Iris::IrisComponent(Iris::IrisElementTag::Text, Props, {}, nullptr);
+    return Iris::Component(Iris::IrisElementTag::Text, Props, {}, nullptr);
 }
 
-Iris::IrisComponent MakeSlot(std::shared_ptr<Iris::IrisSlotCallable> Callable) {
-    return Iris::IrisComponent(Iris::IrisElementTag::Slot, {}, {}, std::move(Callable));
+Iris::Component MakeSlot(std::shared_ptr<Iris::IrisSlotCallable> Callable) {
+    return Iris::Component(Iris::IrisElementTag::Slot, {}, {}, std::move(Callable));
 }
 
 } // namespace
@@ -94,8 +94,8 @@ DESCRIBE("SlotResolution", {
     IT("a Slot as the sole child mounts at index zero", {
         iris::MountFn Mount = TestMounter();
 
-        Iris::IrisComponent RootNode =
-            MakeFrame({MakeSlot(Iris::MakeSlotCallable([]() -> Iris::IrisComponent { return MakeText("hello"); }))});
+        Iris::Component RootNode =
+            MakeFrame({MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component { return MakeText("hello"); }))});
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode); // static build: the Slot child is skipped, 0 real children
 
         ASSERT_EQUAL(Root->GetChildCount(), static_cast<std::size_t>(0));
@@ -111,9 +111,9 @@ DESCRIBE("SlotResolution", {
     IT("a Slot between two static siblings mounts at the correct index", {
         iris::MountFn Mount = TestMounter();
 
-        Iris::IrisComponent RootNode = MakeFrame({
+        Iris::Component RootNode = MakeFrame({
             MakeText("before"),
-            MakeSlot(Iris::MakeSlotCallable([]() -> Iris::IrisComponent { return MakeText("slot-content"); })),
+            MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component { return MakeText("slot-content"); })),
             MakeText("after"),
         });
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
@@ -132,9 +132,9 @@ DESCRIBE("SlotResolution", {
     IT("a Slot returning None contributes nothing", {
         iris::MountFn Mount = TestMounter();
 
-        Iris::IrisComponent RootNode = MakeFrame({
+        Iris::Component RootNode = MakeFrame({
             MakeText("before"),
-            MakeSlot(Iris::MakeSlotCallable([]() -> Iris::IrisComponent { return nullptr; })),
+            MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component { return nullptr; })),
             MakeText("after"),
         });
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
@@ -151,10 +151,10 @@ DESCRIBE("SlotResolution", {
         iris::MountFn Mount = TestMounter();
 
         iris::Signal<bool> Show = false;
-        Iris::IrisComponent RootNode = MakeFrame({
+        Iris::Component RootNode = MakeFrame({
             MakeText("before"),
             MakeSlot(Iris::MakeSlotCallable(
-                [&]() -> Iris::IrisComponent { return Show.get() ? MakeText("shown") : Iris::IrisComponent(nullptr); })),
+                [&]() -> Iris::Component { return Show.get() ? MakeText("shown") : Iris::Component(nullptr); })),
             MakeText("after"),
         });
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
@@ -175,8 +175,8 @@ DESCRIBE("SlotResolution", {
     IT("a Slot nested inside a static child is resolved", {
         iris::MountFn Mount = TestMounter();
 
-        Iris::IrisComponent RootNode = MakeFrame(
-            {MakeFrame({MakeSlot(Iris::MakeSlotCallable([]() -> Iris::IrisComponent { return MakeText("deep"); }))})});
+        Iris::Component RootNode = MakeFrame(
+            {MakeFrame({MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component { return MakeText("deep"); }))})});
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
         auto                             Slots = iris::ResolveSlots(*Root, RootNode, Mount);
 
@@ -190,8 +190,8 @@ DESCRIBE("SlotResolution", {
     IT("a list-returning Slot mounts all its items", {
         iris::MountFn Mount = TestMounter();
 
-        Iris::IrisComponent RootNode = MakeFrame({MakeSlot(Iris::MakeSlotCallable(
-            []() -> std::vector<Iris::IrisComponent> { return {MakeText("a"), MakeText("b"), MakeText("c")}; }))});
+        Iris::Component RootNode = MakeFrame({MakeSlot(Iris::MakeSlotCallable(
+            []() -> std::vector<Iris::Component> { return {MakeText("a"), MakeText("b"), MakeText("c")}; }))});
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
 
         auto Slots = iris::ResolveSlots(*Root, RootNode, Mount);
@@ -205,10 +205,10 @@ DESCRIBE("SlotResolution", {
     IT("a list-returning Slot between two static siblings", {
         iris::MountFn Mount = TestMounter();
 
-        Iris::IrisComponent RootNode = MakeFrame({
+        Iris::Component RootNode = MakeFrame({
             MakeText("before"),
             MakeSlot(Iris::MakeSlotCallable(
-                []() -> std::vector<Iris::IrisComponent> { return {MakeText("a"), MakeText("b")}; })),
+                []() -> std::vector<Iris::Component> { return {MakeText("a"), MakeText("b")}; })),
             MakeText("after"),
         });
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
@@ -225,9 +225,9 @@ DESCRIBE("SlotResolution", {
         iris::MountFn Mount = TestMounter();
 
         iris::Signal<int> Count = 1;
-        Iris::IrisComponent RootNode = MakeFrame({
-            MakeSlot(Iris::MakeSlotCallable([&]() -> std::vector<Iris::IrisComponent> {
-                std::vector<Iris::IrisComponent> Items;
+        Iris::Component RootNode = MakeFrame({
+            MakeSlot(Iris::MakeSlotCallable([&]() -> std::vector<Iris::Component> {
+                std::vector<Iris::Component> Items;
                 for (int I = 0; I < Count.get(); ++I) {
                     Items.push_back(MakeText("item" + std::to_string(I)));
                 }
@@ -259,16 +259,16 @@ DESCRIBE("SlotResolution", {
         iris::MountFn Mount = TestMounter();
 
         iris::Signal<int> FirstCount = 2;
-        Iris::IrisComponent RootNode = MakeFrame({
-            MakeSlot(Iris::MakeSlotCallable([&]() -> std::vector<Iris::IrisComponent> {
-                std::vector<Iris::IrisComponent> Items;
+        Iris::Component RootNode = MakeFrame({
+            MakeSlot(Iris::MakeSlotCallable([&]() -> std::vector<Iris::Component> {
+                std::vector<Iris::Component> Items;
                 for (int I = 0; I < FirstCount.get(); ++I) {
                     Items.push_back(MakeText("first" + std::to_string(I)));
                 }
                 return Items;
             })),
             MakeSlot(Iris::MakeSlotCallable(
-                []() -> std::vector<Iris::IrisComponent> { return {MakeText("second0")}; })),
+                []() -> std::vector<Iris::Component> { return {MakeText("second0")}; })),
         });
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
         auto                             Slots = iris::ResolveSlots(*Root, RootNode, Mount);
@@ -292,9 +292,9 @@ DESCRIBE("SlotResolution", {
         // <Slot> — the case docs/iris_nested_slot_discovery_decision.md closes: a <Slot>
         // nested inside another <Slot>'s own dynamically-produced output, not present
         // anywhere in the original static tree.
-        Iris::IrisComponent RootNode = MakeFrame({MakeSlot(Iris::MakeSlotCallable([]() -> Iris::IrisComponent {
+        Iris::Component RootNode = MakeFrame({MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component {
             return MakeFrame(
-                {MakeSlot(Iris::MakeSlotCallable([]() -> Iris::IrisComponent { return MakeText("nested"); }))});
+                {MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component { return MakeText("nested"); }))});
         }))});
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
         ASSERT_EQUAL(Root->GetChildCount(), static_cast<std::size_t>(0));
@@ -315,9 +315,9 @@ DESCRIBE("SlotResolution", {
         iris::MountFn Mount = TestMounter();
 
         iris::Signal<bool> ShowNested = false;
-        Iris::IrisComponent RootNode = MakeFrame({MakeSlot(Iris::MakeSlotCallable([&]() -> Iris::IrisComponent {
-            return MakeFrame({MakeSlot(Iris::MakeSlotCallable([&]() -> Iris::IrisComponent {
-                return ShowNested.get() ? MakeText("shown") : Iris::IrisComponent(nullptr);
+        Iris::Component RootNode = MakeFrame({MakeSlot(Iris::MakeSlotCallable([&]() -> Iris::Component {
+            return MakeFrame({MakeSlot(Iris::MakeSlotCallable([&]() -> Iris::Component {
+                return ShowNested.get() ? MakeText("shown") : Iris::Component(nullptr);
             }))});
         }))});
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
@@ -343,12 +343,12 @@ DESCRIBE("SlotResolution", {
         iris::MountFn Mount = TestMounter();
 
         iris::Signal<bool> ShowOuter = true;
-        Iris::IrisComponent RootNode = MakeFrame({MakeSlot(Iris::MakeSlotCallable([&]() -> Iris::IrisComponent {
+        Iris::Component RootNode = MakeFrame({MakeSlot(Iris::MakeSlotCallable([&]() -> Iris::Component {
             if (!ShowOuter.get()) {
                 return nullptr;
             }
             return MakeFrame(
-                {MakeSlot(Iris::MakeSlotCallable([]() -> Iris::IrisComponent { return MakeText("nested"); }))});
+                {MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component { return MakeText("nested"); }))});
         }))});
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
         auto                             Slots = iris::ResolveSlots(*Root, RootNode, Mount);
@@ -371,9 +371,9 @@ DESCRIBE("SlotResolution", {
     IT("a Slot nested inside a list-returning Slot's item is discovered", {
         iris::MountFn Mount = TestMounter();
 
-        Iris::IrisComponent RootNode = MakeFrame({MakeSlot(Iris::MakeSlotCallable([]() -> std::vector<Iris::IrisComponent> {
+        Iris::Component RootNode = MakeFrame({MakeSlot(Iris::MakeSlotCallable([]() -> std::vector<Iris::Component> {
             return {MakeFrame(
-                {MakeSlot(Iris::MakeSlotCallable([]() -> Iris::IrisComponent { return MakeText("item-nested"); }))})};
+                {MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component { return MakeText("item-nested"); }))})};
         }))});
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
         auto                             Slots = iris::ResolveSlots(*Root, RootNode, Mount);
@@ -388,8 +388,8 @@ DESCRIBE("SlotResolution", {
     IT("destroying a SlotState detaches its content", {
         iris::MountFn Mount = TestMounter();
 
-        Iris::IrisComponent RootNode =
-            MakeFrame({MakeSlot(Iris::MakeSlotCallable([]() -> Iris::IrisComponent { return MakeText("hello"); }))});
+        Iris::Component RootNode =
+            MakeFrame({MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component { return MakeText("hello"); }))});
         std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
         auto                             Slots = iris::ResolveSlots(*Root, RootNode, Mount);
         ASSERT_EQUAL(Root->GetChildCount(), static_cast<std::size_t>(1)); // content attached

@@ -23,7 +23,7 @@ re-invoked later, closing over those same signals by reference.
 ## What `<Slot>` is
 
 A Core Iris runtime primitive. Its single child is a callable C++23 lambda returning
-`IrisComponent` or `std::vector<IrisComponent>`. The runtime invokes it at mount and re-invokes
+`Component` or `std::vector<Component>`. The runtime invokes it at mount and re-invokes
 it when signals it captures fire. **The backend never sees a `<Slot>` node** — the runtime
 resolves it before the backend pass runs.
 
@@ -32,7 +32,7 @@ resolves it before the backend pass runs.
 ```cpp
 // Conditional rendering
 <Slot>
-    {[&]() -> IrisComponent {
+    {[&]() -> Component {
         if (settingsOpen.get()) {
             return <SettingsPage onClose={[&]() { settingsOpen.set(false); }} />;
         }
@@ -42,8 +42,8 @@ resolves it before the backend pass runs.
 
 // List rendering
 <Slot>
-    {[&]() -> std::vector<IrisComponent> {
-        std::vector<IrisComponent> result;
+    {[&]() -> std::vector<Component> {
+        std::vector<Component> result;
         for (auto& item : props.items) {
             result.push_back(<Item key={item.id} label={item.name} />);
         }
@@ -69,7 +69,7 @@ machinery holds and calls it, rather than the generated code calling it once inl
 ## Constraints the runtime enforces (not the preprocessor)
 
 - `<Slot>` must have exactly one child.
-- That child must be a callable returning `IrisComponent` or `std::vector<IrisComponent>`.
+- That child must be a callable returning `Component` or `std::vector<Component>`.
 - Multiple children or a non-callable child is a runtime error.
 
 ## What doesn't change

@@ -27,7 +27,7 @@ rather than rediscovered later the way several Penumbra-side gaps were during St
 
 ## What Lustre's own hot-reload does *not* need from Iris
 
-- No change to `IrisComponent`, `Codegen`, or generated header shape.
+- No change to `Component`, `Codegen`, or generated header shape.
 - No change to `key`/`class` prop handling — both already reach the runtime as plain values.
 - No change to the reconciler — Lustre's restyle pass is not a reconcile, it doesn't diff or
   mutate the component tree, only re-applies style structs to widgets that already exist.

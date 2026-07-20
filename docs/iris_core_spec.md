@@ -98,14 +98,14 @@ other token is passed through to the emitted output unchanged.
 import Button
 import SettingsPage
 
-IrisComponent StartMenu() {
+Component StartMenu() {
     IRIS_SIGNAL(bool, settingsOpen, false);
 
     render {
         <Frame class="start-menu">
             <Button label="Settings" onPress={[&]() { settingsOpen.set(true); }} />
             <Slot>
-                !{[&]() -> IrisComponent {
+                !{[&]() -> Component {
                     if (settingsOpen.get()) {
                         return <SettingsPage onClose={[&]() { settingsOpen.set(false); }} />;
                     }
@@ -117,7 +117,7 @@ IrisComponent StartMenu() {
 }
 ```
 
-Component declaration, the `IrisComponent` return type, and `iris::Signal<T>` are all ordinary
+Component declaration, the `Component` return type, and `iris::Signal<T>` are all ordinary
 C++23 — nothing here is Iris grammar except the `import` line and the `render { }` block's
 contents (which now includes `<Slot>`, a Core primitive like any other — §3.1, §1.5).
 `StartMenu()` runs exactly once, at mount — the lambda inside `<Slot>` is what re-runs later,
@@ -199,7 +199,7 @@ preprocessor-level compile error (§7).
 - **`!{ }` — the JSX-transform escape hatch** (`docs/iris_escape_hatch_decision.md`): identical
   to `{ }` except that its contents are *not* opaque — the preprocessor recursively parses any
   `<Tag>` run inside it (whitespace-preceded, to tell a real element start apart from a template
-  argument list like `std::vector<IrisComponent>`) back into the same element-tree grammar this
+  argument list like `std::vector<Component>`) back into the same element-tree grammar this
   section describes, and codegen transforms it the same way it would a top-level element. This
   is required inside `<Slot>` (§1.5), whose whole purpose is conditional/list rendering via
   nested JSX — a plain `{ }` there would leave that nested JSX as unparsed, uncompilable text. A
@@ -209,7 +209,7 @@ preprocessor-level compile error (§7).
 ### 1.5 Dynamic regions — `<Slot>`
 
 **Superseded by `docs/iris_stage3_decision_slot.md`** — a bare child-position escape hatch
-returning `IrisComponent`/`std::vector<IrisComponent>` directly, as earlier drafts of this spec
+returning `Component`/`std::vector<Component>` directly, as earlier drafts of this spec
 showed, is no longer the mechanism for conditional or list rendering. `<Slot>` is.
 
 Every ordinary escape hatch (§1.4) is **one-shot**: evaluated once, at construction, its value
@@ -221,7 +221,7 @@ re-run it. `<Slot>` is the one construct where re-invocation happens:
 ```cpp
 // Conditional rendering
 <Slot>
-    !{[&]() -> IrisComponent {
+    !{[&]() -> Component {
         if (settingsOpen.get()) {
             return <SettingsPage onClose={[&]() { settingsOpen.set(false); }} />;
         }
@@ -231,8 +231,8 @@ re-run it. `<Slot>` is the one construct where re-invocation happens:
 
 // List rendering
 <Slot>
-    !{[&]() -> std::vector<IrisComponent> {
-        std::vector<IrisComponent> result;
+    !{[&]() -> std::vector<Component> {
+        std::vector<Component> result;
         for (auto& item : props.items) {
             result.push_back(<Item key={item.id} label={item.name} />);
         }
@@ -254,7 +254,7 @@ every time a signal it captures fires. A `<Slot>` whose body needs no nested JSX
 disallowed) may still use plain `{ }`.
 
 The runtime, not the preprocessor, enforces: `<Slot>` must have exactly one child; that child
-must be a callable returning `IrisComponent` or `std::vector<IrisComponent>`; anything else
+must be a callable returning `Component` or `std::vector<Component>`; anything else
 (multiple children, a non-callable child) is a runtime error, not a compile-time one — consistent
 with the preprocessor's stated boundary of never inspecting escape-hatch contents (§1.4).
 
@@ -278,7 +278,7 @@ render {
         <Button label="Settings" onPress={[&]() { settingsOpen.set(true); }} />
 
         /* Conditionally render the settings page */
-        { [&]() -> IrisComponent {
+        { [&]() -> Component {
             if (settingsOpen.get()) return <SettingsPage />;
             return nullptr;
         }() }
@@ -295,7 +295,7 @@ Almost all of this section moved to the host language. What remains Iris's respo
 ### 2.1 What the host language now owns
 
 Per the decision doc §8, verbatim: component declaration (a component is a host-language
-function returning `IrisComponent`), props (host-language structs, default member initializers
+function returning `Component`), props (host-language structs, default member initializers
 handle what v1 called "optional/default prop values"), state (host-language variables wrapped in
 `iris::Signal<T>`, §2.2), event handlers (host-language lambdas), all control flow, all
 expressions, all type definitions, and comment syntax. Iris does not define grammar for any of
@@ -369,7 +369,7 @@ decision-doc-pt1 rules):
   backend. Penumbra requires no changes to support `key`. **The map's value type is
   `IWidget*`, never a concrete backend type like `WidgetBase*`** — per
   `docs/iris_stage3_decision_doc.md` §0's Stage 2 implementation note, the Iris runtime must stay
-  backend-agnostic throughout, not just at the `IrisComponent` IR level (§2.5). Penumbra's
+  backend-agnostic throughout, not just at the `Component` IR level (§2.5). Penumbra's
   backend-mapping pass (§3) wraps each concrete widget it builds in a `PenumbraWidget : IWidget`
   adapter (§10) before it's stored anywhere in the runtime.
 
@@ -392,22 +392,22 @@ constructs a struct, not via Iris-defined prop syntax.
 Implicit children-forwarding for a generic wrapper component remains unspecified, same as v1 —
 carried forward in §8.
 
-### 2.5 `IrisComponent` — the backend-agnostic IR
+### 2.5 `Component` — the backend-agnostic IR
 
-Per `docs/iris_stage2_decision_doc.md` §4: `IrisComponent` (§1.1, §1.5) is a lightweight,
+Per `docs/iris_stage2_decision_doc.md` §4: `Component` (§1.1, §1.5) is a lightweight,
 backend-agnostic **intermediate representation node**, not a live-widget facade. It carries a
-tag, a resolved prop map, and an ordered list of child `IrisComponent` nodes — nothing about
+tag, a resolved prop map, and an ordered list of child `Component` nodes — nothing about
 Penumbra, `WidgetBase`, or any concrete widget type.
 
 ```cpp
-struct IrisComponent {
+struct Component {
     IrisElementTag Tag;             // Frame, Inline, Text, Image, or a component name
     IrisProps Props;                // key-value prop map, `key` already stripped
-    std::vector<IrisComponent> Children;
+    std::vector<Component> Children;
 };
 ```
 
-(Illustrative only — the real, current shape in `include/Iris/IrisComponent.h` also carries
+(Illustrative only — the real, current shape in `include/Iris/Component.h` also carries
 `SlotCallable` per §1.5/`docs/iris_stage1_codegen_decision.md`, and an `IrisElementTag::None`
 sentinel plus `nullptr_t` converting constructor per §8's resolved `nullptr`-conversion gap.)
 
@@ -421,7 +421,7 @@ Penumbra's Builder API (§3); when Umbra Engine/Nyx (Stage 6) exists, it walks t
 unchanged IR to build whatever Nyx needs. The IR shape itself never varies by backend, and
 neither does the Slot-resolution step in front of it.
 
-**Rejected alternative**, recorded for completeness: `IrisComponent` as a thin move-only facade
+**Rejected alternative**, recorded for completeness: `Component` as a thin move-only facade
 directly around `unique_ptr<WidgetBase>`, calling `AddChild` immediately as `.child()` is
 invoked. Rejected because it ties Iris's core type to one backend's ownership model and leaves
 nothing for Stage 3's reconciler to diff against — building Stage 2 on that model would mean
@@ -443,9 +443,9 @@ than left as an implied pattern.
 
 Codegen branches on how a tag resolves (§1.4):
 - **Core primitive** (`Frame`, `Inline`, `Grid`, `Image`, `Text`) → the preprocessor emits an
-  `IrisComponent` IR node (§2.5) directly; no props-struct lookup happens.
+  `Component` IR node (§2.5) directly; no props-struct lookup happens.
 - **Imported component name** → the preprocessor emits `Name(NameProps{ ...prop initializers...
-  })` and wraps the result as this element's `IrisComponent` — relying on the `<Name>Props`
+  })` and wraps the result as this element's `Component` — relying on the `<Name>Props`
   rule above to know what type to construct.
 
 ---
@@ -533,11 +533,11 @@ the one exception to the shared method set — see its entry below.
   needed in practice since each `<Slot>` usage already has a distinct static source position.
   `class` is not applicable — see below.
 - Children: exactly one — a `{ }` escape hatch whose content is a callable returning
-  `IrisComponent` or `std::vector<IrisComponent>` (§1.5). Enforced by the runtime, not the
+  `Component` or `std::vector<Component>` (§1.5). Enforced by the runtime, not the
   preprocessor; anything else is a runtime error.
 - Backend requirement: **none.** The Iris runtime resolves every `<Slot>` — invoking its
   callable and substituting the result — before any backend-mapping pass runs. No backend
-  (Penumbra today, a future Nyx backend) ever sees a `Slot`-tagged `IrisComponent` node, which is
+  (Penumbra today, a future Nyx backend) ever sees a `Slot`-tagged `Component` node, which is
   also why `class` isn't meaningful on it: there's nothing for Lustre to select against on a node
   that never reaches a widget tree.
 
@@ -706,19 +706,19 @@ exactly as every example already writes it, since what's captured is now a refer
 heap-stable storage. Re-verified end to end (real `.iris` → `iris_cc` → `IRIS_SIGNAL` →
 `iris::Mount` → real Penumbra widget) under AddressSanitizer with zero errors.
 
-**Resolved:** `IrisComponent` had no `nullptr_t` constructor, so every conditional-rendering
+**Resolved:** `Component` had no `nullptr_t` constructor, so every conditional-rendering
 example in this spec (§1.5, §9) writing `return nullptr;` inside a `<Slot>` lambda declared to
-return `IrisComponent` didn't actually compile — surfaced by manually host-compiling the §9
+return `Component` didn't actually compile — surfaced by manually host-compiling the §9
 `PartyScreen` example's generated output while verifying `docs/iris_escape_hatch_decision.md`
-(an `IrisComponent`-shape gap, not an escape-hatch one). Fixed with a new `IrisElementTag::None`
-sentinel (`include/Iris/IrisElementTag.h`) plus an implicit `IrisComponent(std::nullptr_t)`
-converting constructor (`include/Iris/IrisComponent.h`) that produces it — `return nullptr;`
-now yields an `IrisElementTag::None`-tagged `IrisComponent`, which a walker/reconciler must
+(an `Component`-shape gap, not an escape-hatch one). Fixed with a new `IrisElementTag::None`
+sentinel (`include/Iris/IrisElementTag.h`) plus an implicit `Component(std::nullptr_t)`
+converting constructor (`include/Iris/Component.h`) that produces it — `return nullptr;`
+now yields an `IrisElementTag::None`-tagged `Component`, which a walker/reconciler must
 treat as "unmount whatever was here, mount nothing" and never hand to a backend `Builder`.
-Adding that constructor loses `IrisComponent`'s aggregate-ness, so an explicit 4-field
-constructor was added alongside it to keep Codegen.h's emitted `IrisComponent{Tag, Props,
-Children, SlotCallable}` call shape compiling unchanged. `tests/IrisComponentTests.cpp` is a
-new test file that host-compiles `IrisComponent.h` directly (previously nothing did — Codegen's
+Adding that constructor loses `Component`'s aggregate-ness, so an explicit 4-field
+constructor was added alongside it to keep Codegen.h's emitted `Component{Tag, Props,
+Children, SlotCallable}` call shape compiling unchanged. `tests/ComponentTests.cpp` is a
+new test file that host-compiles `Component.h` directly (previously nothing did — Codegen's
 own tests only ever checked the shape of generated *text*, never compiled it) and covers the
 `nullptr` conversion, including through `MakeSlotCallable`.
 
@@ -737,8 +737,8 @@ now has a real target for every Core primitive except `<Grid>` (deferred by deci
 **Resolved:** `IrisProps`'s concrete runtime representation — `docs/iris_props_decision.md`: a
 closed, strongly-typed `std::variant` (`Iris::IrisPropValue`), not a type-erased
 `unordered_map<string, any>`. This unblocked Stage 1 codegen, which in turn surfaced two more
-gaps neither that document nor §2.5's `IrisComponent` shape actually covered — both closed in
-`docs/iris_stage1_codegen_decision.md`: where `<Slot>`'s callable child lives on `IrisComponent`
+gaps neither that document nor §2.5's `Component` shape actually covered — both closed in
+`docs/iris_stage1_codegen_decision.md`: where `<Slot>`'s callable child lives on `Component`
 (not `Props`, not `Children` — a new `SlotCallable` field, populated via
 `Iris::MakeSlotCallable()`), and how literal text/`{ }` interpolation children are represented
 (`<Text>` concatenates into its own `"text"` prop; other primitives synthesize a `<Text>` child
@@ -809,19 +809,19 @@ struct PartyScreenProps {
     std::vector<Character> members;
 };
 
-IrisComponent PartyScreen(PartyScreenProps props) {
+Component PartyScreen(PartyScreenProps props) {
     IRIS_SIGNAL(bool, detailsOpen, false);
 
     render {
         <Frame class="party-screen">
             <Button label="Details" onPress={[&]() { detailsOpen.set(true); }} />
             <Slot>
-                !{[&]() -> IrisComponent {
+                !{[&]() -> Component {
                     if (!detailsOpen.get()) return nullptr;
                     return <Frame class="details-panel">
                         <Slot>
-                            !{[&]() -> std::vector<IrisComponent> {
-                                std::vector<IrisComponent> rows;
+                            !{[&]() -> std::vector<Component> {
+                                std::vector<Component> rows;
                                 for (auto& member : props.members) {
                                     rows.push_back(
                                         <Frame key={member.id} class="party-row">
@@ -876,7 +876,7 @@ For the earlier override wave — v1 vs. the original `docs/iris_design.md` draf
 This revision folds in the closure of every question §8 previously listed as open post-pivot,
 all resolved without contradiction or reinterpretation needed:
 
-1. List/loop rendering settled as `std::vector<IrisComponent>` escape hatches (§1.5) — new
+1. List/loop rendering settled as `std::vector<Component>` escape hatches (§1.5) — new
    section, new runtime-API implication (children accept a vector, not just a single component).
 2. `render {` detection and escape-hatch brace balancing both resolved by a single
    `IHostLanguageTokenizer` abstraction, pluggable per file extension (§1.3).
@@ -896,7 +896,7 @@ Unlike the previous two revisions, this pass was checked directly against
 just the decision doc's prose — two of the ten Stage 2 decisions turned out not to match what
 actually shipped (see below).
 
-1. `IrisComponent` confirmed as a backend-agnostic IR node (tag/props/children), not a
+1. `Component` confirmed as a backend-agnostic IR node (tag/props/children), not a
    live-widget facade (§2.5) — closes the representation question `docs/iris_stage2_open_questions.md`
    §4 raised.
 2. New `<Name>Props` required naming rule for component-invocation codegen, and the
@@ -1047,7 +1047,7 @@ implementation from the Penumbra side.
 `iris::Signal<T>`, ambient dependency tracking, `IrisRuntime` batching, `iris::Tick()`, and the
 reconciler (`ComputePropDiff`, same-tag-key matching, keyed list diffing) — is implemented,
 closing several gaps this section's prose left genuinely open (how a signal knows which slots
-to notify was never specified; `key` never actually reached `IrisComponent`; `Signal<T>` locals
+to notify was never specified; `key` never actually reached `Component`; `Signal<T>` locals
 were dangling-reference UB as originally specified — see §8's resolved notes). A real Penumbra
 `Umbra::IWidget` adapter is also implemented and tested against actual `Penumbra::Widgets::Box`/
 `Label` objects, not just a mock (`iris-penumbra-backend`'s
@@ -1055,7 +1055,7 @@ were dangling-reference UB as originally specified — see §8's resolved notes)
 `docs/iris_stage3_implementation_decision.md` (the reconciler/runtime core),
 `docs/iris_signal_lifetime_decision.md` (the signal-lifetime fix), and
 `docs/iris_slot_stage2_wiring_decision.md`/`docs/iris_slot_list_wiring_decision.md` (wiring
-`<Slot>` into the Stage 2 walker, for both the single-`IrisComponent`- and list-returning
+`<Slot>` into the Stage 2 walker, for both the single-`Component`- and list-returning
 callable shapes — verified against real Penumbra `Box`/`Label` objects, a live `iris::Signal`
 update reaching a real `Box::Children` vector end to end, clean under AddressSanitizer +
 UndefinedBehaviorSanitizer). Nested-`<Slot>` discovery (a `<Slot>` inside another `<Slot>`'s

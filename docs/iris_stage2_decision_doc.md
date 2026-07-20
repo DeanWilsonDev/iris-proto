@@ -12,7 +12,7 @@
 > Penumbra as a git submodule — has been reversed. Iris's core is meant to be backend-agnostic
 > and shouldn't have to pull in one specific backend's build to compile; Penumbra is a
 > general-purpose widget library with no inherent reason to know Iris exists either. The Stage
-> 2 Penumbra-backend code (the `IrisComponent`-IR-to-widget-tree walker) now lives in its own
+> 2 Penumbra-backend code (the `Component`-IR-to-widget-tree walker) now lives in its own
 > repo, `iris-penumbra-backend`, which vendors both Iris and `penumbra-proto` as submodules —
 > neither depends on the other directly. This repo (`iris`) has no Penumbra reference anywhere
 > in its build. See §10 below for the original (superseded) reasoning, kept for the record.
@@ -26,7 +26,7 @@
 | 1 | Generic interactive-element mechanism | Closed by `penumbra_iris_changes.md` §4 — `WidgetBase` input callbacks |
 | 2 | `<Image>` backend | Build now — minimal `IImageBackend`/`Image` widget. See §2. |
 | 3 | `<Grid>` layout | Deferred — stubbed as plain `Box` in Stage 2. See §3. |
-| 4 | What is `IrisComponent` concretely | Lightweight backend-agnostic IR node. See §4. |
+| 4 | What is `Component` concretely | Lightweight backend-agnostic IR node. See §4. |
 | 5 | Component invocation codegen convention | `<Name>Props` required naming rule. See §5. |
 | 6 | `<Inline>` vs `<Text>` mapping | Distinct — `<Inline>` maps to new `InlineContainer` widget. See §6. |
 | 7 | Styling stub strategy | Both: Cimmerian tests + visible demo with hardcoded placeholder styles. See §7. |
@@ -77,18 +77,18 @@ primitive requirement. Revisit when a real consumer needs it.
 
 ---
 
-## 4. `IrisComponent` — lightweight IR node
+## 4. `Component` — lightweight IR node
 
-**Decision:** `IrisComponent` is a lightweight, backend-agnostic intermediate
+**Decision:** `Component` is a lightweight, backend-agnostic intermediate
 representation node. It carries a tag, a props map, and an ordered list of child
-`IrisComponent` nodes. It has no knowledge of Penumbra, `WidgetBase`, or any concrete
+`Component` nodes. It has no knowledge of Penumbra, `WidgetBase`, or any concrete
 widget type.
 
 ```cpp
-struct IrisComponent {
+struct Component {
     IrisElementTag Tag;             // Frame, Inline, Text, Image, or a component name
     IrisProps Props;                // key-value prop map, key already stripped
-    std::vector<IrisComponent> Children;
+    std::vector<Component> Children;
 };
 ```
 
@@ -97,7 +97,7 @@ tree from it. The IR is pure Iris — when the Umbra Engine backend arrives at S
 walks the same IR and maps it to whatever Nyx needs. The IR never changes between
 backends.
 
-**Rejected alternative:** `IrisComponent` as a thin facade around `unique_ptr<WidgetBase>`
+**Rejected alternative:** `Component` as a thin facade around `unique_ptr<WidgetBase>`
 that calls `AddChild` immediately as `.child()` is invoked. This ties Iris's core type
 to Penumbra's ownership model and produces nothing to diff against in Stage 3's
 reconciler. Building Stage 2 on that model means throwing it away when Stage 3 starts.

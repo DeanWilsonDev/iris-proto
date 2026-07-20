@@ -42,12 +42,12 @@ The component function body itself never re-runs.
 
 **Reactive regions are marked explicitly by the author using `<Slot>`** — a new Core
 Iris runtime primitive. `<Slot>`'s single child is a callable C++23 lambda returning
-`IrisComponent` or `std::vector<IrisComponent>`. The runtime invokes it at mount and
+`Component` or `std::vector<Component>`. The runtime invokes it at mount and
 re-invokes it when signals it captures fire. The backend never sees a `<Slot>` node —
 the runtime resolves it before the backend pass runs.
 
 ```cpp
-IrisComponent StartMenu() {
+Component StartMenu() {
     iris::Signal<bool> settingsOpen = false;
 
     render {
@@ -57,7 +57,7 @@ IrisComponent StartMenu() {
                 onPress={[&]() { settingsOpen.set(true); }}
             />
             <Slot>
-                {[&]() -> IrisComponent {
+                {[&]() -> Component {
                     if (settingsOpen.get()) {
                         return <SettingsPage
                             onClose={[&]() { settingsOpen.set(false); }}
@@ -75,8 +75,8 @@ List rendering via `<Slot>`:
 
 ```cpp
 <Slot>
-    {[&]() -> std::vector<IrisComponent> {
-        std::vector<IrisComponent> result;
+    {[&]() -> std::vector<Component> {
+        std::vector<Component> result;
         for (auto& item : props.items) {
             result.push_back(<Item key={item.id} label={item.name} />);
         }
@@ -93,7 +93,7 @@ List rendering via `<Slot>`:
 
 **`<Slot>` runtime constraints (enforced by the runtime, not the preprocessor):**
 - Must have exactly one child
-- That child must be a callable returning `IrisComponent` or `std::vector<IrisComponent>`
+- That child must be a callable returning `Component` or `std::vector<Component>`
 - Multiple children or a non-callable child is a runtime error
 
 **`<Slot>` must be added to the Core primitive set in `docs/iris_core_spec.md` §3.1.**
@@ -143,8 +143,8 @@ signal it captures fires; the lambda handles the rest.
 
 ```cpp
 struct SlotState {
-    std::function<IrisComponent()> Lambda;       // or vector<IrisComponent> variant
-    IrisComponent PreviousOutput;                // last rendered output, diffed on re-invoke
+    std::function<Component()> Lambda;       // or vector<Component> variant
+    Component PreviousOutput;                // last rendered output, diffed on re-invoke
     std::unique_ptr<IWidget> RootWidget;         // live backend widget this slot owns
 };
 ```
@@ -170,7 +170,7 @@ long-lived locals on the component instance established at mount.
 
 ## 3. Keyed list diffing — minimal-move algorithm
 
-**Decision:** When a `<Slot>` returns a `std::vector<IrisComponent>`, the runtime diffs
+**Decision:** When a `<Slot>` returns a `std::vector<Component>`, the runtime diffs
 the new list against the previous one by `key` using a minimal-move algorithm based on
 longest increasing subsequence (LIS). The minimum set of `MoveChild`/`InsertChildAt`/
 `RemoveChild` operations is computed and applied to reach the new order. Existing widget
@@ -263,7 +263,7 @@ iris::Signal<int> currentFrame = 0;
 
 render {
     <Slot>
-        {[&]() -> IrisComponent {
+        {[&]() -> Component {
             return <Image handle={frames[currentFrame.get()]} />;
         }}
     </Slot>
@@ -391,7 +391,7 @@ modification.
 **Component author registration:**
 
 ```cpp
-IrisComponent AnimationPreview() {
+Component AnimationPreview() {
     iris::Signal<int> currentFrame = 0;
 
     iris::RegisterLifecycle(new class : public Penumbra::IWidgetLifecycle {
