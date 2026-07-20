@@ -227,7 +227,8 @@ ElementNode RenderBlockParser::ParseElementAfterLAngle(SourceLocation LAngleLoca
             return Node;
         }
 
-        const std::string PropName = Current_.Text;
+        const std::string    PropName = Current_.Text;
+        const SourceLocation PropNameLocation = Current_.Location;
         Advance();
         if (!IsPunct('=')) {
             Errors_.push_back({"expected '=' after prop name '" + PropName + "'", Current_.Location});
@@ -239,7 +240,7 @@ ElementNode RenderBlockParser::ParseElementAfterLAngle(SourceLocation LAngleLoca
         if (PropName == "key") {
             Node.Key = std::move(Value);
         } else {
-            Node.Props.push_back(Prop{PropName, std::move(Value)});
+            Node.Props.push_back(Prop{PropName, std::move(Value), PropNameLocation});
         }
     }
 

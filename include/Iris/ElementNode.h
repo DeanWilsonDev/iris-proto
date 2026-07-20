@@ -51,8 +51,9 @@ struct PropValue {
 };
 
 struct Prop {
-    std::string Name;
-    PropValue   Value;
+    std::string    Name;
+    PropValue      Value;
+    SourceLocation Location; // where Name itself starts -- distinct from Value.Location
 };
 
 // A single child position inside an element (docs/iris_core_spec.md §1.4,
