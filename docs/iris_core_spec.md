@@ -175,7 +175,7 @@ preprocessor-level compile error (§7).
 ```
 
 - Element tags are PascalCase. Per the decision doc §8, tag names are **not lexer-level
-  keywords** — `Frame`, `Inline`, `Grid`, `Image`, `Icon`, `Text` (§3) and any imported component name
+  keywords** — `Frame`, `Inline`, `Grid`, `Image`, `Icon`, `Text`, `Scroll`, `Input` (§3) and any imported component name
   are ordinary PascalCase identifiers the preprocessor resolves semantically against Core
   primitives and `import`ed names.
 - `class` and `key` are the two Iris-reserved prop names (§2.3, §4). Both accept either a string
@@ -401,7 +401,7 @@ Penumbra, `WidgetBase`, or any concrete widget type.
 
 ```cpp
 struct Component {
-    IrisElementTag Tag;             // Frame, Inline, Text, Image, Icon, or a component name
+    IrisElementTag Tag;             // Frame, Inline, Text, Image, Icon, Scroll, Input, or a component name
     IrisProps Props;                // key-value prop map, `key` already stripped
     std::vector<Component> Children;
 };
@@ -442,7 +442,7 @@ miscompiles rather than failing loudly, which is why it's called out here promin
 than left as an implied pattern.
 
 Codegen branches on how a tag resolves (§1.4):
-- **Core primitive** (`Frame`, `Inline`, `Grid`, `Image`, `Icon`, `Text`) → the preprocessor emits an
+- **Core primitive** (`Frame`, `Inline`, `Grid`, `Image`, `Icon`, `Text`, `Scroll`, `Input`) → the preprocessor emits an
   `Component` IR node (§2.5) directly; no props-struct lookup happens.
 - **Imported component name** → the preprocessor emits `Name(NameProps{ ...prop initializers...
   })` and wraps the result as this element's `Component` — relying on the `<Name>Props`
@@ -534,6 +534,39 @@ catalog (`docs/penumbra_iris_lustre_componentization_gaps_requirements.md` §1).
   resolving the name, mirroring `<Image>`'s own `IImageBackend` shape). A backend with no icon
   catalog wired up may leave the glyph undrawn, the same "build succeeds, nothing loaded"
   tolerance `<Image>` already has when `ImageBackend`/`SdlRenderer` are null.
+
+**`<Scroll>`** — A scrolling clip container (docs/
+penumbra_iris_lustre_componentization_gaps_requirements.md §3).
+- Props: `wheelStep` (float, optional — logical pixels scrolled per wheel notch; omitted
+  means the backend's own default, `0.0f`, "no opinion"), `class`, `key`, any event prop.
+- Children: element children only, same as `<Frame>` — no literal text or interpolated
+  text directly inside (wrap it in a nested `<Text>` first, same rule `<Frame>` already
+  has).
+- Backend requirement: maps onto Penumbra's `Penumbra::Widgets::ScrollablePanel`, a `Box`
+  subclass with no `Builder` of its own (unlike every other Core primitive here) — its
+  shared props (`class`, event props) are set as plain public fields inherited from
+  `WidgetBase`/`Box`, not through a fluent chain, and its children are attached via the
+  inherited `Box::AddChild` directly. `WheelStepLogical` is likewise a plain public
+  field.
+
+**`<Input>`** — Single-line text entry (docs/
+penumbra_iris_lustre_componentization_gaps_requirements.md §3).
+- Props: `text` (string, optional — the initial value; not live-bound, changing it after
+  mount doesn't reach an already-built widget any more than any other prop here does),
+  `preferredWidth` (float, optional — a field-width hint, `Penumbra::Widgets::
+  TextInput::PreferredWidthLogical`), `class`, `key`. No event props in this first cut —
+  `TextInput`'s own `OnTextChanged` takes a `const std::string&` argument, and Iris's
+  `IrisPropValue` variant (`include/Iris/IrisProps.h`) has no `function<void(std::string)>`
+  member to carry it; the shared `onChange` prop (`function<void()>`, no argument) exists
+  but can't tell a caller *what* changed, so it isn't wired for `<Input>` yet.
+- Children: none (leaf) — same as `<Image>`/`<Icon>`.
+- Backend requirement: maps onto Penumbra's `TextInput`, another `Box` subclass with no
+  `Builder` — same "plain field, not a Builder chain" treatment as `<Scroll>` above.
+  `TextInput::Focus`/`Clipboard` (a `FocusState*`/`Platform::IClipboard*`, both
+  app-owned runtime state) are left for the caller to wire onto the built widget after
+  `BuildWidgetTree` returns, the same "build succeeds, nothing loaded" tolerance
+  `<Image>`/`<Icon>` already have for their own backend pointers — a structural build
+  with neither set still produces a real (if inert — unfocusable, no clipboard) widget.
 
 **`<Text>`** — Renders a text string.
 - Props: `class`, `key`, any event prop. **No `font` prop** — font is specified via Lustre.
@@ -684,7 +717,7 @@ Per decision doc §8, the entire Iris-owned vocabulary:
 | `key` | Reserved prop name | Stripped before codegen; never reaches the backend (§2.3). |
 | `class` | Reserved prop name | Style bridge to Lustre (§4). |
 
-That's the whole list. Primitive tag names (`Frame`, `Inline`, `Grid`, `Image`, `Icon`, `Text`,
+That's the whole list. Primitive tag names (`Frame`, `Inline`, `Grid`, `Image`, `Icon`, `Text`, `Scroll`, `Input`,
 `Model3d`) are ordinary identifiers, not keywords (§1.4).
 
 ---

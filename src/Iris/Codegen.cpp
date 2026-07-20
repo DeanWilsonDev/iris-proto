@@ -135,13 +135,16 @@ private:
                Expr + "}}}, {}, nullptr}";
     }
 
-    // `<Frame>`/`<Grid>`: element children only. `<Inline>`: any mix of element,
-    // text, and escape-hatch children (docs/iris_stage2_decision_doc.md §6). `<Image>`/
-    // `<Icon>`: no children at all — both are leaves identified by a single `src`/`icon`
-    // prop, same reasoning as `<Image>`'s own.
+    // `<Frame>`/`<Grid>`/`<Scroll>`: element children only (`<Scroll>` wraps its
+    // content in a clipping/scrolling container the same way `<Frame>` wraps it in a
+    // plain one — docs/penumbra_iris_lustre_componentization_gaps_requirements.md §3).
+    // `<Inline>`: any mix of element, text, and escape-hatch children
+    // (docs/iris_stage2_decision_doc.md §6). `<Image>`/`<Icon>`/`<Input>`: no children
+    // at all — all three are leaves identified by their own single content prop
+    // (`src`/`icon`/`text`), same reasoning as `<Image>`'s own.
     std::string EmitChildrenList(const ElementNode& Node) {
         const bool AllowsText = Node.Tag == "Inline";
-        const bool AllowsAny  = Node.Tag != "Image" && Node.Tag != "Icon";
+        const bool AllowsAny  = Node.Tag != "Image" && Node.Tag != "Icon" && Node.Tag != "Input";
 
         std::string Result = "{";
         bool         First = true;

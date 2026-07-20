@@ -79,6 +79,35 @@ DESCRIBE("Codegen", {
         ASSERT_FALSE(Result.Errors.empty()); // <Icon> (a leaf) with a child is a codegen error
     });
 
+    IT("Scroll with an element child and a wheelStep prop codegens with no errors", {
+        const auto Result = Generate(R"(render { <Scroll wheelStep={24.0f}><Frame class="row" /></Scroll> })");
+        ASSERT_TRUE(Result.Errors.empty()); // Scroll with a child and wheelStep codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "Iris::IrisElementTag::Scroll")); // tag is Iris::IrisElementTag::Scroll
+        ASSERT_TRUE(Contains(Result.Source, "std::in_place_type<float>, 24.0f"));
+        // wheelStep is wrapped in_place_type<float> with the escape-hatch expression verbatim
+        ASSERT_TRUE(Contains(Result.Source, "\"row\"")); // the Frame child's own class made it into the Children list
+    });
+
+    IT("Scroll with a literal-text child is an error", {
+        const auto Result = Generate(R"(render { <Scroll>hello</Scroll> })");
+        ASSERT_FALSE(Result.Errors.empty()); // <Scroll> takes element children only, same as <Frame>
+    });
+
+    IT("Input with text and preferredWidth props codegens with no errors", {
+        const auto Result = Generate(R"(render { <Input text="hello" preferredWidth={200.0f} /> })");
+        ASSERT_TRUE(Result.Errors.empty()); // Input with text + preferredWidth codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "Iris::IrisElementTag::Input")); // tag is Iris::IrisElementTag::Input
+        ASSERT_TRUE(Contains(Result.Source, "std::in_place_type<std::string>, \"hello\""));
+        // text is wrapped in_place_type<std::string> with the quoted literal
+        ASSERT_TRUE(Contains(Result.Source, "std::in_place_type<float>, 200.0f"));
+        // preferredWidth is wrapped in_place_type<float> with the escape-hatch expression verbatim
+    });
+
+    IT("Input with a child is an error", {
+        const auto Result = Generate(R"(render { <Input text="hello"><Frame /></Input> })");
+        ASSERT_FALSE(Result.Errors.empty()); // <Input> (a leaf) with a child is a codegen error
+    });
+
     IT("Frame with a literal-text child is an error", {
         const auto Result = Generate(R"(render { <Frame>hello</Frame> })");
         ASSERT_FALSE(Result.Errors.empty()); // <Frame> with a literal-text child is a codegen error

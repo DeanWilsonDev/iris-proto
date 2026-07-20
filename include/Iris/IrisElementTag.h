@@ -31,6 +31,20 @@ enum class IrisElementTag {
     // drawn glyph is entirely backend-side.
     Icon,
     Text,
+    // A scrolling clip container (docs/
+    // penumbra_iris_lustre_componentization_gaps_requirements.md §3) — like `<Frame>`,
+    // takes ordinary element children, but clips them to its own bounds and offsets
+    // them by a wheel-driven scroll position instead of just stacking them. `wheelStep`
+    // (float) is its one dedicated prop (logical pixels scrolled per wheel notch);
+    // everything else (class, event props) is the shared set every primitive gets.
+    Scroll,
+    // Single-line text entry (docs/
+    // penumbra_iris_lustre_componentization_gaps_requirements.md §3) — a leaf, same as
+    // `<Icon>`/`<Image>`: no children. `text` (its initial value, reusing `<Text>`'s own
+    // prop name) and `preferredWidth` (float, a field-width hint) are its dedicated
+    // props; focus/clipboard/caret are entirely backend-side state this tag carries no
+    // opinion about.
+    Input,
     Slot,
 };
 
