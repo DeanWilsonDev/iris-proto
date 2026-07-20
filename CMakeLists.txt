@@ -84,16 +84,25 @@ target_link_libraries(iris_cc PRIVATE iris)
 # host-language server (ClangdProxy for `.iris` today) through
 # IHostLanguageServerProxy, kept as a portable seam for a future Nyx-targeted
 # proxy over `.irisx`. POSIX-only (fork/exec) — see ClangdProxy.h.
+#
+# Split into a static library (everything but main.cpp) plus a thin
+# executable, the same shape `iris` itself uses for `iris_cc` — so
+# iris_lsp_tests below can link the real implementation without also linking
+# a second `main()`.
 # ---------------------------------------------------------------------------
 find_package(Threads REQUIRED)
 
-add_executable(iris_lsp
-    tools/iris-lsp/main.cpp
+add_library(iris_lsp_lib STATIC
     tools/iris-lsp/Server.cpp
     tools/iris-lsp/VirtualDocument.cpp
     tools/iris-lsp/ClangdProxy.cpp
-    tools/iris-lsp/JsonRpc.cpp)
-target_link_libraries(iris_lsp PRIVATE iris amanuensis Threads::Threads)
+    tools/iris-lsp/JsonRpc.cpp
+    tools/iris-lsp/RenderTextHeuristics.cpp)
+target_include_directories(iris_lsp_lib PUBLIC tools/iris-lsp)
+target_link_libraries(iris_lsp_lib PUBLIC iris amanuensis Threads::Threads)
+
+add_executable(iris_lsp tools/iris-lsp/main.cpp)
+target_link_libraries(iris_lsp PRIVATE iris_lsp_lib)
 
 # ---------------------------------------------------------------------------
 # Tests — one Cimmerian-based executable. Every test uses Cimmerian's
@@ -123,3 +132,25 @@ add_executable(test_iris
 target_link_libraries(test_iris PRIVATE iris cimmerian)
 set_target_properties(test_iris PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+
+# ---------------------------------------------------------------------------
+# iris-lsp's own test suite (tools/iris-lsp/tests/), same Cimmerian shape as
+# test_iris above. Covers everything that doesn't need a real clangd on
+# PATH: JsonRpc framing, VirtualDocument's #line-derived position mapping,
+# the RenderTextHeuristics text heuristics, and Server's request dispatch
+# (diagnostics, render{}-local completion, import/tag-usage goto-definition)
+# driven over its real stdio JSON-RPC protocol via in-memory streams. Proxy/
+# clangd behavior (docs/iris_lsp_decision.md §4) is intentionally not
+# covered here — spawning a real clangd in a unit-test suite trades
+# determinism for coverage of code this repo doesn't own; that path stays
+# hand-verified per the decision doc's own §7.
+# ---------------------------------------------------------------------------
+add_executable(iris_lsp_tests
+    tools/iris-lsp/tests/TestMain.cpp
+    tools/iris-lsp/tests/JsonRpcTests.cpp
+    tools/iris-lsp/tests/VirtualDocumentTests.cpp
+    tools/iris-lsp/tests/RenderTextHeuristicsTests.cpp
+    tools/iris-lsp/tests/ServerTests.cpp)
+target_link_libraries(iris_lsp_tests PRIVATE iris_lsp_lib cimmerian)
+set_target_properties(iris_lsp_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tools/iris-lsp/tests")

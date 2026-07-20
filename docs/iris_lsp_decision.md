@@ -62,7 +62,7 @@ column-for-column correspondence to the block it replaced never has to be resolv
 | --- | --- | --- | --- |
 | Diagnostics | `Iris::CompileFile`'s own `Diagnostics` list, always | same | same (clangd's own diagnostics are **not** merged in v1 — see §4) |
 | Completion | tag names (`CorePrimitiveTagNames()`) or prop names (`PrimitivePropTypeNames()`), by a text heuristic on the cursor's own line (`ClassifyRenderCompletion`) | none (v1 gap) | proxied to `IHostLanguageServerProxy::Completion` |
-| Goto-definition | none yet — jumping from a `<Foo>` *usage* to its declaration needs the same machinery as the import case, just triggered from inside the tree instead of a statement scan (v1 gap, not a design gap) | `ScanImports` + `ResolveImports`, then a text search for `Name(` in the target file | proxied to `IHostLanguageServerProxy::Definition`, position-translated both ways through `VirtualDocument` |
+| Goto-definition | `TagNameAtPosition` finds the `<Name>`/`</Name>` under the cursor; a Core primitive tag (no declaration to jump to) is filtered out, otherwise it's resolved identically to the import case below via `Server::ResolveComponentDeclaration` | `ScanImports` + `ResolveImports`, then a text search for `Name(` in the target file | proxied to `IHostLanguageServerProxy::Definition`, position-translated both ways through `VirtualDocument` |
 
 `PrimitivePropTypeNames()` moved from being file-local to `Codegen.cpp` into
 `CorePrimitives.h`/`.cpp` (alongside the existing `CorePrimitiveTagNames()`) as part of
@@ -197,11 +197,35 @@ text from the same `RenderBlockParser` tree it already builds for diagnostics.
 
 ## 7. Explicit non-goals for this pass
 
-- Goto-definition from a `<Foo>` *usage* inside `render{}` (only `import Foo` works today —
-  §3).
 - Hover, rename, find-references, semantic tokens — none implemented; nothing about the
   architecture blocks adding them later through the same local-vs-proxy split.
-- A `tools/iris-lsp/tests/` suite — the behavior above (including clangd diagnostic
-  forwarding, §4) was verified by hand-driving the server over its real stdio protocol
-  (initialize → didOpen → completion/definition/diagnostics → shutdown) against a small
-  throwaway project, not by an automated Cimmerian suite yet.
+- clangd-backed behavior (host-language completion/definition/diagnostics, §4) has no
+  automated coverage in `tools/iris-lsp/tests/` -- spawning a real clangd in a unit-test
+  suite would trade determinism for coverage of code this repo doesn't own. Verified by
+  hand-driving the server over its real stdio protocol instead (initialize → didOpen →
+  completion/definition/diagnostics → shutdown) against a small throwaway project.
+
+## 8. Test suite
+
+`tools/iris-lsp/tests/` (a `iris_lsp_lib` static library split out of the `iris_lsp`
+executable specifically so the tests can link the real implementation, mirroring how
+`iris`/`iris_cc` are already split) covers everything that doesn't need clangd:
+
+- `JsonRpcTests.cpp` -- Content-Length framing round-trips through an in-memory
+  `std::tmpfile()`, including back-to-back messages on one stream and EOF handling.
+- `VirtualDocumentTests.cpp` -- `IsInsideRenderBlock`, `ImportNameAtLine`, and a
+  `ToGenerated`/`ToSource` round trip across a real render-block splice (asserting the
+  generated line actually shifted, not just that round-tripping happens to be a no-op).
+- `RenderTextHeuristicsTests.cpp` -- `ClassifyRenderCompletion`, `TagNameAtPosition`
+  (§3's goto-def fix, including closing tags and picking the right one among several on a
+  line), and `FindComponentDeclaration`, all pulled out of `Server.cpp`'s own anonymous
+  namespace into `RenderTextHeuristics.h`/`.cpp` specifically so they're testable in
+  isolation.
+- `ServerTests.cpp` -- end-to-end through `Server::Run`'s real stdio protocol, using
+  `std::tmpfile()` for both directions instead of real pipes/processes:
+  `Server::DisableProxyForTesting()` (test-only, documented in `Server.h`) stops
+  `RebuildDocument` from ever forking a real `clangd`, so these tests are deterministic
+  and don't depend on clangd being installed. Covers Iris-level diagnostics,
+  render{}-local tag/attribute completion, and both goto-definition paths (`import Name`
+  and a `<Name>`/`</Name>` tag usage) landing on the same declaration, plus a Core
+  primitive tag correctly reporting "nothing to jump to."

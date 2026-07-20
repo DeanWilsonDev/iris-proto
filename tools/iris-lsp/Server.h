@@ -32,6 +32,14 @@ public:
     // Blocks reading JsonRpc messages from In until "exit" or EOF.
     void Run(std::FILE* In, std::FILE* Out);
 
+    // Test-only: makes RebuildDocument skip ever creating/starting a host-language
+    // proxy, as if one had already been attempted and found unavailable. Without this,
+    // the first document that compiles cleanly to host code would try to fork a real
+    // `clangd` (tools/iris-lsp/tests/ deliberately doesn't depend on clangd being
+    // installed -- see docs/iris_lsp_decision.md §7). Must be called before the first
+    // Run()/RebuildDocument.
+    void DisableProxyForTesting();
+
 private:
     struct OpenDocument {
         std::string                      Text;
@@ -71,6 +79,20 @@ private:
     // (LSP's publishDiagnostics replaces a uri's previous set wholesale, so this
     // supersedes the plain-Iris publish RebuildDocument already sent -- no duplication).
     void HandleClangdDiagnostics(const std::string& GeneratedPath, std::vector<ProxyDiagnostic> Diagnostics);
+
+    // Shared by both goto-definition sources that resolve to a component declaration --
+    // an `import Name` statement and a `<Name>`/`</Name>` tag usage inside render{}
+    // (Server.h itself never distinguishes the two once it has a Name to resolve: every
+    // non-Core-primitive tag *must* be imported, per SemanticValidator's own
+    // "is not imported and is not a Core primitive" rule, so there's no separate
+    // same-file-component case to handle). Returns nullopt if Name isn't among Imports,
+    // its resolved file can't be read, or no `Name(` declaration is found in it (the
+    // caller still reports a Location pointing at line 1 of the resolved file in that
+    // last case -- see HandleDefinition's own call site).
+    std::optional<ProxyLocation> ResolveComponentDeclaration(const std::string& Name,
+                                                              const std::vector<Iris::ImportStatement>& Imports,
+                                                              const Iris::IrisConfig& Config,
+                                                              const std::string& ProjectRoot) const;
 
     std::FILE* Out_{nullptr};
     bool       ShutdownRequested_{false};

@@ -3,6 +3,7 @@
 #include "Iris/CorePrimitives.h"
 #include "Iris/IrisConfig.h"
 #include "JsonRpc.h"
+#include "RenderTextHeuristics.h"
 
 #include <algorithm>
 #include <cctype>
@@ -75,93 +76,9 @@ std::pair<std::uint32_t, std::uint32_t> PositionFromParams(const Amanuensis::Val
             static_cast<std::uint32_t>(Position.Get("character").AsInteger()) + 1};
 }
 
-// The line's own text, 1-based -- used only for the render{}-local completion heuristic
-// below, never for anything that needs to be exact down to a byte (that's what
-// VirtualDocument's segment map is for).
-std::string_view LineText(std::string_view Text, std::uint32_t Line) {
-    std::uint32_t Current = 1;
-    std::size_t   Start = 0;
-    for (std::size_t Index = 0; Index <= Text.size(); ++Index) {
-        if (Current == Line && Start == 0 && (Index == 0 || Text[Index - 1] == '\n')) {
-            Start = Index;
-        }
-        if (Index == Text.size() || Text[Index] == '\n') {
-            if (Current == Line) {
-                return Text.substr(Start, Index - Start);
-            }
-            ++Current;
-        }
-    }
-    return {};
-}
-
-enum class RenderCompletionKind { None, TagName, AttributeName };
-
-// Backward scan from the cursor within its own line: the nearest of '<' / '>' decides
-// whether the cursor sits inside an still-open start tag at all, and whether whitespace
-// was crossed on the way there decides tag-name-position vs attribute-name-position.
-// Text-based, not tree-based, deliberately -- RenderBlockParser's own tree is only
-// guaranteed well-formed for text that already parses; a cursor mid-edit
-// (`<Frame cla|`) usually doesn't, and this heuristic degrades gracefully where a real
-// reparse would just fail. docs/iris_lsp_decision.md notes multi-line attribute lists as
-// a known gap (this only looks at the cursor's own line).
-RenderCompletionKind ClassifyRenderCompletion(std::string_view Line, std::uint32_t ColumnOneBased) {
-    const std::size_t CursorOffset = ColumnOneBased > 0 ? static_cast<std::size_t>(ColumnOneBased - 1) : 0;
-    bool               SawWhitespace = false;
-    std::size_t        Index = std::min(CursorOffset, Line.size());
-    while (Index > 0) {
-        --Index;
-        const char C = Line[Index];
-        if (C == '>') {
-            return RenderCompletionKind::None;
-        }
-        if (C == '<') {
-            return SawWhitespace ? RenderCompletionKind::AttributeName : RenderCompletionKind::TagName;
-        }
-        if (std::isspace(static_cast<unsigned char>(C)) != 0) {
-            SawWhitespace = true;
-        }
-    }
-    return RenderCompletionKind::None;
-}
-
-// A best-effort search for `Name`'s own declaration line in a resolved import target:
-// looks for `Name` as a whole word immediately followed (optional whitespace) by `(` --
-// matches `Component Name(Props)` without needing to parse the return type, since Iris
-// itself never parses component signatures either (docs/iris_core_spec.md §2.1).
-std::optional<std::pair<std::uint32_t, std::uint32_t>> FindComponentDeclaration(const std::string& Text,
-                                                                                  const std::string& Name) {
-    std::size_t Pos = 0;
-    while ((Pos = Text.find(Name, Pos)) != std::string::npos) {
-        const bool WordStartOk = Pos == 0 || (std::isalnum(static_cast<unsigned char>(Text[Pos - 1])) == 0 &&
-                                               Text[Pos - 1] != '_');
-        std::size_t After = Pos + Name.size();
-        const bool  WordEndOk = After >= Text.size() || (std::isalnum(static_cast<unsigned char>(Text[After])) == 0 &&
-                                                          Text[After] != '_');
-        if (WordStartOk && WordEndOk) {
-            while (After < Text.size() && std::isspace(static_cast<unsigned char>(Text[After])) != 0) {
-                ++After;
-            }
-            if (After < Text.size() && Text[After] == '(') {
-                std::uint32_t Line = 1;
-                std::uint32_t Column = 1;
-                for (std::size_t I = 0; I < Pos; ++I) {
-                    if (Text[I] == '\n') {
-                        ++Line;
-                        Column = 1;
-                    } else {
-                        ++Column;
-                    }
-                }
-                return std::make_pair(Line, Column);
-            }
-        }
-        Pos += Name.size();
-    }
-    return std::nullopt;
-}
-
 } // namespace
+
+void Server::DisableProxyForTesting() { ProxyStarted_ = true; }
 
 void Server::Run(std::FILE* In, std::FILE* Out) {
     Out_ = Out;
@@ -507,16 +424,45 @@ void Server::HandleCompletion(const Amanuensis::Value& Id, const Amanuensis::Val
     Reply(Id, std::move(Result));
 }
 
+std::optional<ProxyLocation> Server::ResolveComponentDeclaration(const std::string& Name,
+                                                                   const std::vector<Iris::ImportStatement>& Imports,
+                                                                   const Iris::IrisConfig& Config,
+                                                                   const std::string& ProjectRoot) const {
+    const Iris::ImportResolutionResult Resolved = Iris::ResolveImports(Imports, Config, ProjectRoot);
+    for (const Iris::ResolvedImport& R : Resolved.Resolved) {
+        if (R.Name != Name) {
+            continue;
+        }
+        const auto TargetText = ReadFile(R.ResolvedPath);
+        if (!TargetText) {
+            return std::nullopt;
+        }
+        const auto DeclLoc = FindComponentDeclaration(*TargetText, R.Name);
+        // A resolved-but-undeclared-looking file (FindComponentDeclaration found no
+        // `Name(` pattern -- e.g. the target has a syntax shape this heuristic doesn't
+        // recognise) still gets a Location, just pointing at the file's own line 1 rather
+        // than failing goto-def outright -- "the right file, imprecise line" beats "no
+        // jump at all".
+        return ProxyLocation{R.ResolvedPath, DeclLoc ? DeclLoc->first : 1, DeclLoc ? DeclLoc->second : 1};
+    }
+    return std::nullopt;
+}
+
 void Server::HandleDefinition(const Amanuensis::Value& Id, const Amanuensis::Value& Params) {
     const std::string Uri = Params.Get("textDocument").Get("uri").AsString();
     const auto [Line, Column] = PositionFromParams(Params.Get("position"));
 
-    bool                        Found = false;
-    std::optional<std::string> ImportName;
-    Iris::IrisConfig            Config;
-    std::string                  ProjectRoot;
-    std::vector<Iris::ImportStatement> Imports;
-    bool                        InRenderBlock = false;
+    // NameToResolve covers both goto-def sources that end up at a component
+    // declaration: an `import Name` statement line, and a `<Name>`/`</Name>` tag usage
+    // inside render{} -- every non-Core-primitive tag *must* be imported
+    // (SemanticValidator's own "is not imported and is not a Core primitive" rule), so
+    // there's no separate same-file-component case; both funnel into
+    // ResolveComponentDeclaration identically once a name is found.
+    std::optional<std::string>          NameToResolve;
+    Iris::IrisConfig                    Config;
+    std::string                         ProjectRoot;
+    std::vector<Iris::ImportStatement>  Imports;
+    bool                                InRenderBlock = false;
     std::optional<std::pair<std::uint32_t, std::uint32_t>> Generated;
     {
         std::lock_guard<std::mutex> Lock(DocumentsMutex_);
@@ -525,46 +471,43 @@ void Server::HandleDefinition(const Amanuensis::Value& Id, const Amanuensis::Val
             Reply(Id, Amanuensis::Value());
             return;
         }
-        Found = true;
         const OpenDocument& Doc = DocIt->second;
-        ImportName = Doc.Virtual->ImportNameAtLine(Line);
-        if (ImportName) {
-            Config = Doc.Config;
-            ProjectRoot = Doc.ProjectRoot;
-            Imports = Doc.Virtual->Imports();
-        } else {
+        NameToResolve = Doc.Virtual->ImportNameAtLine(Line);
+        if (!NameToResolve) {
             InRenderBlock = Doc.Virtual->IsInsideRenderBlock(Line, Column);
-            if (!InRenderBlock) {
+            if (InRenderBlock) {
+                if (const auto Tag = TagNameAtPosition(LineText(Doc.Text, Line), Column)) {
+                    // A Core primitive (<Frame>, <Text>, ...) has no declaration to jump
+                    // to -- leave NameToResolve unset rather than trying to resolve it as
+                    // an import and failing.
+                    if (Iris::CorePrimitiveTagNames().count(*Tag) == 0) {
+                        NameToResolve = Tag;
+                    }
+                }
+            } else {
                 Generated = Doc.Virtual->ToGenerated(Line, Column);
             }
         }
-    }
-    (void)Found;
-
-    if (ImportName) {
-        const Iris::ImportResolutionResult Resolved = Iris::ResolveImports(Imports, Config, ProjectRoot);
-        for (const Iris::ResolvedImport& R : Resolved.Resolved) {
-            if (R.Name != *ImportName) {
-                continue;
-            }
-            const auto TargetText = ReadFile(R.ResolvedPath);
-            if (!TargetText) {
-                break;
-            }
-            const auto DeclLoc = FindComponentDeclaration(*TargetText, R.Name);
-            Amanuensis::Value Location = Amanuensis::Value::MakeObject();
-            Location.Insert("uri", Amanuensis::Value(PathToUri(R.ResolvedPath)));
-            Location.Insert("range", MakeRange(DeclLoc ? DeclLoc->first : 1, DeclLoc ? DeclLoc->second : 1));
-            Reply(Id, std::move(Location));
-            return;
+        if (NameToResolve) {
+            Config = Doc.Config;
+            ProjectRoot = Doc.ProjectRoot;
+            Imports = Doc.Virtual->Imports();
         }
-        Reply(Id, Amanuensis::Value());
+    }
+
+    if (NameToResolve) {
+        if (const auto Loc = ResolveComponentDeclaration(*NameToResolve, Imports, Config, ProjectRoot)) {
+            Amanuensis::Value Location = Amanuensis::Value::MakeObject();
+            Location.Insert("uri", Amanuensis::Value(PathToUri(Loc->FilePath)));
+            Location.Insert("range", MakeRange(Loc->Line, Loc->Column));
+            Reply(Id, std::move(Location));
+        } else {
+            Reply(Id, Amanuensis::Value());
+        }
         return;
     }
 
     if (InRenderBlock || !Generated || !Proxy_) {
-        // Tag-usage-to-declaration goto-def (jumping from `<Foo>` itself, not just
-        // `import Foo`) is a known v1 gap -- see docs/iris_lsp_decision.md.
         Reply(Id, Amanuensis::Value());
         return;
     }
