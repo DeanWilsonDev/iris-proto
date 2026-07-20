@@ -24,6 +24,12 @@ enum class IrisElementTag {
     Inline,
     Grid,
     Image,
+    // A single vector glyph resolved by name from a backend/app-supplied icon catalog
+    // via its `icon` prop (e.g. `<Icon icon="chevron-down" />`) — a leaf, same as
+    // `<Image>`, but never a texture asset: no `src`/`handle` (docs/iris_core_spec.md
+    // §3.1). Iris carries no icon catalog of its own — resolving the name to a real
+    // drawn glyph is entirely backend-side.
+    Icon,
     Text,
     Slot,
 };

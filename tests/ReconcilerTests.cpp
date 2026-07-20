@@ -68,6 +68,8 @@ std::string TagName(Iris::IrisElementTag Tag) {
             return "Grid";
         case Iris::IrisElementTag::Image:
             return "Image";
+        case Iris::IrisElementTag::Icon:
+            return "Icon";
         case Iris::IrisElementTag::Text:
             return "Text";
         case Iris::IrisElementTag::Slot:

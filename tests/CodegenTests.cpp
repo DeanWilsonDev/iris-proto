@@ -59,6 +59,19 @@ DESCRIBE("Codegen", {
         ASSERT_FALSE(Result.Errors.empty()); // <Image> (a leaf) with a child is a codegen error
     });
 
+    IT("Icon with an icon prop codegens with no errors", {
+        const auto Result = Generate(R"(render { <Icon icon="chevron-down" /> })");
+        ASSERT_TRUE(Result.Errors.empty()); // Icon with an icon prop codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "Iris::IrisElementTag::Icon")); // tag is Iris::IrisElementTag::Icon
+        ASSERT_TRUE(Contains(Result.Source, "std::in_place_type<std::string>, \"chevron-down\""));
+        // icon is wrapped in_place_type<std::string> with the quoted literal
+    });
+
+    IT("Icon with a child is an error", {
+        const auto Result = Generate(R"(render { <Icon icon="chevron-down"><Frame /></Icon> })");
+        ASSERT_FALSE(Result.Errors.empty()); // <Icon> (a leaf) with a child is a codegen error
+    });
+
     IT("Frame with a literal-text child is an error", {
         const auto Result = Generate(R"(render { <Frame>hello</Frame> })");
         ASSERT_FALSE(Result.Errors.empty()); // <Frame> with a literal-text child is a codegen error

@@ -14,6 +14,7 @@ const std::unordered_map<std::string, std::string>& PrimitivePropTypes() {
     static const std::unordered_map<std::string, std::string> Types = {
         {"class", "std::string"},
         {"src", "std::string"},
+        {"icon", "std::string"},
         {"checked", "bool"},
         {"handle", "iris::TextureHandle"},
         {"onPress", "std::function<void()>"},
@@ -150,11 +151,12 @@ private:
     }
 
     // `<Frame>`/`<Grid>`: element children only. `<Inline>`: any mix of element,
-    // text, and escape-hatch children (docs/iris_stage2_decision_doc.md §6). `<Image>`:
-    // no children at all.
+    // text, and escape-hatch children (docs/iris_stage2_decision_doc.md §6). `<Image>`/
+    // `<Icon>`: no children at all — both are leaves identified by a single `src`/`icon`
+    // prop, same reasoning as `<Image>`'s own.
     std::string EmitChildrenList(const ElementNode& Node) {
         const bool AllowsText = Node.Tag == "Inline";
-        const bool AllowsAny  = Node.Tag != "Image";
+        const bool AllowsAny  = Node.Tag != "Image" && Node.Tag != "Icon";
 
         std::string Result = "{";
         bool         First = true;

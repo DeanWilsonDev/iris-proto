@@ -175,7 +175,7 @@ preprocessor-level compile error (§7).
 ```
 
 - Element tags are PascalCase. Per the decision doc §8, tag names are **not lexer-level
-  keywords** — `Frame`, `Inline`, `Grid`, `Image`, `Text` (§3) and any imported component name
+  keywords** — `Frame`, `Inline`, `Grid`, `Image`, `Icon`, `Text` (§3) and any imported component name
   are ordinary PascalCase identifiers the preprocessor resolves semantically against Core
   primitives and `import`ed names.
 - `class` and `key` are the two Iris-reserved prop names (§2.3, §4). Both accept either a string
@@ -401,7 +401,7 @@ Penumbra, `WidgetBase`, or any concrete widget type.
 
 ```cpp
 struct Component {
-    IrisElementTag Tag;             // Frame, Inline, Text, Image, or a component name
+    IrisElementTag Tag;             // Frame, Inline, Text, Image, Icon, or a component name
     IrisProps Props;                // key-value prop map, `key` already stripped
     std::vector<Component> Children;
 };
@@ -442,7 +442,7 @@ miscompiles rather than failing loudly, which is why it's called out here promin
 than left as an implied pattern.
 
 Codegen branches on how a tag resolves (§1.4):
-- **Core primitive** (`Frame`, `Inline`, `Grid`, `Image`, `Text`) → the preprocessor emits an
+- **Core primitive** (`Frame`, `Inline`, `Grid`, `Image`, `Icon`, `Text`) → the preprocessor emits an
   `Component` IR node (§2.5) directly; no props-struct lookup happens.
 - **Imported component name** → the preprocessor emits `Name(NameProps{ ...prop initializers...
   })` and wraps the result as this element's `Component` — relying on the `<Name>Props`
@@ -517,6 +517,18 @@ the one exception to the shared method set — see its entry below.
   loading is **not** part of `build()` — the tree-builder must call `.LoadFrom(imageBackend,
   sdlRenderer)` on the built widget as a separate explicit step, since `Builder` has no access to
   a renderer/backend to load through.
+
+**`<Icon>`** — Renders a single vector glyph resolved by name from a backend/app-supplied icon
+catalog (`docs/penumbra_iris_lustre_componentization_gaps_requirements.md` §1).
+- Props: `icon` (string, required — the catalog key, e.g. `icon="chevron-down"`), `class`, `key`.
+  No event props, no `src`/`handle` — unlike `<Image>`, there is never a texture asset backing
+  it.
+- Children: none (leaf).
+- Backend requirement: Iris carries no icon catalog itself — resolving `icon` to an actual drawn
+  glyph is entirely backend-side (Penumbra's `IconWidget` + an app-supplied `IconBackend`
+  resolving the name, mirroring `<Image>`'s own `IImageBackend` shape). A backend with no icon
+  catalog wired up may leave the glyph undrawn, the same "build succeeds, nothing loaded"
+  tolerance `<Image>` already has when `ImageBackend`/`SdlRenderer` are null.
 
 **`<Text>`** — Renders a text string.
 - Props: `class`, `key`, any event prop. **No `font` prop** — font is specified via Lustre.
@@ -667,7 +679,7 @@ Per decision doc §8, the entire Iris-owned vocabulary:
 | `key` | Reserved prop name | Stripped before codegen; never reaches the backend (§2.3). |
 | `class` | Reserved prop name | Style bridge to Lustre (§4). |
 
-That's the whole list. Primitive tag names (`Frame`, `Inline`, `Grid`, `Image`, `Text`,
+That's the whole list. Primitive tag names (`Frame`, `Inline`, `Grid`, `Image`, `Icon`, `Text`,
 `Model3d`) are ordinary identifiers, not keywords (§1.4).
 
 ---
