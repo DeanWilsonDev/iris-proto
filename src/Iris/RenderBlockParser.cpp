@@ -244,7 +244,7 @@ ElementNode RenderBlockParser::ParseElementAfterLAngle(SourceLocation LAngleLoca
         }
     }
 
-    Node.Children = ParseChildren(Node.Tag);
+    Node.Children = ParseChildren(Node.Tag, Node.ClosingTagLocation);
     return Node;
 }
 
@@ -405,7 +405,8 @@ PropValue RenderBlockParser::ParseJsxEscapeHatch() {
     return Value;
 }
 
-std::vector<ElementChild> RenderBlockParser::ParseChildren(const std::string& OpenTag) {
+std::vector<ElementChild> RenderBlockParser::ParseChildren(const std::string& OpenTag,
+                                                             std::optional<SourceLocation>& OutClosingTagLocation) {
     std::vector<ElementChild> Children;
     std::string                TextBuffer;
 
@@ -433,6 +434,11 @@ std::vector<ElementChild> RenderBlockParser::ParseChildren(const std::string& Op
                 std::string CloseTag;
                 if (Current_.Kind == GKind::Identifier) {
                     CloseTag = Current_.Text;
+                    // Captured even when CloseTag ends up not matching OpenTag below --
+                    // it's still real source text a caller (e.g. iris-lsp's semantic
+                    // tokens) may want a position for, independent of whether the tags
+                    // actually match.
+                    OutClosingTagLocation = Current_.Location;
                     Advance();
                 } else {
                     Errors_.push_back({"expected a closing tag name after '</'", Current_.Location});

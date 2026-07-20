@@ -93,6 +93,15 @@ struct ElementNode {
     std::optional<PropValue>   Key;
     std::vector<ElementChild>  Children;
     SourceLocation              Location;
+
+    // Where the closing tag's own name starts (`Frame` in `</Frame>`) -- nullopt for a
+    // self-closing element (`<Frame />`, which has no separate closing tag at all) or one
+    // whose closing tag was malformed enough that no identifier was ever found there
+    // (an unterminated element, or `}`/EOF before a `</...>` was reached). Set even when
+    // the closing tag's name doesn't match Tag (RenderBlockParser still reports that as
+    // an error, but the identifier itself is still real source text worth a position for
+    // -- e.g. iris-lsp's semantic tokens).
+    std::optional<SourceLocation> ClosingTagLocation;
 };
 
 inline ElementChild ElementChild::MakeElement(ElementNode&& Node) {

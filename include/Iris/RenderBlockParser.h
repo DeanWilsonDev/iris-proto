@@ -83,7 +83,8 @@ private:
 
     ElementNode              ParseElement();
     ElementNode              ParseElementAfterLAngle(SourceLocation LAngleLocation);
-    std::vector<ElementChild> ParseChildren(const std::string& OpenTag);
+    std::vector<ElementChild> ParseChildren(const std::string& OpenTag,
+                                             std::optional<SourceLocation>& OutClosingTagLocation);
     PropValue                ParsePropValue();
     PropValue                ParseEscapeHatch();
     PropValue                ParseJsxEscapeHatch();

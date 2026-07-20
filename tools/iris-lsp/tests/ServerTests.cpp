@@ -317,13 +317,15 @@ DESCRIBE("Server.semanticTokens", {
         const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
         const Amanuensis::Value& Data = Reply->Get("result").Get("data");
-        // SimpleComponentSource has one outer <Frame class="a"> (tag, prop, string) and
-        // one inner <Frame /> (tag only) -- 4 tokens, 5 wire-format integers each.
-        REQUIRE_TRUE(Data.Size() == 20);
-        ASSERT_TRUE(Data.At(3).AsInteger() == 0);  // outer tag -- Type
+        // SimpleComponentSource has one outer <Frame class="a">...</Frame> (opening tag,
+        // prop, string, closing tag) wrapping one inner self-closing <Frame /> (opening
+        // tag only, no closing tag) -- 5 tokens, 5 wire-format integers each.
+        REQUIRE_TRUE(Data.Size() == 25);
+        ASSERT_TRUE(Data.At(3).AsInteger() == 0);  // outer opening tag -- Type
         ASSERT_TRUE(Data.At(8).AsInteger() == 1);  // "class" -- Property
         ASSERT_TRUE(Data.At(13).AsInteger() == 2); // "a" -- String
-        ASSERT_TRUE(Data.At(18).AsInteger() == 0); // inner tag -- Type
+        ASSERT_TRUE(Data.At(18).AsInteger() == 0); // inner opening tag -- Type
+        ASSERT_TRUE(Data.At(23).AsInteger() == 0); // outer closing tag -- Type
     });
 
     IT("declares its legend during initialize", {

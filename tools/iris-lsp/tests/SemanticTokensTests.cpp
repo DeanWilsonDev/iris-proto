@@ -43,8 +43,28 @@ DESCRIBE("SemanticTokens.CollectRenderBlockSemanticTokens", {
     IT("recurses into nested elements in source order", {
         const auto Blocks = ParseBlocks(R"(render { <Frame class="outer"><Frame class="inner" /></Frame> })");
         const auto Tokens = IrisLsp::CollectRenderBlockSemanticTokens(Blocks);
-        REQUIRE_TRUE(Tokens.size() == 6); // (tag, prop, string) x 2
+        // (tag, prop, string) x 2 for the two opening tags, plus one closing-tag token
+        // for the outer </Frame> (the inner one is self-closing -- no closing tag at all).
+        REQUIRE_TRUE(Tokens.size() == 7);
         ASSERT_TRUE(Tokens[0].Column < Tokens[3].Column); // outer tag comes before inner tag
+        ASSERT_TRUE(Tokens.back().Type == IrisLsp::SemanticTokenType::Type); // the closing </Frame>
+        ASSERT_TRUE(Tokens.back().Length == 5);                              // "Frame"
+    });
+
+    IT("emits a Type token for a non-self-closing tag's own closing tag", {
+        const auto Blocks = ParseBlocks("render { <Frame></Frame> }");
+        const auto Tokens = IrisLsp::CollectRenderBlockSemanticTokens(Blocks);
+        REQUIRE_TRUE(Tokens.size() == 2); // opening tag, closing tag
+        ASSERT_TRUE(Tokens[0].Type == IrisLsp::SemanticTokenType::Type);
+        ASSERT_TRUE(Tokens[1].Type == IrisLsp::SemanticTokenType::Type);
+        ASSERT_TRUE(Tokens[1].Length == 5);          // "Frame" in </Frame>
+        ASSERT_TRUE(Tokens[1].Column > Tokens[0].Column); // closing tag comes after opening tag
+    });
+
+    IT("emits no closing-tag token for a self-closing element", {
+        const auto Blocks = ParseBlocks("render { <Frame /> }");
+        const auto Tokens = IrisLsp::CollectRenderBlockSemanticTokens(Blocks);
+        REQUIRE_TRUE(Tokens.size() == 1); // just the opening tag -- no `/>` to jump to
     });
 
     IT("covers every render{} block when a file has more than one", {

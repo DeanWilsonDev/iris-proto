@@ -60,6 +60,19 @@ void WalkElement(const Iris::ElementNode& Node, std::vector<SemanticToken>& Out)
             WalkPropValue(*Child.EscapeHatch, Out);
         }
     }
+
+    // A self-closing element (`<Frame />`) never calls ParseChildren at all, so
+    // ClosingTagLocation stays nullopt for it -- correctly, since `/>` has no separate
+    // tag name to highlight. Length uses Node.Tag's own size rather than the closing
+    // tag's actual text (RenderBlockParser doesn't retain that once it's compared against
+    // Tag) -- exactly right for a matching `</Frame>`, the overwhelming common case; a
+    // mismatched or mid-edit closing tag (already a parse-error state) may get a token
+    // spanning slightly more or less than its real identifier, same class of accepted
+    // imprecision as this whole file's other text-based heuristics.
+    if (Node.ClosingTagLocation) {
+        Out.push_back(SemanticToken{Node.ClosingTagLocation->Line, Node.ClosingTagLocation->Column,
+                                     static_cast<std::uint32_t>(Node.Tag.size()), SemanticTokenType::Type});
+    }
 }
 
 } // namespace
