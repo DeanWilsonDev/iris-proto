@@ -53,15 +53,22 @@ std::string ExtensionOf(const std::string& Path) {
     return P.extension().string();
 }
 
-Amanuensis::Value MakeRange(std::uint32_t Line, std::uint32_t Column) {
+Amanuensis::Value MakePosition(std::uint32_t Line, std::uint32_t Column) {
     Amanuensis::Value Position = Amanuensis::Value::MakeObject();
     Position.Insert("line", Amanuensis::Value(static_cast<long long>(Line - 1)));
     Position.Insert("character", Amanuensis::Value(static_cast<long long>(Column - 1)));
+    return Position;
+}
+
+Amanuensis::Value MakeRangeSpan(std::uint32_t StartLine, std::uint32_t StartColumn, std::uint32_t EndLine,
+                                 std::uint32_t EndColumn) {
     Amanuensis::Value Range = Amanuensis::Value::MakeObject();
-    Range.Insert("start", Position);
-    Range.Insert("end", Position);
+    Range.Insert("start", MakePosition(StartLine, StartColumn));
+    Range.Insert("end", MakePosition(EndLine, EndColumn));
     return Range;
 }
+
+Amanuensis::Value MakeRange(std::uint32_t Line, std::uint32_t Column) { return MakeRangeSpan(Line, Column, Line, Column); }
 
 std::pair<std::uint32_t, std::uint32_t> PositionFromParams(const Amanuensis::Value& Position) {
     return {static_cast<std::uint32_t>(Position.Get("line").AsInteger()) + 1,
@@ -177,6 +184,7 @@ void Server::Reply(const Amanuensis::Value& Id, Amanuensis::Value Result) {
     Message.Insert("jsonrpc", Amanuensis::Value("2.0"));
     Message.Insert("id", Id);
     Message.Insert("result", std::move(Result));
+    std::lock_guard<std::mutex> Lock(OutMutex_);
     JsonRpc::WriteMessage(Out_, Message);
 }
 
@@ -188,6 +196,7 @@ void Server::ReplyError(const Amanuensis::Value& Id, int Code, const std::string
     Response.Insert("jsonrpc", Amanuensis::Value("2.0"));
     Response.Insert("id", Id);
     Response.Insert("error", std::move(Error));
+    std::lock_guard<std::mutex> Lock(OutMutex_);
     JsonRpc::WriteMessage(Out_, Response);
 }
 
@@ -196,6 +205,7 @@ void Server::Notify(const std::string& Method, Amanuensis::Value Params) {
     Message.Insert("jsonrpc", Amanuensis::Value("2.0"));
     Message.Insert("method", Amanuensis::Value(Method));
     Message.Insert("params", std::move(Params));
+    std::lock_guard<std::mutex> Lock(OutMutex_);
     JsonRpc::WriteMessage(Out_, Message);
 }
 
@@ -273,53 +283,86 @@ void Server::HandleDidChange(const Amanuensis::Value& Params) {
 }
 
 void Server::HandleDidClose(const Amanuensis::Value& Params) {
-    Documents_.erase(Params.Get("textDocument").Get("uri").AsString());
+    const std::string Uri = Params.Get("textDocument").Get("uri").AsString();
+    std::lock_guard<std::mutex> Lock(DocumentsMutex_);
+    Documents_.erase(Uri);
+    GeneratedPathToUri_.erase(UriToPath(Uri) + ".generated.h");
 }
 
 void Server::RebuildDocument(const std::string& Uri, std::string Text) {
     const std::string Path = UriToPath(Uri);
 
-    OpenDocument& Doc = Documents_[Uri];
-    Doc.Text = std::move(Text);
+    // Everything that needs Documents_/GeneratedPathToUri_ happens under the lock;
+    // Proxy_ setup/sync happens after it's released, since Proxy_->Start() blocks on a
+    // reply from ClangdProxy's own background reader thread -- holding DocumentsMutex_
+    // across that wait would deadlock the moment that thread needs the same lock inside
+    // HandleClangdDiagnostics (see this class's own header comment).
+    std::string ProjectRoot;
+    std::string GeneratedPath;
+    std::string GeneratedText;
+    bool        NeedsProxySetup = false;
 
-    if (Doc.ProjectRoot.empty()) {
-        const auto Root = FindProjectRoot(std::filesystem::path(Path).parent_path());
-        if (Root) {
-            Doc.ProjectRoot = Root->string();
-            if (const auto ConfigText = ReadFile(*Root / ".iris.json")) {
-                const Iris::IrisConfigParseResult ConfigResult = Iris::ParseIrisConfig(*ConfigText);
-                if (ConfigResult.Config) {
-                    Doc.Config = *ConfigResult.Config;
+    {
+        std::lock_guard<std::mutex> Lock(DocumentsMutex_);
+        OpenDocument& Doc = Documents_[Uri];
+        Doc.Text = std::move(Text);
+
+        if (Doc.ProjectRoot.empty()) {
+            const auto Root = FindProjectRoot(std::filesystem::path(Path).parent_path());
+            if (Root) {
+                Doc.ProjectRoot = Root->string();
+                if (const auto ConfigText = ReadFile(*Root / ".iris.json")) {
+                    const Iris::IrisConfigParseResult ConfigResult = Iris::ParseIrisConfig(*ConfigText);
+                    if (ConfigResult.Config) {
+                        Doc.Config = *ConfigResult.Config;
+                    }
                 }
+            } else {
+                // No .iris.json found -- degrade rather than refuse: render{}-scoped
+                // completion/diagnostics don't need a project config at all, only
+                // import resolution does.
+                Doc.ProjectRoot = std::filesystem::path(Path).parent_path().string();
             }
-        } else {
-            // No .iris.json found -- degrade rather than refuse: render{}-scoped
-            // completion/diagnostics don't need a project config at all, only
-            // import resolution does.
-            Doc.ProjectRoot = std::filesystem::path(Path).parent_path().string();
+        }
+
+        Doc.Virtual = std::make_unique<VirtualDocument>(Doc.Text, Path, Doc.Config, Doc.ProjectRoot);
+        GeneratedPathToUri_[Path + ".generated.h"] = Uri;
+        PublishDiagnostics(Uri, Doc);
+
+        ProjectRoot = Doc.ProjectRoot;
+        if (Doc.Virtual->CompileResult().Diagnostics.empty() && !Doc.Virtual->CompileResult().Output.empty()) {
+            GeneratedPath = Path + ".generated.h";
+            GeneratedText = Doc.Virtual->CompileResult().Output;
+            NeedsProxySetup = !ProxyStarted_;
         }
     }
 
-    Doc.Virtual = std::make_unique<VirtualDocument>(Doc.Text, Path, Doc.Config, Doc.ProjectRoot);
-    PublishDiagnostics(Uri, Doc);
+    if (GeneratedPath.empty()) {
+        return; // Iris-level diagnostics present, or no render{} blocks -- nothing to proxy
+    }
 
-    if (Doc.Virtual->CompileResult().Diagnostics.empty() && !Doc.Virtual->CompileResult().Output.empty()) {
-        if (!ProxyStarted_) {
-            Proxy_ = CreateHostLanguageServerProxy(ExtensionOf(Path));
-            ProxyStarted_ = true; // only ever attempted once per server process
-            if (Proxy_ && !Proxy_->Start(Doc.ProjectRoot)) {
+    // Proxy_/ProxyStarted_ are touched only from this function, which only ever runs on
+    // the main thread (Run()'s single-threaded read loop) -- no mutex needed for them
+    // specifically, only for the Documents_/GeneratedPathToUri_ access above.
+    if (NeedsProxySetup) {
+        Proxy_ = CreateHostLanguageServerProxy(ExtensionOf(Path));
+        ProxyStarted_ = true; // only ever attempted once per server process
+        if (Proxy_) {
+            Proxy_->SetDiagnosticsCallback([this](const std::string& GenPath, std::vector<ProxyDiagnostic> Diags) {
+                HandleClangdDiagnostics(GenPath, std::move(Diags));
+            });
+            if (!Proxy_->Start(ProjectRoot)) {
                 Proxy_.reset(); // e.g. clangd isn't on PATH -- proxy features degrade to unavailable
             }
         }
-        if (Proxy_) {
-            const std::string GeneratedPath = Path + ".generated.h";
-            std::ofstream(GeneratedPath, std::ios::binary) << Doc.Virtual->CompileResult().Output;
-            Proxy_->SyncGeneratedDocument(GeneratedPath, Doc.Virtual->CompileResult().Output);
-        }
+    }
+    if (Proxy_) {
+        std::ofstream(GeneratedPath, std::ios::binary) << GeneratedText;
+        Proxy_->SyncGeneratedDocument(GeneratedPath, GeneratedText);
     }
 }
 
-void Server::PublishDiagnostics(const std::string& Uri, const OpenDocument& Doc) {
+Amanuensis::Value Server::BuildIrisDiagnosticsArray(const OpenDocument& Doc) const {
     Amanuensis::Value Diagnostics = Amanuensis::Value::MakeArray();
     for (const Iris::DriverDiagnostic& Diag : Doc.Virtual->CompileResult().Diagnostics) {
         Amanuensis::Value Diagnostic = Amanuensis::Value::MakeObject();
@@ -329,10 +372,57 @@ void Server::PublishDiagnostics(const std::string& Uri, const OpenDocument& Doc)
         Diagnostic.Insert("message", Amanuensis::Value(Diag.Message));
         Diagnostics.PushBack(std::move(Diagnostic));
     }
+    return Diagnostics;
+}
+
+void Server::PublishDiagnostics(const std::string& Uri, const OpenDocument& Doc) {
+    Amanuensis::Value Params = Amanuensis::Value::MakeObject();
+    Params.Insert("uri", Amanuensis::Value(Uri));
+    Params.Insert("diagnostics", BuildIrisDiagnosticsArray(Doc));
+    Notify("textDocument/publishDiagnostics", std::move(Params));
+}
+
+void Server::HandleClangdDiagnostics(const std::string& GeneratedPath, std::vector<ProxyDiagnostic> Diagnostics) {
+    std::string       Uri;
+    Amanuensis::Value Merged;
+    {
+        std::lock_guard<std::mutex> Lock(DocumentsMutex_);
+        const auto UriIt = GeneratedPathToUri_.find(GeneratedPath);
+        if (UriIt == GeneratedPathToUri_.end()) {
+            return; // e.g. a stale generated file's diagnostics after didClose
+        }
+        Uri = UriIt->second;
+        const auto DocIt = Documents_.find(Uri);
+        if (DocIt == Documents_.end() || !DocIt->second.Virtual) {
+            return;
+        }
+        const OpenDocument& Doc = DocIt->second;
+
+        Merged = BuildIrisDiagnosticsArray(Doc); // always empty here in practice -- clangd is only
+                                                  // ever synced when Iris's own diagnostics are empty
+                                                  // (RebuildDocument's own gate) -- included anyway so
+                                                  // this stays correct if that gate ever loosens.
+        for (const ProxyDiagnostic& D : Diagnostics) {
+            const auto MappedStart = Doc.Virtual->ToSource(D.StartLine, D.StartColumn);
+            const auto MappedEnd = Doc.Virtual->ToSource(D.EndLine, D.EndColumn);
+            if (!MappedStart || !MappedEnd) {
+                continue; // points at synthesized prologue (#pragma once/#line) -- no source position
+            }
+            Amanuensis::Value Diagnostic = Amanuensis::Value::MakeObject();
+            Diagnostic.Insert("range",
+                               MakeRangeSpan(MappedStart->first, MappedStart->second, MappedEnd->first, MappedEnd->second));
+            Diagnostic.Insert("severity", Amanuensis::Value(D.Severity));
+            Diagnostic.Insert("source", Amanuensis::Value("clangd"));
+            Diagnostic.Insert("message", Amanuensis::Value(D.Message));
+            Merged.PushBack(std::move(Diagnostic));
+        }
+    }
 
     Amanuensis::Value Params = Amanuensis::Value::MakeObject();
     Params.Insert("uri", Amanuensis::Value(Uri));
-    Params.Insert("diagnostics", std::move(Diagnostics));
+    Params.Insert("diagnostics", std::move(Merged));
+    // LSP's publishDiagnostics replaces a uri's previous set wholesale, so this
+    // supersedes the plain-Iris publish RebuildDocument already sent -- no duplication.
     Notify("textDocument/publishDiagnostics", std::move(Params));
 }
 
@@ -340,50 +430,73 @@ void Server::HandleCompletion(const Amanuensis::Value& Id, const Amanuensis::Val
     const std::string Uri = Params.Get("textDocument").Get("uri").AsString();
     const auto [Line, Column] = PositionFromParams(Params.Get("position"));
 
-    Amanuensis::Value Items = Amanuensis::Value::MakeArray();
-    const auto DocIt = Documents_.find(Uri);
-    if (DocIt != Documents_.end() && DocIt->second.Virtual) {
-        const OpenDocument& Doc = DocIt->second;
-
-        if (Doc.Virtual->IsInsideRenderBlock(Line, Column)) {
-            const std::string_view LineTextView = LineText(Doc.Text, Line);
-            const RenderCompletionKind Kind = ClassifyRenderCompletion(LineTextView, Column);
-            if (Kind == RenderCompletionKind::TagName) {
-                for (const std::string& Tag : Iris::CorePrimitiveTagNames()) {
-                    Amanuensis::Value Item = Amanuensis::Value::MakeObject();
-                    Item.Insert("label", Amanuensis::Value(Tag));
-                    Item.Insert("kind", Amanuensis::Value(7)); // Class
-                    Items.PushBack(std::move(Item));
+    // Everything needed from Documents_ is copied out before any Proxy_ call, which may
+    // block on IPC with clangd -- see RebuildDocument's own comment on why holding
+    // DocumentsMutex_ across that wait isn't safe.
+    bool                        Found = false;
+    bool                        InRenderBlock = false;
+    RenderCompletionKind        Kind = RenderCompletionKind::None;
+    std::vector<std::string>    ImportNames;
+    bool                        IsImportLine = false;
+    std::optional<std::pair<std::uint32_t, std::uint32_t>> Generated;
+    {
+        std::lock_guard<std::mutex> Lock(DocumentsMutex_);
+        const auto DocIt = Documents_.find(Uri);
+        if (DocIt != Documents_.end() && DocIt->second.Virtual) {
+            Found = true;
+            const OpenDocument& Doc = DocIt->second;
+            InRenderBlock = Doc.Virtual->IsInsideRenderBlock(Line, Column);
+            if (InRenderBlock) {
+                Kind = ClassifyRenderCompletion(LineText(Doc.Text, Line), Column);
+                if (Kind == RenderCompletionKind::TagName) {
+                    for (const Iris::ImportStatement& Import : Doc.Virtual->Imports()) {
+                        ImportNames.push_back(Import.Name);
+                    }
                 }
-                for (const Iris::ImportStatement& Import : Doc.Virtual->Imports()) {
-                    Amanuensis::Value Item = Amanuensis::Value::MakeObject();
-                    Item.Insert("label", Amanuensis::Value(Import.Name));
-                    Item.Insert("kind", Amanuensis::Value(7)); // Class
-                    Items.PushBack(std::move(Item));
-                }
-            } else if (Kind == RenderCompletionKind::AttributeName) {
-                for (const auto& [PropName, PropType] : Iris::PrimitivePropTypeNames()) {
-                    Amanuensis::Value Item = Amanuensis::Value::MakeObject();
-                    Item.Insert("label", Amanuensis::Value(PropName));
-                    Item.Insert("kind", Amanuensis::Value(10)); // Property
-                    Item.Insert("detail", Amanuensis::Value(PropType));
-                    Items.PushBack(std::move(Item));
+            } else {
+                IsImportLine = Doc.Virtual->ImportNameAtLine(Line).has_value();
+                if (!IsImportLine) {
+                    Generated = Doc.Virtual->ToGenerated(Line, Column);
                 }
             }
-        } else if (!Doc.Virtual->ImportNameAtLine(Line) && Proxy_) {
-            if (const auto Generated = Doc.Virtual->ToGenerated(Line, Column)) {
-                const std::string GeneratedPath = UriToPath(Uri) + ".generated.h";
-                for (const ProxyCompletionItem& Item : Proxy_->Completion(GeneratedPath, Generated->first, Generated->second)) {
-                    Amanuensis::Value Mapped = Amanuensis::Value::MakeObject();
-                    Mapped.Insert("label", Amanuensis::Value(Item.Label));
-                    if (Item.Kind) {
-                        Mapped.Insert("kind", Amanuensis::Value(*Item.Kind));
-                    }
-                    if (Item.Detail) {
-                        Mapped.Insert("detail", Amanuensis::Value(*Item.Detail));
-                    }
-                    Items.PushBack(std::move(Mapped));
+        }
+    }
+
+    Amanuensis::Value Items = Amanuensis::Value::MakeArray();
+    if (Found) {
+        if (Kind == RenderCompletionKind::TagName) {
+            for (const std::string& Tag : Iris::CorePrimitiveTagNames()) {
+                Amanuensis::Value Item = Amanuensis::Value::MakeObject();
+                Item.Insert("label", Amanuensis::Value(Tag));
+                Item.Insert("kind", Amanuensis::Value(7)); // Class
+                Items.PushBack(std::move(Item));
+            }
+            for (const std::string& Name : ImportNames) {
+                Amanuensis::Value Item = Amanuensis::Value::MakeObject();
+                Item.Insert("label", Amanuensis::Value(Name));
+                Item.Insert("kind", Amanuensis::Value(7)); // Class
+                Items.PushBack(std::move(Item));
+            }
+        } else if (Kind == RenderCompletionKind::AttributeName) {
+            for (const auto& [PropName, PropType] : Iris::PrimitivePropTypeNames()) {
+                Amanuensis::Value Item = Amanuensis::Value::MakeObject();
+                Item.Insert("label", Amanuensis::Value(PropName));
+                Item.Insert("kind", Amanuensis::Value(10)); // Property
+                Item.Insert("detail", Amanuensis::Value(PropType));
+                Items.PushBack(std::move(Item));
+            }
+        } else if (!InRenderBlock && Generated && Proxy_) {
+            const std::string GeneratedPath = UriToPath(Uri) + ".generated.h";
+            for (const ProxyCompletionItem& Item : Proxy_->Completion(GeneratedPath, Generated->first, Generated->second)) {
+                Amanuensis::Value Mapped = Amanuensis::Value::MakeObject();
+                Mapped.Insert("label", Amanuensis::Value(Item.Label));
+                if (Item.Kind) {
+                    Mapped.Insert("kind", Amanuensis::Value(*Item.Kind));
                 }
+                if (Item.Detail) {
+                    Mapped.Insert("detail", Amanuensis::Value(*Item.Detail));
+                }
+                Items.PushBack(std::move(Mapped));
             }
         }
     }
@@ -398,16 +511,38 @@ void Server::HandleDefinition(const Amanuensis::Value& Id, const Amanuensis::Val
     const std::string Uri = Params.Get("textDocument").Get("uri").AsString();
     const auto [Line, Column] = PositionFromParams(Params.Get("position"));
 
-    const auto DocIt = Documents_.find(Uri);
-    if (DocIt == Documents_.end() || !DocIt->second.Virtual) {
-        Reply(Id, Amanuensis::Value());
-        return;
+    bool                        Found = false;
+    std::optional<std::string> ImportName;
+    Iris::IrisConfig            Config;
+    std::string                  ProjectRoot;
+    std::vector<Iris::ImportStatement> Imports;
+    bool                        InRenderBlock = false;
+    std::optional<std::pair<std::uint32_t, std::uint32_t>> Generated;
+    {
+        std::lock_guard<std::mutex> Lock(DocumentsMutex_);
+        const auto DocIt = Documents_.find(Uri);
+        if (DocIt == Documents_.end() || !DocIt->second.Virtual) {
+            Reply(Id, Amanuensis::Value());
+            return;
+        }
+        Found = true;
+        const OpenDocument& Doc = DocIt->second;
+        ImportName = Doc.Virtual->ImportNameAtLine(Line);
+        if (ImportName) {
+            Config = Doc.Config;
+            ProjectRoot = Doc.ProjectRoot;
+            Imports = Doc.Virtual->Imports();
+        } else {
+            InRenderBlock = Doc.Virtual->IsInsideRenderBlock(Line, Column);
+            if (!InRenderBlock) {
+                Generated = Doc.Virtual->ToGenerated(Line, Column);
+            }
+        }
     }
-    const OpenDocument& Doc = DocIt->second;
+    (void)Found;
 
-    if (const auto ImportName = Doc.Virtual->ImportNameAtLine(Line)) {
-        const Iris::ImportResolutionResult Resolved =
-            Iris::ResolveImports(Doc.Virtual->Imports(), Doc.Config, Doc.ProjectRoot);
+    if (ImportName) {
+        const Iris::ImportResolutionResult Resolved = Iris::ResolveImports(Imports, Config, ProjectRoot);
         for (const Iris::ResolvedImport& R : Resolved.Resolved) {
             if (R.Name != *ImportName) {
                 continue;
@@ -427,25 +562,15 @@ void Server::HandleDefinition(const Amanuensis::Value& Id, const Amanuensis::Val
         return;
     }
 
-    if (Doc.Virtual->IsInsideRenderBlock(Line, Column)) {
+    if (InRenderBlock || !Generated || !Proxy_) {
         // Tag-usage-to-declaration goto-def (jumping from `<Foo>` itself, not just
         // `import Foo`) is a known v1 gap -- see docs/iris_lsp_decision.md.
         Reply(Id, Amanuensis::Value());
         return;
     }
 
-    if (!Proxy_) {
-        Reply(Id, Amanuensis::Value());
-        return;
-    }
-    const auto Generated = Doc.Virtual->ToGenerated(Line, Column);
-    if (!Generated) {
-        Reply(Id, Amanuensis::Value());
-        return;
-    }
     const std::string GeneratedPath = UriToPath(Uri) + ".generated.h";
-    const std::optional<ProxyLocation> Result =
-        Proxy_->Definition(GeneratedPath, Generated->first, Generated->second);
+    const std::optional<ProxyLocation> Result = Proxy_->Definition(GeneratedPath, Generated->first, Generated->second);
     if (!Result) {
         Reply(Id, Amanuensis::Value());
         return;
@@ -458,7 +583,11 @@ void Server::HandleDefinition(const Amanuensis::Value& Id, const Amanuensis::Val
     // part of any VirtualDocument's own line map.
     Amanuensis::Value Location = Amanuensis::Value::MakeObject();
     if (Result->FilePath == GeneratedPath) {
-        const auto Source = Doc.Virtual->ToSource(Result->Line, Result->Column);
+        std::lock_guard<std::mutex> Lock(DocumentsMutex_);
+        const auto DocIt = Documents_.find(Uri);
+        const auto Source = (DocIt != Documents_.end() && DocIt->second.Virtual)
+                                 ? DocIt->second.Virtual->ToSource(Result->Line, Result->Column)
+                                 : std::nullopt;
         Location.Insert("uri", Amanuensis::Value(Uri));
         Location.Insert("range", MakeRange(Source ? Source->first : Result->Line, Source ? Source->second : Result->Column));
     } else {

@@ -85,13 +85,15 @@ target_link_libraries(iris_cc PRIVATE iris)
 # IHostLanguageServerProxy, kept as a portable seam for a future Nyx-targeted
 # proxy over `.irisx`. POSIX-only (fork/exec) — see ClangdProxy.h.
 # ---------------------------------------------------------------------------
+find_package(Threads REQUIRED)
+
 add_executable(iris_lsp
     tools/iris-lsp/main.cpp
     tools/iris-lsp/Server.cpp
     tools/iris-lsp/VirtualDocument.cpp
     tools/iris-lsp/ClangdProxy.cpp
     tools/iris-lsp/JsonRpc.cpp)
-target_link_libraries(iris_lsp PRIVATE iris amanuensis)
+target_link_libraries(iris_lsp PRIVATE iris amanuensis Threads::Threads)
 
 # ---------------------------------------------------------------------------
 # Tests — one Cimmerian-based executable. Every test uses Cimmerian's

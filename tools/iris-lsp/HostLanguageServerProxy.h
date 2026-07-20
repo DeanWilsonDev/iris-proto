@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -19,6 +20,30 @@ struct ProxyLocation {
     std::uint32_t Line;     // 1-based, matching Iris::SourceLocation's convention
     std::uint32_t Column;
 };
+
+// One diagnostic reported against GeneratedPath, in GeneratedPath's own coordinates
+// (1-based, same convention as everywhere else in this tool) -- the caller (Server.cpp,
+// via VirtualDocument::ToSource) is responsible for translating both ends of the range
+// back to `.iris` source positions and deciding what to do with a diagnostic whose range
+// doesn't map to any source line (e.g. one pointing at the synthesized `#pragma once`
+// prologue) before ever publishing it to the real client.
+struct ProxyDiagnostic {
+    std::uint32_t StartLine;
+    std::uint32_t StartColumn;
+    std::uint32_t EndLine;
+    std::uint32_t EndColumn;
+    int            Severity; // raw LSP DiagnosticSeverity number (1 Error .. 4 Hint)
+    std::string    Message;
+};
+
+// Called whenever the underlying server pushes fresh diagnostics for GeneratedPath --
+// unprompted, not in response to any one request, the same way textDocument/
+// publishDiagnostics itself works. May be invoked from a background thread (ClangdProxy
+// does, since clangd's notifications arrive asynchronously on its own schedule, not
+// synchronously within a Completion()/Definition() call) -- implementations must be
+// safe to call concurrently with any other IHostLanguageServerProxy method.
+using ProxyDiagnosticsCallback =
+    std::function<void(const std::string& GeneratedPath, std::vector<ProxyDiagnostic> Diagnostics)>;
 
 // The portable seam this whole tool exists to isolate: everywhere outside a `render { }`
 // block is ordinary host-language code (docs/iris_core_spec.md's own framing -- Iris only
@@ -42,6 +67,13 @@ public:
     // treats that as "no host-language intelligence available this session", not a fatal
     // error, since render{}-scoped features still work without it.
     virtual bool Start(const std::string& ProjectRoot) = 0;
+
+    // Registers the one callback this proxy delivers unprompted diagnostics through --
+    // call before Start() so nothing sent immediately after the initialize handshake is
+    // missed. A no-op default: a proxy that never produces diagnostics on its own (there
+    // isn't one yet, but the interface shouldn't force every future implementation to
+    // provide one) simply never calls it.
+    virtual void SetDiagnosticsCallback(ProxyDiagnosticsCallback /*Callback*/) {}
 
     // Keeps the underlying server's view of GeneratedPath in sync with the latest
     // VirtualDocument rebuild -- the proxy equivalent of textDocument/didOpen (first call

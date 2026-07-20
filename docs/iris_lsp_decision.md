@@ -104,15 +104,47 @@ server. `SyncGeneratedDocument` writes the compiled `Output` to
 request and map the response back into a backend-agnostic `ProxyCompletionItem`/
 `ProxyLocation`.
 
-**Known v1 gap:** clangd's own unprompted diagnostics (`textDocument/publishDiagnostics`
-notifications it sends after every `didOpen`/`didChange`) are read and dropped by
-`ClangdProxy::SendRequest`'s response loop, not forwarded to the client. iris-lsp's own
-diagnostics (from `Iris::CompileFile`) already cover the `render{}`-and-import surface;
-losing clangd's host-language diagnostics means a real C++ error in the escape-hatch code
-outside a `render{}` block won't show up as a squiggle yet. Forwarding them is a
-follow-up, not a redesign — it needs `Server` to own a persistent proxy-notification
-listener rather than `ClangdProxy` synchronously blocking on its own request/response
-pairs.
+**clangd's own diagnostics are forwarded.** clangd pushes `textDocument/publishDiagnostics`
+unprompted, on its own schedule — not as a reply to anything this proxy sent — so a single
+blocking request/response exchange can't observe it. `ClangdProxy` owns a background
+thread (`ReaderLoop`) for the whole lifetime of the child process: it's the only thing that
+ever calls `JsonRpc::ReadMessage(ChildStdout_)`, and it dispatches every message it reads —
+a reply to one of our own requests wakes whichever `SendRequest` call is blocked waiting on
+it (via a `PendingResults_` map + condition variable); a `publishDiagnostics` notification
+is translated into `ProxyDiagnostic`s and handed to `Server`'s registered
+`ProxyDiagnosticsCallback`; a server-to-client *request* (clangd occasionally sends one,
+e.g. `workspace/configuration`) gets a generic empty-result reply so clangd is never left
+waiting on a message iris-lsp doesn't implement.
+
+`Server::HandleClangdDiagnostics` receives the callback (on that background thread, not
+the main stdin-reading thread — see the concurrency note below), looks `GeneratedPath` up
+to find its owning document, translates every diagnostic's range through
+`VirtualDocument::ToSource` (dropping one whose range doesn't map to any source line — it
+points at the synthesized `#pragma once`/`#line` prologue, which has no source position by
+construction), merges the result with that document's own `Iris::CompileFile` diagnostics,
+and republishes — LSP's `publishDiagnostics` replaces a uri's previous set wholesale, so
+this naturally supersedes the plain-Iris-only publish `RebuildDocument` already sent right
+after the edit, with no explicit merge-vs-replace bookkeeping needed. Hand-verified: a
+`.iris` file with `int x = "not an int";` outside its `render{}` block correctly surfaces
+clangd's real type-mismatch diagnostic at the right `.iris` source line.
+
+**Concurrency, as a result:** two threads now touch `Server`. `DocumentsMutex_` guards
+every access to `Documents_`/`GeneratedPathToUri_`; `OutMutex_` guards every write to the
+client connection (inside `Reply`/`ReplyError`/`Notify`) — kept as two separate mutexes
+rather than one, specifically so a thread holding `DocumentsMutex_` can still call
+`Notify()` without touching a mutex it might already hold. The one real hazard this
+required designing around: the main thread must never hold `DocumentsMutex_` while
+blocked inside a `Proxy_->Completion()`/`Definition()`/`Start()` call, because those block
+waiting on `ClangdProxy`'s own reader thread — and if a `publishDiagnostics` notification
+happens to arrive first, that same reader thread would need `DocumentsMutex_` inside
+`HandleClangdDiagnostics` before it can loop back around to read the response the main
+thread is actually waiting for. `HandleCompletion`/`HandleDefinition`/`RebuildDocument` all
+copy what they need out of `Documents_` under a short-lived lock, release it, *then* call
+into `Proxy_` — never the other way around. `Proxy_`/`ProxyStarted_` themselves need no
+lock at all: every access to them happens from `RebuildDocument`/`HandleCompletion`/
+`HandleDefinition`, all of which only ever run on the main thread (`Run()`'s own
+single-threaded read loop) — `ClangdProxy`'s reader thread never touches `Proxy_` itself,
+only calls the diagnostics callback.
 
 ## 5. Nyx portability — what's actually decided vs deferred
 
@@ -165,11 +197,11 @@ text from the same `RenderBlockParser` tree it already builds for diagnostics.
 
 ## 7. Explicit non-goals for this pass
 
-- Forwarding clangd's own diagnostics (§4).
 - Goto-definition from a `<Foo>` *usage* inside `render{}` (only `import Foo` works today —
   §3).
 - Hover, rename, find-references, semantic tokens — none implemented; nothing about the
   architecture blocks adding them later through the same local-vs-proxy split.
-- A `tools/iris-lsp/tests/` suite — the behavior above was verified by hand-driving the
-  server over its real stdio protocol (initialize → didOpen → completion/definition →
-  shutdown) against a small throwaway project, not by an automated Cimmerian suite yet.
+- A `tools/iris-lsp/tests/` suite — the behavior above (including clangd diagnostic
+  forwarding, §4) was verified by hand-driving the server over its real stdio protocol
+  (initialize → didOpen → completion/definition/diagnostics → shutdown) against a small
+  throwaway project, not by an automated Cimmerian suite yet.
