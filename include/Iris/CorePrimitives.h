@@ -19,4 +19,11 @@ const std::unordered_set<std::string>& CorePrimitiveTagNames();
 // no-op.
 const std::unordered_map<std::string, IrisBuildTarget>& BackendGatedPrimitiveTagNames();
 
+// The closed prop-name -> `IrisPropValue` variant-member lookup table from
+// docs/iris_props_decision.md — the same table Codegen.cpp uses to type-check and emit
+// primitive props, exposed here (rather than kept file-local to Codegen.cpp) so tooling
+// (iris-lsp's completion) has one real source of truth instead of a second hand-maintained
+// copy that could drift from it.
+const std::unordered_map<std::string, std::string>& PrimitivePropTypeNames();
+
 } // namespace Iris

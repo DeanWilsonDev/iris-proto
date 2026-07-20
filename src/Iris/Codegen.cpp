@@ -7,24 +7,9 @@ namespace Iris {
 
 namespace {
 
-// The closed prop-name → `IrisPropValue` variant-member lookup table from
-// docs/iris_props_decision.md. The mapped string is the `std::in_place_type<T>`
-// argument codegen emits — not a type it introspects at runtime.
-const std::unordered_map<std::string, std::string>& PrimitivePropTypes() {
-    static const std::unordered_map<std::string, std::string> Types = {
-        {"class", "std::string"},
-        {"src", "std::string"},
-        {"icon", "std::string"},
-        {"checked", "bool"},
-        {"handle", "iris::TextureHandle"},
-        {"onPress", "std::function<void()>"},
-        {"onRelease", "std::function<void()>"},
-        {"onHover", "std::function<void()>"},
-        {"onFocus", "std::function<void()>"},
-        {"onChange", "std::function<void()>"},
-    };
-    return Types;
-}
+// The prop-name -> type table now lives in CorePrimitives.h/.cpp (PrimitivePropTypeNames()),
+// shared with tooling (iris-lsp's completion) rather than kept as a second, file-local copy.
+const std::unordered_map<std::string, std::string>& PrimitivePropTypes() { return PrimitivePropTypeNames(); }
 
 std::string EscapeStringLiteral(std::string_view Text) {
     std::string Result;

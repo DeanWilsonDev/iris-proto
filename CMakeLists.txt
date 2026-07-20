@@ -78,6 +78,22 @@ add_executable(iris_cc tools/IrisCc.cpp)
 target_link_libraries(iris_cc PRIVATE iris)
 
 # ---------------------------------------------------------------------------
+# iris-lsp — the LSP server (tools/iris-lsp/), docs/iris_lsp_decision.md.
+# render{}-scoped diagnostics/completion/goto-definition come straight from
+# `iris`; everything outside a render{} block is proxied to a real
+# host-language server (ClangdProxy for `.iris` today) through
+# IHostLanguageServerProxy, kept as a portable seam for a future Nyx-targeted
+# proxy over `.irisx`. POSIX-only (fork/exec) — see ClangdProxy.h.
+# ---------------------------------------------------------------------------
+add_executable(iris_lsp
+    tools/iris-lsp/main.cpp
+    tools/iris-lsp/Server.cpp
+    tools/iris-lsp/VirtualDocument.cpp
+    tools/iris-lsp/ClangdProxy.cpp
+    tools/iris-lsp/JsonRpc.cpp)
+target_link_libraries(iris_lsp PRIVATE iris amanuensis)
+
+# ---------------------------------------------------------------------------
 # Tests — one Cimmerian-based executable. Every test uses Cimmerian's
 # DESCRIBE/IT/ASSERT_* macros with auto-registration and
 # tests/TestMain.cpp's single TestRunner::RunAll() entry point (see CLAUDE.md's
