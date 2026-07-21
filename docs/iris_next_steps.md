@@ -1,5 +1,14 @@
 # Iris — Next Steps
 
+> **Superseded as the active tracker:** this is a point-in-time status snapshot/changelog
+> (everything below is marked "Done"), not a living document — it predates the `<Icon>`,
+> `<Scroll>`, `<Input>`, and LSP work, and won't be updated further. Active, currently-open
+> feature requests and gaps now live in `docs/next-steps.md`, per the top-level
+> `feature-request` skill's convention. Kept here as the historical record of what was flagged
+> open as of this snapshot and how it got closed — several decision docs
+> (`docs/iris_lis_list_diff_decision.md`, `docs/iris_props_decision.md`,
+> `docs/iris_escape_hatch_decision.md`, `docs/iris_import_header_decision.md`) cite it by name.
+>
 > Snapshot as of 2026-07-19. Reflects the corrected three-repo architecture
 > (`docs/iris_stage2_decision_doc.md`'s correction note): `iris` (this repo, standalone,
 > backend-agnostic), `penumbra-proto` (standalone, no Iris knowledge), and

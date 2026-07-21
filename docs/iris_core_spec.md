@@ -519,7 +519,7 @@ the one exception to the shared method set — see its entry below.
   a renderer/backend to load through.
 
 **`<Icon>`** — Renders a single vector glyph resolved by name from a backend/app-supplied icon
-catalog (`docs/penumbra_iris_lustre_componentization_gaps_requirements.md` §1).
+catalog (`docs/next-steps.md`, "`<Icon>` size prop and vector-glyph tag" — resolved).
 - Props: `icon` (string, required — the catalog key, e.g. `icon="chevron-down"`), `size` (float,
   optional — the glyph's logical-pixel square side; omitted means the backend's own default,
   `Penumbra::Widgets::IconWidget::SizeLogical`'s `16.0f`), `class`, `key`. No event props, no
@@ -535,8 +535,8 @@ catalog (`docs/penumbra_iris_lustre_componentization_gaps_requirements.md` §1).
   catalog wired up may leave the glyph undrawn, the same "build succeeds, nothing loaded"
   tolerance `<Image>` already has when `ImageBackend`/`SdlRenderer` are null.
 
-**`<Scroll>`** — A scrolling clip container (docs/
-penumbra_iris_lustre_componentization_gaps_requirements.md §3).
+**`<Scroll>`** — A scrolling clip container (`docs/next-steps.md`, "`<Scroll>` / `<Input>` Core
+primitive tags" — resolved).
 - Props: `wheelStep` (float, optional — logical pixels scrolled per wheel notch; omitted
   means the backend's own default, `0.0f`, "no opinion"), `class`, `key`, any event prop.
 - Children: element children only, same as `<Frame>` — no literal text or interpolated
@@ -549,8 +549,8 @@ penumbra_iris_lustre_componentization_gaps_requirements.md §3).
   inherited `Box::AddChild` directly. `WheelStepLogical` is likewise a plain public
   field.
 
-**`<Input>`** — Single-line text entry (docs/
-penumbra_iris_lustre_componentization_gaps_requirements.md §3).
+**`<Input>`** — Single-line text entry (`docs/next-steps.md`, "`<Scroll>` / `<Input>` Core
+primitive tags" — resolved).
 - Props: `text` (string, optional — the initial value; not live-bound, changing it after
   mount doesn't reach an already-built widget any more than any other prop here does),
   `preferredWidth` (float, optional — a field-width hint, `Penumbra::Widgets::
