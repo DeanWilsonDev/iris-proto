@@ -95,6 +95,17 @@ private:
                                                               const Iris::IrisConfig& Config,
                                                               const std::string& ProjectRoot) const;
 
+    // Goto-definition for a `class="ClassName"` prop value inside render{} -- jumps to the
+    // `.ClassName { }` selector in the paired `Name.lustre` file (same directory, same
+    // basename as IrisFilePath), falling back to a sibling `global.lustre` when the paired
+    // file doesn't define it or doesn't exist, per lustre_core_spec.md §1.3's own
+    // component-overrides-global cascade order. Returns nullopt if neither file defines the
+    // selector and neither can be read at all -- distinct from ResolveComponentDeclaration's
+    // "still jump to line 1" fallback, since there's no meaningful place to land when no
+    // `.lustre` file exists for this component at all yet.
+    std::optional<ProxyLocation> ResolveClassSelector(const std::string& ClassName,
+                                                       const std::string& IrisFilePath) const;
+
     std::FILE* Out_{nullptr};
     bool       ShutdownRequested_{false};
 

@@ -463,6 +463,24 @@ std::optional<ProxyLocation> Server::ResolveComponentDeclaration(const std::stri
     return std::nullopt;
 }
 
+std::optional<ProxyLocation> Server::ResolveClassSelector(const std::string& ClassName,
+                                                            const std::string& IrisFilePath) const {
+    const std::filesystem::path Iris(IrisFilePath);
+    const std::filesystem::path ComponentLustre = std::filesystem::path(Iris).replace_extension(".lustre");
+    const std::filesystem::path GlobalLustre = Iris.parent_path() / "global.lustre";
+
+    for (const std::filesystem::path& Candidate : {ComponentLustre, GlobalLustre}) {
+        const auto Text = ReadFile(Candidate);
+        if (!Text) {
+            continue;
+        }
+        if (const auto Loc = FindClassSelector(*Text, ClassName)) {
+            return ProxyLocation{Candidate.string(), Loc->first, Loc->second};
+        }
+    }
+    return std::nullopt;
+}
+
 void Server::HandleDefinition(const Amanuensis::Value& Id, const Amanuensis::Value& Params) {
     const std::string Uri = Params.Get("textDocument").Get("uri").AsString();
     const auto [Line, Column] = PositionFromParams(Params.Get("position"));
@@ -474,6 +492,7 @@ void Server::HandleDefinition(const Amanuensis::Value& Id, const Amanuensis::Val
     // there's no separate same-file-component case; both funnel into
     // ResolveComponentDeclaration identically once a name is found.
     std::optional<std::string>          NameToResolve;
+    std::optional<std::string>          ClassNameToResolve;
     Iris::IrisConfig                    Config;
     std::string                         ProjectRoot;
     std::vector<Iris::ImportStatement>  Imports;
@@ -491,12 +510,20 @@ void Server::HandleDefinition(const Amanuensis::Value& Id, const Amanuensis::Val
         if (!NameToResolve) {
             InRenderBlock = Doc.Virtual->IsInsideRenderBlock(Line, Column);
             if (InRenderBlock) {
-                if (const auto Tag = TagNameAtPosition(LineText(Doc.Text, Line), Column)) {
-                    // A Core primitive (<Frame>, <Text>, ...) has no declaration to jump
-                    // to -- leave NameToResolve unset rather than trying to resolve it as
-                    // an import and failing.
-                    if (Iris::CorePrimitiveTagNames().count(*Tag) == 0) {
-                        NameToResolve = Tag;
+                const std::string_view CurrentLine = LineText(Doc.Text, Line);
+                // Checked before TagNameAtPosition: a `class="card"` value span and a tag
+                // name never overlap on the same line (the tag name always precedes any
+                // attribute), so this ordering is only ever a matter of which heuristic
+                // actually matches, not a real precedence conflict.
+                ClassNameToResolve = ClassPropValueAtPosition(CurrentLine, Column);
+                if (!ClassNameToResolve) {
+                    if (const auto Tag = TagNameAtPosition(CurrentLine, Column)) {
+                        // A Core primitive (<Frame>, <Text>, ...) has no declaration to jump
+                        // to -- leave NameToResolve unset rather than trying to resolve it as
+                        // an import and failing.
+                        if (Iris::CorePrimitiveTagNames().count(*Tag) == 0) {
+                            NameToResolve = Tag;
+                        }
                     }
                 }
             } else {
@@ -512,6 +539,18 @@ void Server::HandleDefinition(const Amanuensis::Value& Id, const Amanuensis::Val
 
     if (NameToResolve) {
         if (const auto Loc = ResolveComponentDeclaration(*NameToResolve, Imports, Config, ProjectRoot)) {
+            Amanuensis::Value Location = Amanuensis::Value::MakeObject();
+            Location.Insert("uri", Amanuensis::Value(PathToUri(Loc->FilePath)));
+            Location.Insert("range", MakeRange(Loc->Line, Loc->Column));
+            Reply(Id, std::move(Location));
+        } else {
+            Reply(Id, Amanuensis::Value());
+        }
+        return;
+    }
+
+    if (ClassNameToResolve) {
+        if (const auto Loc = ResolveClassSelector(*ClassNameToResolve, UriToPath(Uri))) {
             Amanuensis::Value Location = Amanuensis::Value::MakeObject();
             Location.Insert("uri", Amanuensis::Value(PathToUri(Loc->FilePath)));
             Location.Insert("range", MakeRange(Loc->Line, Loc->Column));

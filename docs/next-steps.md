@@ -136,14 +136,42 @@ own `docs/`, not here.
 
 ---
 
-## `iris-lsp` goto-definition: `class="..."` string → its Lustre selector (2026-07-21)
+## `iris-lsp` goto-definition: `class="..."` string → its Lustre selector — RESOLVED (2026-07-21)
 
-> **Status:** Open — not yet scoped or implemented.
+> **Status:** Resolved in this repo. Implemented the text-scan option this doc itself left as
+> the leaning-towards choice, matching `FindComponentDeclaration`'s existing precedent.
 > **Trigger:** Filed while building `lustre-lsp` (`../../lustre/tools/lustre-lsp`, see that
 > repo's `docs/lustre_lsp_decision.md` §4) — clicking a `class="card"` string in a `.iris`
 > buffer and landing on `.card { }` in the paired `Name.lustre` was an explicit ask, but the
 > click happens while a `.iris` buffer is open, so `lustre-lsp` itself has no way to serve it;
 > it can only live in `iris-lsp`.
+
+### What landed
+
+- `RenderTextHeuristics.h`/`.cpp` gained `ClassPropValueAtPosition` (the class name inside a
+  `class="..."` value span the cursor sits within, mirroring `TagNameAtPosition`'s own
+  boundary-inclusive convention) and `FindClassSelector` (a `.ClassName { }` /
+  `.ClassName:pseudo { }` text scan over a `.lustre` file's source, mirroring
+  `FindComponentDeclaration`'s word-boundary-checked search).
+- `Server::HandleDefinition` checks `ClassPropValueAtPosition` before `TagNameAtPosition`
+  inside the existing `InRenderBlock` branch; on a match, the new `Server::ResolveClassSelector`
+  searches the paired `Name.lustre` file first, falling back to a sibling `global.lustre`,
+  matching Lustre's own component-overrides-global cascade order
+  (`../../lustre/docs/lustre_core_spec.md` §1.3).
+- Covered by new unit tests in `tools/iris-lsp/tests/RenderTextHeuristicsTests.cpp` (both new
+  heuristics in isolation) and three new end-to-end `Server.definition` cases in
+  `tools/iris-lsp/tests/ServerTests.cpp` (paired-file hit, global-file fallback, and the
+  neither-defines-it null case). Full `iris_lsp_tests` (51/51) and `test_iris` (122/122) suites
+  pass.
+
+### Left as-is from the original proposal
+
+- The text-scan approach was chosen over linking `lustre`'s real `Tokenizer`/`Parser` — this
+  repo still has no dependency on `lustre`, and the scan shares
+  `FindComponentDeclaration`'s existing "confused by a selector-shaped string inside a
+  comment" edge case, unchanged from that function's own accepted behavior.
+- Goto-definition *from* Lustre back to Iris, and any change to Lustre's own resolver/parser,
+  remain explicitly out of scope, as originally noted.
 
 ### Context
 

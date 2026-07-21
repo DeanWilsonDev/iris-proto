@@ -302,6 +302,79 @@ DESCRIBE("Server.definition", {
         REQUIRE_TRUE(Reply != nullptr);
         ASSERT_TRUE(Reply->Get("result").IsNull());
     });
+
+    IT("jumps from a class=\"card\" value to the .card selector in the paired Name.lustre file", {
+        TempProject Project("class_goto_def");
+        Project.WriteFile("Foo.lustre", ".other {\n}\n\n.card {\n  background-color: #fff;\n}\n");
+        const std::string Source = "#include \"Iris/Component.h\"\n"
+                                    "using Iris::Component;\n"
+                                    "Component Foo() {\n"
+                                    "    render { <Frame class=\"card\"> </Frame> }\n"
+                                    "}\n";
+        const std::string FileUri = Uri(Project.PathOf("Foo.iris"));
+
+        // Line 4 (1-based) is "    render { <Frame class=\"card\"> </Frame> }" -- 0-based
+        // line 3, character 28 lands inside "card".
+        const auto Outputs =
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+                       MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
+                       MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 3, 28)),
+                       MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+
+        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
+        REQUIRE_TRUE(Reply != nullptr);
+        const Amanuensis::Value& Location = Reply->Get("result");
+        ASSERT_TRUE(Contains(Location.Get("uri").AsString(), "Foo.lustre"));
+        ASSERT_TRUE(Location.Get("range").Get("start").Get("line").AsInteger() == 3); // 0-based -- ".card {"
+    });
+
+    IT("falls back to global.lustre when the paired Name.lustre doesn't define the class", {
+        TempProject Project("class_goto_def_fallback");
+        Project.WriteFile("Foo.lustre", ".other {\n}\n");
+        Project.WriteFile("global.lustre", ".card {\n  background-color: #fff;\n}\n");
+        const std::string Source = "#include \"Iris/Component.h\"\n"
+                                    "using Iris::Component;\n"
+                                    "Component Foo() {\n"
+                                    "    render { <Frame class=\"card\"> </Frame> }\n"
+                                    "}\n";
+        const std::string FileUri = Uri(Project.PathOf("Foo.iris"));
+
+        const auto Outputs =
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+                       MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
+                       MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 3, 28)),
+                       MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+
+        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
+        REQUIRE_TRUE(Reply != nullptr);
+        const Amanuensis::Value& Location = Reply->Get("result");
+        ASSERT_TRUE(Contains(Location.Get("uri").AsString(), "global.lustre"));
+        ASSERT_TRUE(Location.Get("range").Get("start").Get("line").AsInteger() == 0); // 0-based -- ".card {"
+    });
+
+    IT("returns null for a class value with no selector in either Name.lustre or global.lustre", {
+        TempProject Project("class_goto_def_missing");
+        Project.WriteFile("Foo.lustre", ".other {\n}\n");
+        const std::string Source = "#include \"Iris/Component.h\"\n"
+                                    "using Iris::Component;\n"
+                                    "Component Foo() {\n"
+                                    "    render { <Frame class=\"card\"> </Frame> }\n"
+                                    "}\n";
+        const std::string FileUri = Uri(Project.PathOf("Foo.iris"));
+
+        const auto Outputs =
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+                       MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
+                       MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 3, 28)),
+                       MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+
+        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
+        REQUIRE_TRUE(Reply != nullptr);
+        ASSERT_TRUE(Reply->Get("result").IsNull());
+    });
 });
 
 DESCRIBE("Server.semanticTokens", {

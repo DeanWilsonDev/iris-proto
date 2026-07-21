@@ -3,6 +3,8 @@
 #include "RenderTextHeuristics.h"
 
 using IrisLsp::ClassifyRenderCompletion;
+using IrisLsp::ClassPropValueAtPosition;
+using IrisLsp::FindClassSelector;
 using IrisLsp::FindComponentDeclaration;
 using IrisLsp::LineText;
 using IrisLsp::RenderCompletionKind;
@@ -86,5 +88,74 @@ DESCRIBE("RenderTextHeuristics.FindComponentDeclaration", {
     IT("does not match the name unless followed by '('", {
         const std::string Text = "// Button is mentioned here but not declared\n";
         ASSERT_FALSE(FindComponentDeclaration(Text, "Button").has_value());
+    });
+});
+
+DESCRIBE("RenderTextHeuristics.ClassPropValueAtPosition", {
+    IT("finds the class name when the cursor sits inside the quoted value", {
+        const auto Result = ClassPropValueAtPosition("<Frame class=\"card\">", 16);
+        REQUIRE_TRUE(Result.has_value());
+        ASSERT_TRUE(*Result == "card");
+    });
+
+    IT("finds the class name when the cursor sits right on the opening quote", {
+        const auto Result = ClassPropValueAtPosition("<Frame class=\"card\">", 15);
+        REQUIRE_TRUE(Result.has_value());
+        ASSERT_TRUE(*Result == "card");
+    });
+
+    IT("finds the class name when the cursor sits right on the closing quote", {
+        const auto Result = ClassPropValueAtPosition("<Frame class=\"card\">", 19);
+        REQUIRE_TRUE(Result.has_value());
+        ASSERT_TRUE(*Result == "card");
+    });
+
+    IT("returns nullopt for a cursor on the tag name, not the class value", {
+        ASSERT_FALSE(ClassPropValueAtPosition("<Frame class=\"card\">", 3).has_value());
+    });
+
+    IT("returns nullopt when there is no class prop at all", {
+        ASSERT_FALSE(ClassPropValueAtPosition("<Frame>", 3).has_value());
+    });
+
+    IT("returns nullopt for an unterminated value -- mid-edit, nothing to resolve yet", {
+        ASSERT_FALSE(ClassPropValueAtPosition("<Frame class=\"card", 16).has_value());
+    });
+
+    IT("finds the right class value among multiple attributes on one line", {
+        const auto Result = ClassPropValueAtPosition("<Frame key=\"a\" class=\"card\">", 24);
+        REQUIRE_TRUE(Result.has_value());
+        ASSERT_TRUE(*Result == "card");
+    });
+});
+
+DESCRIBE("RenderTextHeuristics.FindClassSelector", {
+    IT("finds a plain class selector", {
+        const std::string Text = "frame { }\n\n.card {\n  background-color: #fff;\n}\n";
+        const auto         Result = FindClassSelector(Text, "card");
+        REQUIRE_TRUE(Result.has_value());
+        ASSERT_TRUE(Result->first == 3); // 1-based line of ".card {"
+    });
+
+    IT("finds a class selector followed by a nested pseudo-class block", {
+        const std::string Text = ".card:hover {\n  background-color: #eee;\n}\n";
+        const auto         Result = FindClassSelector(Text, "card");
+        REQUIRE_TRUE(Result.has_value());
+        ASSERT_TRUE(Result->first == 1);
+    });
+
+    IT("does not match a substring of a longer class name", {
+        const std::string Text = ".card-title {\n}\n";
+        ASSERT_FALSE(FindClassSelector(Text, "card").has_value());
+    });
+
+    IT("does not match a bare mention with no selector block", {
+        const std::string Text = "/* see .card for reference, not declared here */\n";
+        ASSERT_FALSE(FindClassSelector(Text, "card").has_value());
+    });
+
+    IT("returns nullopt when the class isn't declared at all", {
+        const std::string Text = ".other {\n}\n";
+        ASSERT_FALSE(FindClassSelector(Text, "card").has_value());
     });
 });

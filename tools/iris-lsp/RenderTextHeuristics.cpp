@@ -72,6 +72,75 @@ std::optional<std::string> TagNameAtPosition(std::string_view Line, std::uint32_
     return std::nullopt;
 }
 
+std::optional<std::string> ClassPropValueAtPosition(std::string_view Line, std::uint32_t ColumnOneBased) {
+    const std::size_t              Cursor = ColumnOneBased > 0 ? static_cast<std::size_t>(ColumnOneBased - 1) : 0;
+    static constexpr std::string_view Needle = "class=\"";
+
+    std::size_t SearchFrom = 0;
+    while (true) {
+        const std::size_t Found = Line.find(Needle, SearchFrom);
+        if (Found == std::string_view::npos) {
+            return std::nullopt;
+        }
+        const std::size_t ValueStart = Found + Needle.size();
+        const std::size_t ValueEnd = Line.find('"', ValueStart);
+        if (ValueEnd == std::string_view::npos) {
+            return std::nullopt; // unterminated -- mid-edit, nothing to resolve yet
+        }
+        const std::size_t OpenQuote = Found + Needle.size() - 1;
+        // Inclusive of both quote positions, matching TagNameAtPosition's own "clicking
+        // right on the boundary still counts" convention.
+        if (Cursor >= OpenQuote && Cursor <= ValueEnd) {
+            return std::string(Line.substr(ValueStart, ValueEnd - ValueStart));
+        }
+        SearchFrom = ValueEnd + 1;
+    }
+}
+
+std::optional<std::pair<std::uint32_t, std::uint32_t>> FindClassSelector(const std::string& Text,
+                                                                            const std::string& ClassName) {
+    const std::string Needle = "." + ClassName;
+    std::size_t       Pos = 0;
+    while ((Pos = Text.find(Needle, Pos)) != std::string::npos) {
+        const bool StartOk = Pos == 0 || (std::isalnum(static_cast<unsigned char>(Text[Pos - 1])) == 0 &&
+                                           Text[Pos - 1] != '_' && Text[Pos - 1] != '-' && Text[Pos - 1] != '.');
+        const std::size_t After = Pos + Needle.size();
+        const bool EndOk = After >= Text.size() || (std::isalnum(static_cast<unsigned char>(Text[After])) == 0 &&
+                                                      Text[After] != '_' && Text[After] != '-');
+        if (StartOk && EndOk) {
+            std::size_t Scan = After;
+            while (Scan < Text.size() && std::isspace(static_cast<unsigned char>(Text[Scan])) != 0) {
+                ++Scan;
+            }
+            if (Scan < Text.size() && Text[Scan] == ':') { // an optional nested pseudo-class block
+                ++Scan;
+                while (Scan < Text.size() &&
+                       (std::isalnum(static_cast<unsigned char>(Text[Scan])) != 0 || Text[Scan] == '-')) {
+                    ++Scan;
+                }
+                while (Scan < Text.size() && std::isspace(static_cast<unsigned char>(Text[Scan])) != 0) {
+                    ++Scan;
+                }
+            }
+            if (Scan < Text.size() && Text[Scan] == '{') {
+                std::uint32_t Line = 1;
+                std::uint32_t Column = 1;
+                for (std::size_t I = 0; I < Pos + 1; ++I) { // +1: land on ClassName itself, past the '.'
+                    if (Text[I] == '\n') {
+                        ++Line;
+                        Column = 1;
+                    } else {
+                        ++Column;
+                    }
+                }
+                return std::make_pair(Line, Column);
+            }
+        }
+        Pos += Needle.size();
+    }
+    return std::nullopt;
+}
+
 std::optional<std::pair<std::uint32_t, std::uint32_t>> FindComponentDeclaration(const std::string& Text,
                                                                                   const std::string& Name) {
     std::size_t Pos = 0;
