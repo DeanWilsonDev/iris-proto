@@ -1,0 +1,14 @@
+{
+  "name": "iris",
+  "description": "Iris's own plugin marketplace: the language skill for projects that author or consume Iris UI components.",
+  "owner": {
+    "name": "Dean Wilson"
+  },
+  "plugins": [
+    {
+      "name": "iris",
+      "source": "./",
+      "description": "Skills for reading and writing Iris (.iris/.irisx) — a JSX-flavored reactive UI preprocessor layered over C++23."
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "iris",
+  "description": "Skills for reading and writing Iris (.iris/.irisx) — a JSX-flavored reactive UI preprocessor layered over C++23.",
+  "version": "1.0.0",
+  "author": { "name": "Dean Wilson" },
+  "license": "MIT"
+}
