@@ -35,6 +35,10 @@ const std::unordered_map<std::string, std::string>& PrimitivePropTypeNames() {
         {"onHover", "std::function<void()>"},
         {"onFocus", "std::function<void()>"},
         {"onChange", "std::function<void()>"},
+        // <Input>'s own value-carrying event prop (docs/next-steps.md, "<Input>'s onChange
+        // can't carry the new text" -- resolved) -- distinct from the shared zero-argument
+        // `onChange` above so every other primitive's event-prop shape stays unchanged.
+        {"onTextChange", "std::function<void(std::string)>"},
     };
     return Types;
 }

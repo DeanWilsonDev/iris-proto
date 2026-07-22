@@ -20,6 +20,7 @@ using IrisPropValue = std::variant<
     float,
     bool,
     std::function<void()>,
+    std::function<void(std::string)>,
     iris::TextureHandle
 >;
 

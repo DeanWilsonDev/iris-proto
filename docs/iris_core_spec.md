@@ -554,11 +554,15 @@ primitive tags" — resolved).
 - Props: `text` (string, optional — the initial value; not live-bound, changing it after
   mount doesn't reach an already-built widget any more than any other prop here does),
   `preferredWidth` (float, optional — a field-width hint, `Penumbra::Widgets::
-  TextInput::PreferredWidthLogical`), `class`, `key`. No event props in this first cut —
-  `TextInput`'s own `OnTextChanged` takes a `const std::string&` argument, and Iris's
-  `IrisPropValue` variant (`include/Iris/IrisProps.h`) has no `function<void(std::string)>`
-  member to carry it; the shared `onChange` prop (`function<void()>`, no argument) exists
-  but can't tell a caller *what* changed, so it isn't wired for `<Input>` yet.
+  TextInput::PreferredWidthLogical`), `onTextChange` (`function<void(std::string)>`,
+  optional — fires with the field's new text, wired to `TextInput::OnTextChanged`;
+  `docs/next-steps.md`, "`<Input>`'s `onChange` can't carry the new text" — resolved), `class`,
+  `key`. Distinct from the shared zero-argument `onChange` prop (still present on every
+  primitive's prop type table but not meaningfully usable on `<Input>`, since it can't carry
+  *what* changed) — `IrisPropValue` (`include/Iris/IrisProps.h`) now has a
+  `function<void(std::string)>` variant member and `Umbra::IrisPropDiff`
+  (`libs/umbra-interfaces/include/Umbra/IWidget.h`) an `OnTextChange` field to carry it through
+  the reconciler.
 - Children: none (leaf) — same as `<Image>`/`<Icon>`.
 - Backend requirement: maps onto Penumbra's `TextInput`, another `Box` subclass with no
   `Builder` — same "plain field, not a Builder chain" treatment as `<Scroll>` above.

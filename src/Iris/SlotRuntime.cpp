@@ -257,6 +257,14 @@ ComponentInstance* IrisRuntime::CurrentComponentInstance() const {
     return ComponentInstanceStack_.empty() ? nullptr : ComponentInstanceStack_.back();
 }
 
+void IrisRuntime::RegisterRoot(Umbra::IWidget* Root) { Root_ = Root; }
+
+Umbra::IWidget* IrisRuntime::GetRoot() const { return Root_; }
+
 void Tick() { IrisRuntime::Instance().ReconcileDirtySlots(); }
+
+void RegisterRoot(Umbra::IWidget* Root) { IrisRuntime::Instance().RegisterRoot(Root); }
+
+Umbra::IWidget* GetRoot() { return IrisRuntime::Instance().GetRoot(); }
 
 } // namespace iris

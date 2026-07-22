@@ -43,6 +43,15 @@ void DiffEventField(std::optional<std::function<void()>>& Field, const Iris::Iri
     }
 }
 
+// Same "no operator==, always changed whenever New has one" treatment as the
+// zero-argument event props above, for <Input>'s value-carrying onTextChange.
+void DiffTextEventField(std::optional<std::function<void(std::string)>>& Field, const Iris::IrisProps& New,
+                         const std::string& Name) {
+    if (const auto* NewValue = GetProp<std::function<void(std::string)>>(New, Name)) {
+        Field = *NewValue;
+    }
+}
+
 // iris::TextureHandle (Umbra::TextureHandle) currently carries no data to compare —
 // same treatment as the event-prop case above.
 void DiffHandleField(std::optional<Umbra::TextureHandle>& Field, const Iris::IrisProps& New, const std::string& Name) {
@@ -64,7 +73,9 @@ bool KeysEqual(const std::optional<Iris::IrisPropValue>& A, const std::optional<
     return std::visit(
         [&](const auto& AValue) {
             using T = std::decay_t<decltype(AValue)>;
-            if constexpr (std::is_same_v<T, std::function<void()>> || std::is_same_v<T, iris::TextureHandle>) {
+            if constexpr (std::is_same_v<T, std::function<void()>> ||
+                          std::is_same_v<T, std::function<void(std::string)>> ||
+                          std::is_same_v<T, iris::TextureHandle>) {
                 return false; // never meaningfully comparable — never a key match
             } else {
                 return AValue == std::get<T>(*B);
@@ -239,6 +250,7 @@ Umbra::IrisPropDiff ComputePropDiff(const Iris::IrisProps& Old, const Iris::Iris
     DiffEventField(Diff.OnHover, New, "onHover");
     DiffEventField(Diff.OnFocus, New, "onFocus");
     DiffEventField(Diff.OnChange, New, "onChange");
+    DiffTextEventField(Diff.OnTextChange, New, "onTextChange");
     return Diff;
 }
 

@@ -167,4 +167,16 @@ DESCRIBE("SlotRuntime", {
         ASSERT_EQUAL(InvocationCount, InvocationsAfterMount + 1);
         // closing the batch reconciles exactly once, despite three set() calls inside it
     });
+
+    IT("RegisterRoot/GetRoot hold the whole application's live-widget root", {
+        StubWidget Root;
+        iris::RegisterRoot(&Root);
+        ASSERT_TRUE(iris::GetRoot() == &Root);
+
+        StubWidget Replacement;
+        iris::RegisterRoot(&Replacement); // a later call simply replaces the previous one
+        ASSERT_TRUE(iris::GetRoot() == &Replacement);
+
+        iris::RegisterRoot(nullptr); // leave global runtime state clean for later tests
+    });
 });

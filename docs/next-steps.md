@@ -14,12 +14,23 @@ both since removed) plus one gap identified directly against `docs/iris_core_spe
 
 ---
 
-## Live-widget root registry, for Lustre's hot-reload (2026-07-19)
+## Live-widget root registry, for Lustre's hot-reload — RESOLVED (2026-07-22)
 
-> **Status:** Open — not yet scoped or implemented.
+> **Status:** Resolved in this repo.
 > **Trigger:** Filed during Lustre's design handoff (`../../lustre/docs/lustre_handoff.md` §3,
 > "Runtime-loaded, not compiled ahead of time") — not blocking that design, but recorded since
 > the underlying need is Iris's, not just Lustre's.
+
+### What landed
+
+Folded into the existing `iris::IrisRuntime` singleton (`include/Iris/SlotRuntime.h`) rather
+than a new `IrisRuntime.h` file, since that's where every other piece of ambient runtime state
+(the active-slot stack, the component-instance stack) already lives: a `Root_` field plus
+`IrisRuntime::RegisterRoot(Umbra::IWidget*)`/`GetRoot() const` methods, and free functions
+`iris::RegisterRoot`/`iris::GetRoot` (`SlotRuntime.cpp`) matching this entry's own proposed API
+exactly. Zero backend-specific content, as proposed — `Umbra::IWidget*` in, `Umbra::IWidget*`
+out, ownership left with the caller. Covered by a new `SlotRuntimeTests.cpp` case. Full
+`test_iris` suite passes.
 
 ### Context
 
@@ -91,25 +102,37 @@ for the full prop tables. `iris-penumbra-backend`'s `Walker.cpp` build cases tar
 `ScrollablePanel`/`TextInput`'s own `Builder`s are that sibling repo's concern, out of scope
 here.
 
-### Follow-on gap this surfaced, still open: `<Input>`'s `onChange` can't carry the new text
+### Follow-on gap this surfaced, now RESOLVED (2026-07-22): `<Input>`'s `onChange` can't carry the new text
 
-> **Status:** Open.
+> **Status:** Resolved in this repo.
 
-`docs/iris_core_spec.md` §"`<Input>`" (~line 552-561): `<Input>` ships with no event props in
-this first cut. `Penumbra::Widgets::TextInput::OnTextChanged` takes a `const std::string&`;
-`IrisPropValue` (`include/Iris/IrisProps.h`)'s variant has no `function<void(std::string)>`
+`docs/iris_core_spec.md` §"`<Input>`" (~line 552-561): `<Input>` shipped with no event props in
+its first cut. `Penumbra::Widgets::TextInput::OnTextChanged` takes a `const std::string&`;
+`IrisPropValue` (`include/Iris/IrisProps.h`)'s variant had no `function<void(std::string)>`
 member to carry it, so the shared `onChange` prop (`function<void()>`, zero-argument, shared by
-every primitive) can't tell a caller *what* changed — it exists on `<Input>` but is effectively
-inert.
+every primitive) couldn't tell a caller *what* changed — it existed on `<Input>` but was
+effectively inert.
 
-#### Proposed fix
+#### What landed
 
-Add a `function<void(std::string)>` (or similarly-shaped) alternative to `IrisPropValue`'s
-variant, and give `<Input>` its own text-carrying event prop (distinct from the shared
-zero-argument `onChange`, to avoid changing every other primitive's event-prop shape). Exact
-naming/shape not decided — whoever picks this up should check whether other future primitives
-(e.g. a slider) will also need a value-carrying callback, to size the variant addition once
-rather than per-primitive.
+- `IrisPropValue` (`include/Iris/IrisProps.h`) gained a `std::function<void(std::string)>`
+  variant member, sized as a general value-carrying-callback alternative rather than an
+  `<Input>`-only special case, per this entry's own original note about future primitives (e.g.
+  a slider) potentially needing the same shape.
+- `<Input>` gets its own new `onTextChange` prop (`src/Iris/CorePrimitives.cpp`'s
+  `PrimitivePropTypeNames()`), distinct from the shared zero-argument `onChange` so no other
+  primitive's event-prop shape changed.
+- `Umbra::IrisPropDiff` (`libs/umbra-interfaces/include/Umbra/IWidget.h`) gained a matching
+  `OnTextChange` field; `Reconciler.cpp`'s `ComputePropDiff` populates it via a new
+  `DiffTextEventField` (same "no `operator==`, always changed when present" treatment as the
+  existing zero-argument event props), and `KeysEqual`'s never-a-key-match `if constexpr`
+  branch was extended to include the new variant alternative.
+- Covered by a new `ReconcilerTests.cpp` case asserting the captured text argument actually
+  round-trips through `ComputePropDiff`, not just that the optional is populated. Full
+  `test_iris` suite passes.
+- Wiring `Umbra::IrisPropDiff::OnTextChange` to a real `Penumbra::Widgets::TextInput::
+  OnTextChanged` is `iris-penumbra-backend`'s own concern, out of scope here (same split as
+  every other Core primitive's backend wiring).
 
 ---
 

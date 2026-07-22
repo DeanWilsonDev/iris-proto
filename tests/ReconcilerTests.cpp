@@ -134,6 +134,17 @@ DESCRIBE("Reconciler", {
         ASSERT_TRUE(Diff.OnPress.has_value()); // an event prop present in New is always included (no operator== to compare)
     });
 
+    IT("ComputePropDiff carries onTextChange's new-text argument through", {
+        Iris::IrisProps New;
+        std::string     Captured;
+        New["onTextChange"] = Iris::IrisPropValue{std::function<void(std::string)>(
+            [&Captured](std::string NewText) { Captured = std::move(NewText); })};
+        const auto Diff = iris::ComputePropDiff({}, New);
+        REQUIRE_TRUE(Diff.OnTextChange.has_value());
+        (*Diff.OnTextChange)("hello");
+        ASSERT_EQUAL(Captured, "hello");
+    });
+
     IT("ReconcileWidget mounts fresh when no widget exists", {
         int                              MountCount = 0;
         TestMounter                       Mount(&MountCount);

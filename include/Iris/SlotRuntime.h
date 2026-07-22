@@ -219,6 +219,16 @@ public:
     void               PopComponentInstance();
     ComponentInstance* CurrentComponentInstance() const;
 
+    // The whole-application live-widget registry (docs/next-steps.md, "Live-widget root
+    // registry, for Lustre's hot-reload") — holds whatever `Umbra::IWidget*` the consuming
+    // app last registered as its mounted tree's root, with zero backend-specific content
+    // (`Umbra::IWidget` is already the backend-agnostic interface the reconciler itself
+    // walks/mutates through). A later `RegisterRoot` call simply replaces the previous
+    // one; Iris does not own the widget's lifetime, only the pointer to it, mirroring
+    // `MountFn`'s own "the caller owns what it builds" convention.
+    void            RegisterRoot(Umbra::IWidget* Root);
+    Umbra::IWidget* GetRoot() const;
+
 private:
     IrisRuntime() = default;
 
@@ -226,6 +236,7 @@ private:
     std::vector<SlotState*>         DirtySlots_;
     int                              BatchDepth_{0};
     std::vector<ComponentInstance*> ComponentInstanceStack_;
+    Umbra::IWidget*                 Root_{nullptr};
 };
 
 // RAII convenience for a backend adapter's own event-dispatch code to wrap a handler
@@ -244,5 +255,16 @@ public:
 // directly and unconditionally, before `Measure()`/`Arrange()`/`Draw()`). Reconciles
 // every slot marked dirty since the last `Tick()` or batch flush.
 void Tick();
+
+// Registers `Root` as the whole application's mounted-widget-tree entry point
+// (`IrisRuntime::RegisterRoot`) — callable by any consuming app right after it builds its
+// tree. Generic over any backend's `IWidget` implementation by construction; benefit
+// beyond the Lustre hot-reload need that prompted this is that the next cross-cutting
+// concern needing "the whole mounted tree" (a debugger, an inspector) gets this for free.
+void RegisterRoot(Umbra::IWidget* Root);
+
+// The most recently registered root, or nullptr if none has been (docs/next-steps.md,
+// "Live-widget root registry, for Lustre's hot-reload").
+Umbra::IWidget* GetRoot();
 
 } // namespace iris
