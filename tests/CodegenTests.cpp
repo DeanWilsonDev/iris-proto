@@ -314,4 +314,37 @@ DESCRIBE("Codegen", {
         const auto Result = Generate(R"(render { <Frame class="a" /> })");
         ASSERT_FALSE(Contains(Result.Source, "Node.Key")); // an element with no key prop gets no IIFE wrapping at all
     });
+
+    IT("a ref'd primitive wraps the base expression and sets the ref", {
+        const auto Result = Generate(R"(render { <Icon ref="trigger-icon" class="party-row" /> })");
+        ASSERT_TRUE(Result.Errors.empty()); // a ref'd primitive codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "[&]() { Iris::Component Node = Iris::Component{Iris::IrisElementTag::"
+                                            "Icon,"));
+        // the base primitive expression is wrapped in the ref-setting IIFE
+        ASSERT_TRUE(Contains(Result.Source, "Node.Ref = Iris::IrisPropValue(\"trigger-icon\"); return Node; }()"));
+        // the ref string literal is quoted the same way any other string prop value is
+    });
+
+    IT("a ref'd component invocation also wraps with the ref", {
+        const auto Result = Generate(R"(render { <HealthBar ref="hb" current={1} max={2} /> })");
+        ASSERT_TRUE(Result.Errors.empty()); // a ref'd component invocation codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "[&]() { Iris::Component Node = iris::MountComponentInstance([&]() -> "
+                                            "Iris::Component { return HealthBar(HealthBarProps{"));
+        // the base component-invocation call is wrapped in the ref-setting IIFE the same way a
+        // primitive's is — ref handling is uniform across every element kind, mirroring key
+        ASSERT_TRUE(Contains(Result.Source, "Node.Ref = Iris::IrisPropValue(\"hb\"); return Node; }()"));
+    });
+
+    IT("an unref'd element gets no ref IIFE wrapping", {
+        const auto Result = Generate(R"(render { <Frame class="a" /> })");
+        ASSERT_FALSE(Contains(Result.Source, "Node.Ref")); // an element with no ref prop gets no IIFE wrapping at all
+    });
+
+    IT("a keyed and ref'd primitive composes both IIFE wraps", {
+        const auto Result = Generate(R"(render { <Frame key={member.id} ref="row" class="a" /> })");
+        ASSERT_TRUE(Result.Errors.empty()); // key + ref together codegen with no errors
+        ASSERT_TRUE(Contains(Result.Source, "Node.Key = Iris::IrisPropValue(member.id); return Node; }()"));
+        ASSERT_TRUE(Contains(Result.Source, "Node.Ref = Iris::IrisPropValue(\"row\"); return Node; }()"));
+        // both wraps are present -- key applied first, ref wrapped around it
+    });
 });

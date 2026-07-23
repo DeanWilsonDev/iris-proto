@@ -78,6 +78,15 @@ add_executable(iris_cc tools/IrisCc.cpp)
 target_link_libraries(iris_cc PRIVATE iris)
 
 # ---------------------------------------------------------------------------
+# iris_compile_directory(<target> <source-dir> <generated-header-dir>) -- CMake glue for
+# consumers, wrapping the per-file add_custom_command pattern every iris_cc consumer otherwise
+# hand-writes once per `.iris` file (docs/next-steps.md, "CMake helper to compile every `.iris`
+# file in a directory, not one hand-written block per file"). Included after iris_cc's own
+# target definition above since the function references it via $<TARGET_FILE:iris_cc>.
+# ---------------------------------------------------------------------------
+include(cmake/IrisCompileDirectory.cmake)
+
+# ---------------------------------------------------------------------------
 # iris-lsp — the LSP server (tools/iris-lsp/), docs/iris_lsp_decision.md.
 # render{}-scoped diagnostics/completion/goto-definition come straight from
 # `iris`; everything outside a render{} block is proxied to a real

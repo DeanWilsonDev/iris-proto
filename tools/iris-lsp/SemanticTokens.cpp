@@ -52,6 +52,11 @@ void WalkElement(const Iris::ElementNode& Node, std::vector<SemanticToken>& Out)
         // still contain nested elements worth walking.
         WalkPropValue(*Node.Key, Out);
     }
+    if (Node.Ref) {
+        // Same treatment as `key` above -- `ref` (docs/next-steps.md) is a reserved prop
+        // name stripped before codegen, but its value can still nest elements worth walking.
+        WalkPropValue(*Node.Ref, Out);
+    }
 
     for (const Iris::ElementChild& Child : Node.Children) {
         if (Child.Kind == Iris::ElementChildKind::Element && Child.Element) {

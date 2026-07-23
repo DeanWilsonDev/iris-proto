@@ -86,11 +86,16 @@ struct ElementChild {
 // of it. `key` is pulled out of `Props` into its own field, since per §2.3 it
 // is stripped by the preprocessor before codegen and never reaches the
 // backend; `class` has no special structural treatment and stays an ordinary
-// entry in `Props`.
+// entry in `Props`. `ref` (docs/next-steps.md, "Named-child-handle (`ref`)
+// prop") is pulled out the same way `key` is -- a plain identifying string a
+// mount call surfaces back to host code, not a reconciler input, so it must
+// never be confused with `Key` downstream (Reconciler.cpp's identity
+// matching stays `Key`-only).
 struct ElementNode {
     std::string                Tag;
     std::vector<Prop>          Props;
     std::optional<PropValue>   Key;
+    std::optional<PropValue>   Ref;
     std::vector<ElementChild>  Children;
     SourceLocation              Location;
 

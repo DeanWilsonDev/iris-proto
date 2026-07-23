@@ -64,6 +64,19 @@ DESCRIBE("RenderBlockParser", {
         ASSERT_TRUE(FindProp(Root, "class") != nullptr); // class remains an ordinary entry in Props
     });
 
+    IT("the ref prop is extracted, not left in Props", {
+        const auto Result = ParseSource(R"(render { <Icon ref="trigger-icon" class="row"></Icon> })");
+        ASSERT_TRUE(Result.Errors.empty()); // ref + class props parse with no errors
+        REQUIRE_TRUE(!Result.Blocks.empty());
+
+        const auto& Root = Result.Blocks[0].Root;
+        ASSERT_TRUE(Root.Ref.has_value() && Root.Ref->Kind == Iris::PropValueKind::StringLiteral &&
+                    Root.Ref->Text == "trigger-icon");
+        // ref is captured as a string literal, quotes stripped
+        ASSERT_TRUE(FindProp(Root, "ref") == nullptr);   // ref never appears in Props
+        ASSERT_TRUE(FindProp(Root, "class") != nullptr); // class remains an ordinary entry in Props
+    });
+
     IT("an escape-hatch prop is captured verbatim with nested braces", {
         const auto Result = ParseSource(
             R"(render { <Button onPress={[&]() { settingsOpen.set(true); }} /> })");

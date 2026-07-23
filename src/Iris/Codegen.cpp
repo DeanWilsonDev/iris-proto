@@ -46,7 +46,13 @@ public:
         } else {
             Base = EmitComponentInvocation(Node);
         }
-        return Node.Key.has_value() ? EmitWithKey(Base, *Node.Key) : Base;
+        if (Node.Key.has_value()) {
+            Base = EmitWithKey(Base, *Node.Key);
+        }
+        if (Node.Ref.has_value()) {
+            Base = EmitWithRef(Base, *Node.Ref);
+        }
+        return Base;
     }
 
 private:
@@ -99,6 +105,15 @@ private:
     std::string EmitWithKey(const std::string& BaseExpression, const PropValue& KeyValue) {
         return "[&]() { Iris::Component Node = " + BaseExpression + "; Node.Key = Iris::IrisPropValue(" +
                EmitPropValueExpression(KeyValue) + "); return Node; }()";
+    }
+
+    // `ref` (docs/next-steps.md, "Named-child-handle (`ref`) prop") — same IIFE mechanism as
+    // `EmitWithKey` above, setting `Component::Ref` instead of `Component::Key`. Composes with
+    // an already-present key wrap (`Emit()` applies this second, around whatever `EmitWithKey`
+    // already produced), since each wrap only touches its own field before returning `Node`.
+    std::string EmitWithRef(const std::string& BaseExpression, const PropValue& RefValue) {
+        return "[&]() { Iris::Component Node = " + BaseExpression + "; Node.Ref = Iris::IrisPropValue(" +
+               EmitPropValueExpression(RefValue) + "); return Node; }()";
     }
 
     // Builds `Iris::IrisProps{ {"name", Iris::IrisPropValue{std::in_place_type<T>, expr}}, ... }`

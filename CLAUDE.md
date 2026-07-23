@@ -76,8 +76,10 @@ intended Cimmerian as the long-term tool).
   to stay backend-agnostic shouldn't have to pull in one specific backend's whole build just to
   compile its own preprocessor. The Stage 2 "Penumbra backend" — the code that walks
   `Component` IR and calls Penumbra's fluent `Builder` API (`Box::Builder`,
-  `Label::Builder`, etc.) — lives in a separate sibling repo, `iris-penumbra-backend`
-  (`../iris-penumbra-backend`), which vendors both this repo and `penumbra-proto` as
+  `Label::Builder`, etc.) — lives in a separate sibling repo, `penumbra-ui-backend`
+  (`../penumbra-ui-backend`; its docs/decision records still call it `iris-penumbra-backend`
+  in prose, the name it was originally scoped under — its actual repo/remote name is
+  `penumbra-ui-backend`), which vendors both this repo and `penumbra-proto` as
   submodules. Neither Iris nor Penumbra depends on the other, or on that bridge repo; real
   consumer projects depend on the bridge repo (and transitively get both).
 - **`libs/amanuensis`** (git submodule, `github.com/DeanWilsonDev/amanuensis`) is a
@@ -98,7 +100,7 @@ intended Cimmerian as the long-term tool).
 - **`Component`** (`docs/iris_core_spec.md` §2.5) is the backend-agnostic IR that sits
   between the parsed component tree and any backend's codegen. It carries no Penumbra (or any
   other backend) type anywhere in this repo — a backend-mapping pass in the relevant bridge
-  repo (`iris-penumbra-backend` for Penumbra) is what turns it into real widgets. The runtime's
+  repo (`penumbra-ui-backend` for Penumbra) is what turns it into real widgets. The runtime's
   live-widget map is keyed by element identity (`key`, or a generated position id) and stores
   `IWidget*` — a backend-agnostic interface — not a concrete Penumbra type, even at the
   runtime layer.
@@ -119,9 +121,9 @@ interface (`OnMount`/`OnUnmount`/`OnTick`) and an `Application` host dispatching
 matching what `docs/iris_core_spec.md` §10 / `docs/iris_stage3_decision_doc.md` §8 specified —
 this was the last known Penumbra-side blocker for Stage 3 lifecycle work.
 
-Stage 2 (the Penumbra backend itself: `IrisPenumbraBackend::BuildWidgetTree()`, walking a single
+Stage 2 (the Penumbra backend itself: `PenumbraUiBackend::BuildWidgetTree()`, walking a single
 `Component` node and building the equivalent real Penumbra widget tree via each Core
-primitive's own fluent `Builder`) is implemented in `iris-penumbra-backend`, not here — this
+primitive's own fluent `Builder`) is implemented in `penumbra-ui-backend`, not here — this
 repo only ever produces the backend-agnostic `Component` IR. It's a one-shot static build —
 `<Slot>` contributes nothing during it (same as `IrisElementTag::None`); `iris::ResolveSlots`
 (below) splices real content in afterward.
@@ -131,7 +133,7 @@ the reconciler) is implemented here — see `docs/iris_stage3_implementation_dec
 now does reach `Component` (`Component::Key`, set via a small IIFE `Codegen.h` wraps
 around any keyed element's base expression) — the reconciler's `Umbra::IWidget`-based
 `key`→live-widget matching is real and tested. A real Penumbra `IWidget` adapter is also
-implemented (in `iris-penumbra-backend`) and tested against actual `Penumbra::Widgets::Box`/
+implemented (in `penumbra-ui-backend`) and tested against actual `Penumbra::Widgets::Box`/
 `Label` objects, not just a mock.
 
 **State declaration uses `IRIS_SIGNAL(Type, Name, InitExpr)`, not a direct

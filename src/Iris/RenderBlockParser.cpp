@@ -239,6 +239,8 @@ ElementNode RenderBlockParser::ParseElementAfterLAngle(SourceLocation LAngleLoca
         PropValue Value = ParsePropValue();
         if (PropName == "key") {
             Node.Key = std::move(Value);
+        } else if (PropName == "ref") {
+            Node.Ref = std::move(Value);
         } else {
             Node.Props.push_back(Prop{PropName, std::move(Value), PropNameLocation});
         }

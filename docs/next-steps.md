@@ -14,6 +14,164 @@ both since removed) plus one gap identified directly against `docs/iris_core_spe
 
 ---
 
+## Named-child-handle (`ref`) prop, for host code reaching one mounted child directly — RESOLVED (2026-07-23)
+
+> **Status:** Resolved in this repo — the parser/codegen/`Component` plumbing this entry asked
+> for. The registry lookup surfaced on a mount call (`iris::MountResult::GetByRef` or similar)
+> is `penumbra-ui-backend`'s own follow-up, as this entry's own "Required changes elsewhere"
+> section already said, and stays out of scope here.
+> **Trigger:** `pharos-proto` asked to spec out what it'd take to mount a `.iris`/`.lustre`
+> component with no hand-written host-side glue at all — analogous to how a React app just
+> imports and renders `<App />` with no manual DOM-node bookkeeping. Investigating what
+> `pharos-proto`'s own consumers (`src/ui/lens_toggle.cpp`, `src/ui/inspector_panel.cpp`'s
+> `buildInspectorRow`, `src/ui/color_filter_dropdown.cpp`) actually hand-write today turned
+> up this as the single largest remaining piece of irreducible boilerplate.
+
+### What landed
+
+- `ElementNode` (`include/Iris/ElementNode.h`) and `Component` (`include/Iris/Component.h`)
+  each gained a `Ref` field paralleling `Key` exactly — `std::optional<PropValue>` and
+  `std::optional<IrisPropValue>` respectively.
+- `RenderBlockParser.cpp`'s reserved-prop-name check (previously `key`-only) gained a `ref`
+  arm, pulling it out of `Props` into `Node.Ref` the same way `key` is pulled into `Node.Key`.
+- `Codegen.cpp`'s `ComponentEmitter::Emit` gained an `EmitWithRef` IIFE wrapper mirroring
+  `EmitWithKey`, applied after the key wrap so a `key` + `ref` pair on the same element compose
+  (each wrap only touches its own `Component` field before returning `Node`).
+- `SemanticValidator.cpp` and `iris-lsp`'s `SemanticTokens.cpp` both gained a `Node.Ref`
+  counterpart to their existing `Node.Key` handling, so a `!{ }` escape-hatch `ref` value is
+  validated and its nested elements get semantic tokens the same way a keyed one does.
+- Deliberately **not** touched: `Reconciler.cpp`'s identity-matching (`KeysEqual`,
+  `SameIdentity`) stays `Key`-only — `ref` carries no reconciler meaning, exactly as originally
+  proposed.
+- Covered by new tests: `RenderBlockParserTests.cpp` (ref extracted out of `Props`, mirroring
+  the existing key test), and four new `CodegenTests.cpp` cases (ref'd primitive, ref'd
+  component invocation, unref'd element gets no wrap, key+ref compose). Full `test_iris` suite
+  (129/129) passes.
+
+### What's actually missing
+
+Every `pharos-proto` consumer that needs to read or drive one specific mounted child after
+building a component (a `Label*` to swap `Font` on, an `IconWidget*` to retarget its
+`IconName`, a `TextInput*` to focus) does it by hand-walking `GetChildAt(index)` chains that
+mirror the `.iris` file's child order — e.g. `lens_toggle.cpp:108-122` goes two levels deep
+(frame → label) on each of two branches, `inspector_panel.cpp`'s `buildInspectorRow`
+(116-177) goes three levels deep across two branches. Every one of these carries a comment
+asserting "this mirrors `<Component>.iris`'s child order exactly" — the C++ is manually kept
+in sync with the `.iris` file's structure by convention, with nothing tying them together, so
+reordering children in the `.iris` file silently breaks the host code with no compiler error
+(wrong widget type retrieved, or a null `dynamic_cast`).
+
+Iris's only existing identity concept is `key` (`docs/iris_core_spec.md` §2.3/§2.4,
+`include/Iris/Component.h:39,64`, `include/Iris/ElementNode.h:93`) — but it's scoped entirely
+to the *reconciler*, matching old-tree elements to new-tree elements across a re-render
+(`include/Iris/Reconciler.h:43`). It's never surfaced to host code mounting a tree for the
+first time, and there is no `GetById`/`useRef` equivalent anywhere in this repo or in
+`penumbra-ui-backend`'s `PenumbraWidget`/`Umbra::IWidget` (`PenumbraWidgetAdapter.h:56-59`
+exposes only positional `GetChildAt`/`GetChildCount`, the same shape `Umbra::IWidget` itself
+has).
+
+### Proposed API
+
+A `ref` prop (name chosen to read clearly against `key`'s reconciler-only meaning — a
+`class`-like plain string, not a reconciler input) on any Iris element:
+
+```
+<Icon ref="trigger-icon" ... />
+```
+
+reaching `Component`/`IrisProps` the same way `class` already does (`Component.h`'s existing
+prop-threading path), plus a lookup surfaced on whatever a mount call returns — e.g. an
+`iris::MountResult` (or an addition to `MountFn`'s current return shape) exposing
+`Umbra::IWidget* GetByRef(std::string_view ref) const`, populated during the same tree walk
+`BuildWidgetTree`/`WrapExistingTree` (in `penumbra-ui-backend`) already performs. The registry
+itself would need to live wherever the mounted tree's own lifetime is tracked, so it doesn't
+outlive the widgets it points at.
+
+### Required changes elsewhere
+
+`penumbra-ui-backend`'s `Walker.cpp` (`BuildWidgetTree`) and `PenumbraWidgetAdapter.cpp`
+(`WrapExistingTree`) would need to collect `ref`-tagged nodes into that lookup during their
+existing recursive walk — logged as a matching entry in `penumbra-ui-backend`'s own
+`docs/next_steps.md` rather than repeated here, since it's that repo's own follow-up once
+this lands.
+
+### Explicitly not requested
+
+- Reusing `key` for this — `key` already has a distinct, load-bearing meaning (reconciler
+  list-diffing identity) that doesn't overlap with "let host code find this specific node";
+  conflating them would make both harder to reason about.
+- A full CSS-selector-style query API (`querySelector`-equivalent) — `ref` names one specific
+  node a consumer already knows it wants a handle to, not a general tree-search facility. No
+  known consumer needs the latter.
+
+## CMake helper to compile every `.iris` file in a directory, not one hand-written block per file — RESOLVED (2026-07-23)
+
+> **Status:** Resolved in this repo.
+> **Trigger:** same `pharos-proto` "what's left for plug-and-play components" investigation as
+> the `ref` entry above.
+
+### What landed
+
+`cmake/IrisCompileDirectory.cmake` (included from the top-level `CMakeLists.txt`, right after
+the `iris_cc` target it depends on via `$<TARGET_FILE:iris_cc>`) defines exactly the proposed
+`iris_compile_directory(<target> <source-dir> <generated-header-dir>)` function: a plain
+`file(GLOB "${SourceDir}/*.iris")` (not `CONFIGURE_DEPENDS`, matching this entry's own accepted
+`pharos-proto`-style GLOB limitation), one `add_custom_command` per file mirroring
+`pharos-proto/CMakeLists.txt`'s existing hand-written pattern exactly (`iris_cc <src> -o
+<generated-header-dir>/<Name>.iris.h`, depending on `iris_cc`, the source file, and the
+directory's `.iris.json`), collected under a `<target>_generate_iris` custom target that
+`<target>` depends on, with `<generated-header-dir>` added to `<target>`'s include path so
+generated `Name.iris.h` files `#include` the same way `pharos-proto`'s hand-written blocks
+already produce them for.
+
+Verified with a throwaway smoke-test subdirectory (a `.iris.json` + one `.iris` file + a
+`main.cpp` `#include`ing the generated header, wired via `iris_compile_directory` and built
+through the real `iris_cc`) exercised against a temporary `add_subdirectory` in the top-level
+`CMakeLists.txt`, then removed once the generated header compiled and linked successfully — not
+left behind as a permanent target, since this repo's own build has no first-party `.iris`
+consumer of its own yet.
+
+### What's actually missing
+
+Consuming `iris_cc` from CMake today means one hand-written `add_custom_command` per `.iris`
+file (`pharos-proto/CMakeLists.txt:65-146`, ten near-identical copies as of this writing),
+each also needing its output added to a target's `DEPENDS` list by hand
+(`CMakeLists.txt:172-183`). This repo's own `CMakeLists.txt` defines only the `iris_cc`
+executable target (line 72-78 as of this writing) — no CMake function/macro wraps it, and
+`docs/iris_core_spec.md` §5's `.iris.json` schema (`target`/`version`/`searchPaths`) has no
+CMake-integration fields; `searchPaths` only controls `import` resolution inside the
+preprocessor, not what gets compiled. Every consumer re-derives the same
+generate-into-a-build-dir/depend-on-`iris_cc`/depend-on-`.iris.json` wiring from scratch.
+
+### Proposed API
+
+A CMake function this repo installs alongside the `iris_cc` target, e.g.:
+
+```cmake
+iris_compile_directory(<target> <source-dir> <generated-header-dir>)
+```
+
+globbing `<source-dir>/*.iris`, emitting one `add_custom_command` per file (mirroring
+`pharos-proto/CMakeLists.txt`'s existing per-file pattern exactly, just generated instead of
+hand-written) and adding every output to `<target>`'s sources/dependencies automatically.
+CMake's own `file(GLOB ...)` non-reactivity to added/removed files (needing a fresh
+`cmake -B build`, not just a rebuild) is an acceptable, well-understood limitation — it's the
+same tradeoff `pharos-proto/CMakeLists.txt`'s own `file(GLOB_RECURSE PHAROS_LIB_SOURCES ...)`
+already accepts for `.cpp` files today.
+
+### Required changes elsewhere
+
+None in `penumbra-ui-backend` or `lustre` — this is CMake glue local to `iris`'s own build
+integration surface.
+
+### Explicitly not requested
+
+- Auto-discovering matching `.lustre` sibling files and wiring their runtime-load path as a
+  compile definition — that convention (`PHAROS_<NAME>_LUSTRE_PATH`) is specific to how
+  `pharos-proto` currently threads `.lustre` paths into its own code
+  (`pharos-proto/CMakeLists.txt:197-208`), not something `iris` itself has an opinion on. A
+  consuming app could layer that on top of `iris_compile_directory` itself if useful.
+
 ## Live-widget root registry, for Lustre's hot-reload — RESOLVED (2026-07-22)
 
 > **Status:** Resolved in this repo.

@@ -21,6 +21,9 @@ public:
         if (Node.Key.has_value()) {
             ValidatePropValue(*Node.Key);
         }
+        if (Node.Ref.has_value()) {
+            ValidatePropValue(*Node.Ref);
+        }
         for (const Prop& P : Node.Props) {
             ValidatePropValue(P.Value);
         }

@@ -45,6 +45,13 @@ struct IrisSlotCallable;
 // it default-initialized to `std::nullopt` — no key — same as any other data member not
 // named in an initializer list.
 //
+// `Ref` (docs/next-steps.md, "Named-child-handle (`ref`) prop") is set the same way `Key` is
+// -- by a small IIFE wrapper `Codegen.h` emits around the base construction expression, so it
+// picks up ref-setting uniformly across every element kind too. Unlike `Key`, it carries no
+// reconciler meaning at all (see `Reconciler.cpp`'s `Key`-only identity matching): it exists
+// purely so a mount call can hand host code back a live-widget lookup keyed by this string,
+// once a backend's own tree walk (out of scope in this repo) collects `Ref`-tagged nodes.
+//
 // `Instance` (docs/iris_signal_lifetime_decision.md) is set only for a component
 // invocation's result — `Codegen.h` wraps every `<Name .../>` call it emits in
 // `iris::MountComponentInstance(...)`, which allocates a fresh `iris::ComponentInstance`,
@@ -62,6 +69,7 @@ struct Component {
     std::vector<Component>        Children;
     std::shared_ptr<IrisSlotCallable> SlotCallable;
     std::optional<IrisPropValue>      Key;
+    std::optional<IrisPropValue>      Ref;
     std::shared_ptr<iris::ComponentInstance> Instance;
 
     Component() = default;
