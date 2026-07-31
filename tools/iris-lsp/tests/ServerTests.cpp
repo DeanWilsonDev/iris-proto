@@ -35,47 +35,47 @@ private:
 std::string Uri(const std::string& Path) { return "file://" + Path; }
 
 Amanuensis::Value MakeMessage(std::string Method, Amanuensis::Value Params) {
-    Amanuensis::Value Message = Amanuensis::Value::MakeObject();
-    Message.Insert("jsonrpc", Amanuensis::Value("2.0"));
-    Message.Insert("method", Amanuensis::Value(std::move(Method)));
-    Message.Insert("params", std::move(Params));
+    Amanuensis::Value Message = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(Message, "jsonrpc", Amanuensis::Value("2.0"));
+    Amanuensis::Json::Insert(Message, "method", Amanuensis::Value(std::move(Method)));
+    Amanuensis::Json::Insert(Message, "params", std::move(Params));
     return Message;
 }
 
 Amanuensis::Value MakeRequest(int Id, std::string Method, Amanuensis::Value Params) {
     Amanuensis::Value Message = MakeMessage(std::move(Method), std::move(Params));
-    Message.Insert("id", Amanuensis::Value(Id));
+    Amanuensis::Json::Insert(Message, "id", Amanuensis::Value(static_cast<long long>(Id)));
     return Message;
 }
 
 Amanuensis::Value MakeTextDocument(const std::string& FileUri, const std::string& Text) {
-    Amanuensis::Value TextDocument = Amanuensis::Value::MakeObject();
-    TextDocument.Insert("uri", Amanuensis::Value(FileUri));
-    TextDocument.Insert("languageId", Amanuensis::Value("cpp"));
-    TextDocument.Insert("version", Amanuensis::Value(1));
-    TextDocument.Insert("text", Amanuensis::Value(Text));
-    Amanuensis::Value Params = Amanuensis::Value::MakeObject();
-    Params.Insert("textDocument", std::move(TextDocument));
+    Amanuensis::Value TextDocument = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::Value(FileUri));
+    Amanuensis::Json::Insert(TextDocument, "languageId", Amanuensis::Value("cpp"));
+    Amanuensis::Json::Insert(TextDocument, "version", Amanuensis::Value(static_cast<long long>(1)));
+    Amanuensis::Json::Insert(TextDocument, "text", Amanuensis::Value(Text));
+    Amanuensis::Value Params = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(Params, "textDocument", std::move(TextDocument));
     return Params;
 }
 
 Amanuensis::Value MakeTextDocumentParams(const std::string& FileUri) {
-    Amanuensis::Value TextDocument = Amanuensis::Value::MakeObject();
-    TextDocument.Insert("uri", Amanuensis::Value(FileUri));
-    Amanuensis::Value Params = Amanuensis::Value::MakeObject();
-    Params.Insert("textDocument", std::move(TextDocument));
+    Amanuensis::Value TextDocument = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::Value(FileUri));
+    Amanuensis::Value Params = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(Params, "textDocument", std::move(TextDocument));
     return Params;
 }
 
 Amanuensis::Value MakePositionParams(const std::string& FileUri, std::uint32_t Line0, std::uint32_t Char0) {
-    Amanuensis::Value TextDocument = Amanuensis::Value::MakeObject();
-    TextDocument.Insert("uri", Amanuensis::Value(FileUri));
-    Amanuensis::Value Position = Amanuensis::Value::MakeObject();
-    Position.Insert("line", Amanuensis::Value(static_cast<long long>(Line0)));
-    Position.Insert("character", Amanuensis::Value(static_cast<long long>(Char0)));
-    Amanuensis::Value Params = Amanuensis::Value::MakeObject();
-    Params.Insert("textDocument", std::move(TextDocument));
-    Params.Insert("position", std::move(Position));
+    Amanuensis::Value TextDocument = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::Value(FileUri));
+    Amanuensis::Value Position = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(Position, "line", Amanuensis::Value(static_cast<long long>(Line0)));
+    Amanuensis::Json::Insert(Position, "character", Amanuensis::Value(static_cast<long long>(Char0)));
+    Amanuensis::Value Params = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(Params, "textDocument", std::move(TextDocument));
+    Amanuensis::Json::Insert(Params, "position", std::move(Position));
     return Params;
 }
 
@@ -112,7 +112,8 @@ std::vector<Amanuensis::Value> RunServer(const std::vector<Amanuensis::Value>& I
 
 const Amanuensis::Value* FindByMethod(const std::vector<Amanuensis::Value>& Messages, const std::string& Method) {
     for (const Amanuensis::Value& Message : Messages) {
-        if (Message.Contains("method") && Message.Get("method").AsString() == Method) {
+        if (Amanuensis::Json::Contains(Message, "method") &&
+            Amanuensis::Json::AsString(Amanuensis::Json::Get(Message, "method")) == Method) {
             return &Message;
         }
     }
@@ -121,7 +122,9 @@ const Amanuensis::Value* FindByMethod(const std::vector<Amanuensis::Value>& Mess
 
 const Amanuensis::Value* FindReplyToId(const std::vector<Amanuensis::Value>& Messages, int Id) {
     for (const Amanuensis::Value& Message : Messages) {
-        if (Message.Contains("id") && Message.Get("id").IsInteger() && Message.Get("id").AsInteger() == Id) {
+        if (Amanuensis::Json::Contains(Message, "id") &&
+            Amanuensis::Json::IsInteger(Amanuensis::Json::Get(Message, "id")) &&
+            Amanuensis::Json::AsInteger(Amanuensis::Json::Get(Message, "id")) == Id) {
             return &Message;
         }
     }
@@ -150,29 +153,32 @@ DESCRIBE("Server.diagnostics", {
                                     "Component Bad() { render { <Frame nonsense=\"x\" /> } }\n";
 
         const auto Outputs =
-            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
-                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
                        MakeRequest(2, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
 
         const Amanuensis::Value* Diagnostics = FindByMethod(Outputs, "textDocument/publishDiagnostics");
         REQUIRE_TRUE(Diagnostics != nullptr);
-        const Amanuensis::Value& List = Diagnostics->Get("params").Get("diagnostics");
-        REQUIRE_TRUE(List.Size() == 1);
-        ASSERT_TRUE(Contains(List.At(0).Get("message").AsString(), "not a known prop"));
+        const Amanuensis::Value& List =
+            Amanuensis::Json::Get(Amanuensis::Json::Get(*Diagnostics, "params"), "diagnostics");
+        REQUIRE_TRUE(Amanuensis::Json::Size(List) == 1);
+        ASSERT_TRUE(Contains(Amanuensis::Json::AsString(Amanuensis::Json::Get(Amanuensis::Json::At(List, 0), "message")),
+                              "not a known prop"));
     });
 
     IT("publishes no diagnostics for a valid file", {
         const std::string FileUri = Uri("/scratch/Foo.iris");
         const auto         Outputs =
-            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
-                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, SimpleComponentSource)),
                        MakeRequest(2, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
 
         const Amanuensis::Value* Diagnostics = FindByMethod(Outputs, "textDocument/publishDiagnostics");
         REQUIRE_TRUE(Diagnostics != nullptr);
-        ASSERT_TRUE(Diagnostics->Get("params").Get("diagnostics").Size() == 0);
+        ASSERT_TRUE(Amanuensis::Json::Size(Amanuensis::Json::Get(Amanuensis::Json::Get(*Diagnostics, "params"),
+                                                                   "diagnostics")) == 0);
     });
 });
 
@@ -182,18 +188,19 @@ DESCRIBE("Server.completion", {
         // Line 6 (1-based), "            <Frame />" -- position right after '<' is
         // 0-based line 5, character 12.
         const auto Outputs =
-            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
-                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, SimpleComponentSource)),
                        MakeRequest(2, "textDocument/completion", MakePositionParams(FileUri, 5, 13)),
                        MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
 
         const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& Items = Reply->Get("result").Get("items");
+        const Amanuensis::Value& Items = Amanuensis::Json::Get(Amanuensis::Json::Get(*Reply, "result"), "items");
         bool                       FoundFrame = false;
-        for (std::size_t Index = 0; Index < Items.Size(); ++Index) {
-            if (Items.At(Index).Get("label").AsString() == "Frame") {
+        for (std::size_t Index = 0; Index < Amanuensis::Json::Size(Items); ++Index) {
+            if (Amanuensis::Json::AsString(Amanuensis::Json::Get(Amanuensis::Json::At(Items, Index), "label")) ==
+                "Frame") {
                 FoundFrame = true;
             }
         }
@@ -205,18 +212,19 @@ DESCRIBE("Server.completion", {
         // Line 5, "        <Frame class=\"a\">" -- position right after "<Frame " is
         // 0-based line 4, character 15.
         const auto Outputs =
-            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
-                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, SimpleComponentSource)),
                        MakeRequest(2, "textDocument/completion", MakePositionParams(FileUri, 4, 15)),
                        MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
 
         const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& Items = Reply->Get("result").Get("items");
+        const Amanuensis::Value& Items = Amanuensis::Json::Get(Amanuensis::Json::Get(*Reply, "result"), "items");
         bool                       FoundClass = false;
-        for (std::size_t Index = 0; Index < Items.Size(); ++Index) {
-            if (Items.At(Index).Get("label").AsString() == "class") {
+        for (std::size_t Index = 0; Index < Amanuensis::Json::Size(Items); ++Index) {
+            if (Amanuensis::Json::AsString(Amanuensis::Json::Get(Amanuensis::Json::At(Items, Index), "label")) ==
+                "class") {
                 FoundClass = true;
             }
         }
@@ -243,17 +251,19 @@ DESCRIBE("Server.definition", {
         // Line 2 (1-based) is "import Button" -- 0-based line 1, character 7 lands
         // inside "Button".
         const auto Outputs =
-            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
-                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
                        MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 1, 7)),
                        MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
 
         const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& Location = Reply->Get("result");
-        ASSERT_TRUE(Contains(Location.Get("uri").AsString(), "Button.iris"));
-        ASSERT_TRUE(Location.Get("range").Get("start").Get("line").AsInteger() == 2); // 0-based -- "Component Button("
+        const Amanuensis::Value& Location = Amanuensis::Json::Get(*Reply, "result");
+        ASSERT_TRUE(Contains(Amanuensis::Json::AsString(Amanuensis::Json::Get(Location, "uri")), "Button.iris"));
+        ASSERT_TRUE(Amanuensis::Json::AsInteger(Amanuensis::Json::Get(
+                        Amanuensis::Json::Get(Amanuensis::Json::Get(Location, "range"), "start"), "line")) ==
+                    2); // 0-based -- "Component Button("
     });
 
     IT("jumps from a <Button /> usage to the same declaration goto-def on the import finds", {
@@ -274,17 +284,18 @@ DESCRIBE("Server.definition", {
         // Line 5 (1-based) is "    render { <Button /> }" -- 0-based line 4, character
         // 16 lands inside "Button" in the tag usage, not the import statement.
         const auto Outputs =
-            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
-                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
                        MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 4, 16)),
                        MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
 
         const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& Location = Reply->Get("result");
-        ASSERT_TRUE(Contains(Location.Get("uri").AsString(), "Button.iris"));
-        ASSERT_TRUE(Location.Get("range").Get("start").Get("line").AsInteger() == 2);
+        const Amanuensis::Value& Location = Amanuensis::Json::Get(*Reply, "result");
+        ASSERT_TRUE(Contains(Amanuensis::Json::AsString(Amanuensis::Json::Get(Location, "uri")), "Button.iris"));
+        ASSERT_TRUE(Amanuensis::Json::AsInteger(Amanuensis::Json::Get(
+                        Amanuensis::Json::Get(Amanuensis::Json::Get(Location, "range"), "start"), "line")) == 2);
     });
 
     IT("returns null for a Core primitive tag usage -- there is nothing to jump to", {
@@ -292,15 +303,15 @@ DESCRIBE("Server.definition", {
         // Line 6 (1-based), "            <Frame />" -- 0-based line 5, character 14
         // lands inside "Frame".
         const auto Outputs =
-            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
-                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, SimpleComponentSource)),
                        MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 5, 14)),
                        MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
 
         const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        ASSERT_TRUE(Reply->Get("result").IsNull());
+        ASSERT_TRUE(Amanuensis::Json::IsNull(Amanuensis::Json::Get(*Reply, "result")));
     });
 
     IT("jumps from a class=\"card\" value to the .card selector in the paired Name.lustre file", {
@@ -316,17 +327,19 @@ DESCRIBE("Server.definition", {
         // Line 4 (1-based) is "    render { <Frame class=\"card\"> </Frame> }" -- 0-based
         // line 3, character 28 lands inside "card".
         const auto Outputs =
-            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
-                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
                        MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 3, 28)),
                        MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
 
         const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& Location = Reply->Get("result");
-        ASSERT_TRUE(Contains(Location.Get("uri").AsString(), "Foo.lustre"));
-        ASSERT_TRUE(Location.Get("range").Get("start").Get("line").AsInteger() == 3); // 0-based -- ".card {"
+        const Amanuensis::Value& Location = Amanuensis::Json::Get(*Reply, "result");
+        ASSERT_TRUE(Contains(Amanuensis::Json::AsString(Amanuensis::Json::Get(Location, "uri")), "Foo.lustre"));
+        ASSERT_TRUE(Amanuensis::Json::AsInteger(Amanuensis::Json::Get(
+                        Amanuensis::Json::Get(Amanuensis::Json::Get(Location, "range"), "start"), "line")) ==
+                    3); // 0-based -- ".card {"
     });
 
     IT("falls back to global.lustre when the paired Name.lustre doesn't define the class", {
@@ -341,17 +354,19 @@ DESCRIBE("Server.definition", {
         const std::string FileUri = Uri(Project.PathOf("Foo.iris"));
 
         const auto Outputs =
-            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
-                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
                        MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 3, 28)),
                        MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
 
         const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& Location = Reply->Get("result");
-        ASSERT_TRUE(Contains(Location.Get("uri").AsString(), "global.lustre"));
-        ASSERT_TRUE(Location.Get("range").Get("start").Get("line").AsInteger() == 0); // 0-based -- ".card {"
+        const Amanuensis::Value& Location = Amanuensis::Json::Get(*Reply, "result");
+        ASSERT_TRUE(Contains(Amanuensis::Json::AsString(Amanuensis::Json::Get(Location, "uri")), "global.lustre"));
+        ASSERT_TRUE(Amanuensis::Json::AsInteger(Amanuensis::Json::Get(
+                        Amanuensis::Json::Get(Amanuensis::Json::Get(Location, "range"), "start"), "line")) ==
+                    0); // 0-based -- ".card {"
     });
 
     IT("returns null for a class value with no selector in either Name.lustre or global.lustre", {
@@ -365,15 +380,15 @@ DESCRIBE("Server.definition", {
         const std::string FileUri = Uri(Project.PathOf("Foo.iris"));
 
         const auto Outputs =
-            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
-                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
                        MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 3, 28)),
                        MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
 
         const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        ASSERT_TRUE(Reply->Get("result").IsNull());
+        ASSERT_TRUE(Amanuensis::Json::IsNull(Amanuensis::Json::Get(*Reply, "result")));
     });
 });
 
@@ -381,37 +396,42 @@ DESCRIBE("Server.semanticTokens", {
     IT("emits Type/Property/String tokens for render{}'s tags/props/string values", {
         const std::string FileUri = Uri("/scratch/Foo.iris");
         const auto         Outputs =
-            RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
-                       MakeMessage("initialized", Amanuensis::Value::MakeObject()),
+            RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
+                       MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, SimpleComponentSource)),
                        MakeRequest(2, "textDocument/semanticTokens/full", MakeTextDocumentParams(FileUri)),
                        MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
 
         const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& Data = Reply->Get("result").Get("data");
+        const Amanuensis::Value& Data = Amanuensis::Json::Get(Amanuensis::Json::Get(*Reply, "result"), "data");
         // SimpleComponentSource has one outer <Frame class="a">...</Frame> (opening tag,
         // prop, string, closing tag) wrapping one inner self-closing <Frame /> (opening
         // tag only, no closing tag) -- 5 tokens, 5 wire-format integers each.
-        REQUIRE_TRUE(Data.Size() == 25);
-        ASSERT_TRUE(Data.At(3).AsInteger() == 0);  // outer opening tag -- Type
-        ASSERT_TRUE(Data.At(8).AsInteger() == 1);  // "class" -- Property
-        ASSERT_TRUE(Data.At(13).AsInteger() == 2); // "a" -- String
-        ASSERT_TRUE(Data.At(18).AsInteger() == 0); // inner opening tag -- Type
-        ASSERT_TRUE(Data.At(23).AsInteger() == 0); // outer closing tag -- Type
+        REQUIRE_TRUE(Amanuensis::Json::Size(Data) == 25);
+        ASSERT_TRUE(Amanuensis::Json::AsInteger(Amanuensis::Json::At(Data, 3)) == 0);  // outer opening tag -- Type
+        ASSERT_TRUE(Amanuensis::Json::AsInteger(Amanuensis::Json::At(Data, 8)) == 1);  // "class" -- Property
+        ASSERT_TRUE(Amanuensis::Json::AsInteger(Amanuensis::Json::At(Data, 13)) == 2); // "a" -- String
+        ASSERT_TRUE(Amanuensis::Json::AsInteger(Amanuensis::Json::At(Data, 18)) == 0); // inner opening tag -- Type
+        ASSERT_TRUE(Amanuensis::Json::AsInteger(Amanuensis::Json::At(Data, 23)) == 0); // outer closing tag -- Type
     });
 
     IT("declares its legend during initialize", {
-        const auto Outputs = RunServer({MakeRequest(1, "initialize", Amanuensis::Value::MakeObject()),
+        const auto Outputs = RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
                                          MakeRequest(2, "shutdown", Amanuensis::Value()),
                                          MakeMessage("exit", Amanuensis::Value())});
         const Amanuensis::Value* Reply = FindReplyToId(Outputs, 1);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& TokenTypes =
-            Reply->Get("result").Get("capabilities").Get("semanticTokensProvider").Get("legend").Get("tokenTypes");
-        REQUIRE_TRUE(TokenTypes.Size() == 3);
-        ASSERT_TRUE(TokenTypes.At(0).AsString() == "type");
-        ASSERT_TRUE(TokenTypes.At(1).AsString() == "property");
-        ASSERT_TRUE(TokenTypes.At(2).AsString() == "string");
+        const Amanuensis::Value& TokenTypes = Amanuensis::Json::Get(
+            Amanuensis::Json::Get(
+                Amanuensis::Json::Get(
+                    Amanuensis::Json::Get(Amanuensis::Json::Get(*Reply, "result"), "capabilities"),
+                    "semanticTokensProvider"),
+                "legend"),
+            "tokenTypes");
+        REQUIRE_TRUE(Amanuensis::Json::Size(TokenTypes) == 3);
+        ASSERT_TRUE(Amanuensis::Json::AsString(Amanuensis::Json::At(TokenTypes, 0)) == "type");
+        ASSERT_TRUE(Amanuensis::Json::AsString(Amanuensis::Json::At(TokenTypes, 1)) == "property");
+        ASSERT_TRUE(Amanuensis::Json::AsString(Amanuensis::Json::At(TokenTypes, 2)) == "string");
     });
 });
