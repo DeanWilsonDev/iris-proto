@@ -3,6 +3,8 @@
 #include "Iris/IrisElementTag.h"
 #include "Iris/IrisProps.h"
 
+#include "Umbra/IWidget.h"
+
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -18,6 +20,7 @@ class ComponentInstance;
 namespace Iris {
 
 struct IrisSlotCallable;
+struct IrisNativeBuilder;
 
 // The backend-agnostic IR node `render { }` blocks construct (docs/iris_core_spec.md
 // §2.5). Codegen (Codegen.h) emits C++23 expressions that build values of this type;
@@ -52,6 +55,18 @@ struct IrisSlotCallable;
 // purely so a mount call can hand host code back a live-widget lookup keyed by this string,
 // once a backend's own tree walk (out of scope in this repo) collects `Ref`-tagged nodes.
 //
+// `NativeBuilder` (docs/next-steps.md, "No way to declare a custom widget/imperative-draw
+// node as an Iris element") is set only for `Tag == IrisElementTag::Native` -- the same
+// "can't be a Props entry, can't be embedded directly" reasoning as `SlotCallable` above
+// (its callable's return type, an already-built `Umbra::IWidget`, has no room in the closed
+// `IrisPropValue` variant, and deliberately shouldn't: routing it through `IrisProps` would
+// make the reconciler try to content-diff it every re-render, defeating the whole "mount
+// once, opaque to Iris" point of this primitive). Unlike `SlotCallable`, its callable
+// produces a live widget handle directly rather than more `Component` IR -- the one place
+// in this file `Umbra::IWidget` (the same backend-agnostic vocabulary type the reconciler
+// and `SlotRuntime` already depend on) appears in the IR shape itself, not just the runtime
+// layer built on top of it.
+//
 // `Instance` (docs/iris_signal_lifetime_decision.md) is set only for a component
 // invocation's result — `Codegen.h` wraps every `<Name .../>` call it emits in
 // `iris::MountComponentInstance(...)`, which allocates a fresh `iris::ComponentInstance`,
@@ -68,15 +83,17 @@ struct Component {
     IrisProps                         Props;
     std::vector<Component>        Children;
     std::shared_ptr<IrisSlotCallable> SlotCallable;
+    std::shared_ptr<IrisNativeBuilder> NativeBuilder;
     std::optional<IrisPropValue>      Key;
     std::optional<IrisPropValue>      Ref;
     std::shared_ptr<iris::ComponentInstance> Instance;
 
     Component() = default;
     Component(IrisElementTag Tag, IrisProps Props, std::vector<Component> Children,
-                  std::shared_ptr<IrisSlotCallable> SlotCallable)
+                  std::shared_ptr<IrisSlotCallable> SlotCallable,
+                  std::shared_ptr<IrisNativeBuilder> NativeBuilder = nullptr)
         : Tag(Tag), Props(std::move(Props)), Children(std::move(Children)),
-          SlotCallable(std::move(SlotCallable)) {}
+          SlotCallable(std::move(SlotCallable)), NativeBuilder(std::move(NativeBuilder)) {}
     Component(std::nullptr_t) noexcept : Tag(IrisElementTag::None) {}
 };
 
@@ -107,6 +124,24 @@ std::shared_ptr<IrisSlotCallable> MakeSlotCallable(Callable&& Fn) {
         return std::make_shared<IrisSlotCallable>(
             IrisSlotCallable{std::function<std::vector<Component>()>(std::forward<Callable>(Fn))});
     }
+}
+
+// Wraps a `<Native>` element's `build` prop for storage on `Component::NativeBuilder`
+// (docs/next-steps.md, "No way to declare a custom widget/imperative-draw node as an Iris
+// element"). `Umbra::IWidget` is already a complete type by this point (`Component.h`
+// includes it directly, unlike `IrisSlotCallable` above which only needs `Component`
+// itself), so this doesn't need `IrisSlotCallable`'s `if constexpr` return-type dispatch --
+// there's exactly one valid return shape.
+struct IrisNativeBuilder {
+    std::function<std::unique_ptr<Umbra::IWidget>()> Build;
+};
+
+template <typename Callable>
+std::shared_ptr<IrisNativeBuilder> MakeNativeBuilder(Callable&& Fn) {
+    static_assert(std::is_same_v<std::invoke_result_t<Callable>, std::unique_ptr<Umbra::IWidget>>,
+                  "<Native>'s build prop must return std::unique_ptr<Umbra::IWidget>");
+    return std::make_shared<IrisNativeBuilder>(
+        IrisNativeBuilder{std::function<std::unique_ptr<Umbra::IWidget>()>(std::forward<Callable>(Fn))});
 }
 
 } // namespace Iris

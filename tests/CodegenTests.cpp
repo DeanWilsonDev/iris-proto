@@ -347,4 +347,65 @@ DESCRIBE("Codegen", {
         ASSERT_TRUE(Contains(Result.Source, "Node.Ref = Iris::IrisPropValue(\"row\"); return Node; }()"));
         // both wraps are present -- key applied first, ref wrapped around it
     });
+
+    IT("a Native with a build escape hatch codegens with no errors", {
+        const auto Result =
+            Generate(R"(render { <Native build={[&]() { return buildTreeRowWidget(node, app, theme); }} /> })");
+        ASSERT_TRUE(Result.Errors.empty()); // <Native> with a build prop codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "Iris::IrisElementTag::Native"));
+        ASSERT_TRUE(Contains(Result.Source, "Iris::MakeNativeBuilder([&]() { return buildTreeRowWidget(node, app, "
+                                            "theme); })"));
+        // the build prop's escape hatch is passed straight to MakeNativeBuilder, not wrapped
+        // as an ordinary IrisProps entry
+        ASSERT_FALSE(Contains(Result.Source, "Iris::IrisProps{{\"build\""));
+    });
+
+    IT("a Native with no build prop is an error", {
+        const auto Result = Generate(R"(render { <Native /> })");
+        ASSERT_FALSE(Result.Errors.empty()); // <Native> with no build prop is a codegen error
+    });
+
+    IT("a Native with a string-literal build prop is an error", {
+        const auto Result = Generate(R"(render { <Native build="not-a-lambda" /> })");
+        ASSERT_FALSE(Result.Errors.empty()); // build must be a { } escape hatch, not a string literal
+    });
+
+    IT("a Native with a child is an error", {
+        const auto Result = Generate(R"(render { <Native build={[&]() { return x; }}><Frame /></Native> })");
+        ASSERT_FALSE(Result.Errors.empty()); // <Native> is a leaf -- a child is a codegen error
+    });
+
+    IT("a Native with an unknown prop is an error", {
+        const auto Result = Generate(R"(render { <Native build={[&]() { return x; }} nonsense="y" /> })");
+        ASSERT_FALSE(Result.Errors.empty()); // only `build` is a known prop for <Native>
+    });
+
+    IT("a Split with exactly two children codegens with no errors", {
+        const auto Result = Generate(R"(render {
+            <Split axis="horizontal" ratio={0.3f}><Frame class="left" /><Frame class="right" /></Split>
+        })");
+        ASSERT_TRUE(Result.Errors.empty()); // <Split> with two element children codegens with no errors
+        ASSERT_TRUE(Contains(Result.Source, "Iris::IrisElementTag::Split"));
+        ASSERT_TRUE(Contains(Result.Source, "std::in_place_type<std::string>, \"horizontal\""));
+        ASSERT_TRUE(Contains(Result.Source, "std::in_place_type<float>, 0.3f"));
+        const std::size_t LeftPos  = Result.Source.find("\"left\"");
+        const std::size_t RightPos = Result.Source.find("\"right\"");
+        ASSERT_TRUE(LeftPos != std::string::npos && RightPos != std::string::npos && LeftPos < RightPos);
+        // both panes are ordinary Children entries, leading pane first
+    });
+
+    IT("a Split with one child is an error", {
+        const auto Result = Generate(R"(render { <Split><Frame class="only" /></Split> })");
+        ASSERT_FALSE(Result.Errors.empty()); // <Split> requires exactly two children, not one
+    });
+
+    IT("a Split with three children is an error", {
+        const auto Result = Generate(R"(render { <Split><Frame /><Frame /><Frame /></Split> })");
+        ASSERT_FALSE(Result.Errors.empty()); // <Split> requires exactly two children, not three
+    });
+
+    IT("a Split with zero children is an error", {
+        const auto Result = Generate(R"(render { <Split /> })");
+        ASSERT_FALSE(Result.Errors.empty()); // <Split> requires exactly two children, not zero
+    });
 });

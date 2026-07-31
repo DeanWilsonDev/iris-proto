@@ -425,3 +425,234 @@ precedent, but recorded as an open choice for whoever picks this up.
   different shape of feature, not asked for.
 - Any change to Lustre's own resolver/parser — this is purely an `iris-lsp`-side lookup
   against `.lustre` source text/AST, not a runtime resolution change.
+
+## No way to declare a custom widget/imperative-draw node as an Iris element — RESOLVED (2026-07-30)
+
+> **Status:** Resolved in this repo — the narrower, opt-in escape tag this entry's own
+> "Proposed API" sketched, not a reopening of `Component`'s backend-agnostic IR guarantee for
+> everything else. The backend-mapping pass that actually calls `<Native>`'s builder and
+> splices the result in (`penumbra-ui-backend`'s `Walker.cpp`/`PenumbraWidgetAdapter.cpp`) is
+> that repo's own follow-up, as originally scoped below.
+> **Trigger:** `pharos-proto` auditing its own `src/ui/` for how much further its
+> `.iris`/`.lustre` componentization could go — specifically, whether the remaining
+> hand-rolled `Box` subclasses (`TreeRow`, `DropdownTrigger`/`DropdownMenuRow`,
+> `ChevronSeparator`, and the whole `ViewportWidget`-hosted treemap in `atlas_panel.cpp`)
+> could become `.iris` components the same way `LensToggle`/`InspectorRow`/etc. already
+> did.
+
+### What landed
+
+- `IrisElementTag::Native` (`include/Iris/IrisElementTag.h`) — a new Core primitive.
+- `Component::NativeBuilder` (`include/Iris/Component.h`): a `std::shared_ptr<IrisNativeBuilder>`
+  field paralleling `SlotCallable` exactly — its own dedicated field, not an `IrisProps` entry,
+  for the same reason `SlotCallable` isn't: nothing about its value (a callable producing an
+  already-built `Umbra::IWidget`) belongs in the reconciler's content-diffed prop map. Unlike
+  `SlotCallable`, its callable returns a live widget handle directly rather than more `Component`
+  IR — the one place `Umbra::IWidget` appears in the IR shape itself (`Component.h` now includes
+  `Umbra/IWidget.h`), not just the runtime layer (`Reconciler.h`/`SlotRuntime.h`) already built on
+  top of it. `Iris::MakeNativeBuilder(Callable&&)` mirrors `MakeSlotCallable`'s wrapping, minus
+  the `if constexpr` return-type dispatch (there's exactly one valid shape:
+  `std::unique_ptr<Umbra::IWidget>()`). `Component`'s existing 4-arg constructor gained a 5th
+  defaulted parameter (`NativeBuilder = nullptr`) rather than a new overload, so every existing
+  4-arg call site (`EmitOrdinaryPrimitive`, `EmitTextPrimitive`, `EmitSlot`,
+  `EmitSyntheticTextNode`) kept compiling unchanged.
+- `Codegen.cpp`'s `ComponentEmitter::Emit` gained an `EmitNative` branch (checked alongside the
+  existing `Slot`/`Text` special cases): requires exactly one `build` prop set to a `{ }` escape
+  hatch (not a string literal, not a `!{ }` JSX escape hatch used as anything but a plain
+  callable), no children, and no other props — each violation is its own codegen error, mirroring
+  `EmitSlot`'s own arity/shape checks for `<Slot>`.
+- Went with attribute syntax (`<Native build={...} />`) exactly as the entry's own speculative
+  proposal sketched, rather than `<Slot>`'s single-escape-hatch-child shape — `build`'s escape
+  hatch already fits the ordinary prop-value grammar (`ElementNode::Props`/`PropValue`) with no
+  new parser plumbing needed; only where it's routed at codegen time (into `NativeBuilder`,
+  never through `EmitPrimitiveProps`/`IrisPropValue`) differs from an ordinary prop.
+- `CorePrimitiveTagNames()` (`CorePrimitives.cpp`) gained `"Native"` — `SemanticValidator`'s
+  `ValidateTagIsInScope` needed no changes at all, since it already accepts any tag in that set
+  generically (it has no `<Slot>`-specific handling either).
+- `docs/iris_core_spec.md` §3.1 gained a `<Native>` primitive-reference entry (props, leaf-child
+  shape, backend-mapping/reconciliation-exemption requirements) and §2.5 a note on
+  `NativeBuilder` being the IR's one deliberate, narrow, opt-in relaxation of its
+  backend-agnostic-value guarantee — explicitly not a reopening of the `Component`-as-`WidgetBase`-facade
+  design §2.5's own "rejected alternative" note already rejected for the IR as a whole.
+- Covered by 5 new `CodegenTests.cpp` cases: a valid `build` escape hatch, missing `build`,
+  string-literal `build` (rejected — must be a real escape hatch), a child (rejected — leaf), and
+  an unknown prop (rejected — `build` is the only one). Full `test_iris` suite (138/138) passes.
+
+### What's actually missing
+
+`docs/iris_core_spec.md` §3.1's Core primitives are a fixed, closed set: `Frame`,
+`Inline`, `Grid`, `Image`, `Icon`, `Text`, `Scroll`, `Input`. Every child position inside
+a `render { }` tree is either a nested `<Tag>` or a `{ }`/`!{ }` escape hatch (§1.4) whose
+value is always a `Component`/`vector<Component>` IR node (§2.5) — never an
+already-built, arbitrary `WidgetBase`/`Umbra::IWidget`. There is no way to hand Iris "here
+is a widget I built by hand (a `Box` subclass overriding
+`Measure`/`Arrange`/`Draw`/`UpdateInteractionState`), mount it at this position."
+
+This blocks componentizing, in `pharos-proto`:
+- `TreeRow` (`src/ui/explorer_panel.cpp`) — toggle-zone hit-splitting, double-click
+  detection via a shared running clock, a hand-drawn selection gradient/accent bar.
+- `DropdownTrigger`/`DropdownMenuRow` (`src/ui/color_filter_dropdown.cpp`) — hover/open
+  border-color swap, a per-state-colored hand-drawn icon+label (needed because
+  `IconWidget` can't vary color by hover state the way this row does).
+- `ChevronSeparator` and the entire `ViewportWidget`-hosted treemap/particle-animation/
+  breadcrumb/tooltip system (`src/ui/atlas_panel.cpp`, ~750 lines) — a custom
+  `OnRenderScene`/`OnSceneInput` pair, not expressible as a tree of Core primitives at
+  all.
+
+`pharos-proto`'s own `CLAUDE.md` documents subclassing `Box` as "the intended extension
+point — not a workaround," matching how Penumbra's own `Button`/`Checkbox` are built.
+That framing is accurate at the composition level, but it means this class of widget has
+*no* path into `.iris`/`.lustre` at all today, even in principle — not a missing
+convenience the way `ref`/`GetByRef` or `LoadStylesheetFromFile` were (both landed
+2026-07-23, both now adopted in `pharos-proto`), but a closed set by design. §2.5's own
+"rejected alternative" note explicitly rejected a `Component` shape that would have
+allowed embedding an already-built widget, for good reasons at the time (keeping
+`Component` backend-agnostic IR, with nothing for Stage 3's reconciler to diff against).
+Worth reopening now that Stage 3 (the reconciler, a real Penumbra `IWidget` adapter) is
+implemented and tested — the tradeoff that motivated the original rejection may have
+changed since.
+
+### Proposed API (speculative — a starting point, not a firm design)
+
+Some kind of opaque/escape-hatch primitive tag (name TBD, e.g. `<Native>`) whose child is
+a `{ }` escape hatch evaluating to an already-built widget handle, e.g.:
+
+```cpp
+render {
+    <Frame class="explorer-row">
+        <Native build={[&]() { return buildTreeRowWidget(node, app, theme); }} />
+    </Frame>
+}
+```
+
+Deliberately kept **outside** the reconciler's diffing (mount-once, closer to how a
+`ref`'d node is found rather than reconciled by content) so it doesn't compromise
+`Component`'s backend-agnostic IR guarantee for everything else in the tree — the
+opaque subtree is a black box to Iris's runtime, exactly as it already is to
+`pharos-proto`'s own code today, just given a slot inside a declarative tree instead of
+requiring the whole panel to be hand-built.
+
+### Required changes elsewhere
+
+A backend-mapping pass (`penumbra-ui-backend`'s `Walker.cpp`/`PenumbraWidgetAdapter.cpp`)
+would need a case for this tag that takes the escape hatch's returned handle and splices
+it directly into the built tree at that position, bypassing the usual
+Core-primitive-to-`Builder`-call mapping entirely. Not scoped further here since it's
+that repo's own follow-up once/if this lands, same convention the `ref`/`GetByRef` entry
+above followed.
+
+### Explicitly not requested
+
+- A general imperative-draw/custom-layout DSL inside Iris itself — the ask is narrower:
+  a documented, sanctioned escape valve for the composition pattern that's already
+  idiomatic in every backend this stack has (Penumbra's own `Box` subclassing), not a new
+  sublanguage for expressing custom drawing/hit-testing in `.iris` syntax.
+- Any change to how reconciliation/diffing works for ordinary (non-opaque) `Component`
+  trees — this tag's subtree is deliberately exempt from that machinery, not a
+  generalization of it.
+
+## No layout-container primitive beyond Frame's three stack modes — PARTIALLY RESOLVED (2026-07-30)
+
+> **Status:** Partially resolved in this repo. Of the three concrete shapes this entry named,
+> only the `SplitPanel`-equivalent (`<Split>`) is actually an Iris-grammar gap — it's a
+> structurally distinct widget (two fixed slots, its own drag-interaction state), the same kind
+> of gap `<Scroll>`/`<Input>` closed for `ScrollablePanel`/`TextInput`. `ThreeZoneRow`'s
+> justify-content need and `FixedLeadingStrip`'s "don't shrink either child" contract are **not**
+> resolved here and, per the reasoning below, were never really Iris-side gaps in the first
+> place — `<Frame>`'s own spec entry (§3.1) is explicit that its only Iris-level props are
+> `class`/`key`/event props; which of `VerticalStack`/`HorizontalStack`/`None` a `<Frame>` uses is
+> entirely a Lustre `display`/`flex-direction` styling question (`StyleApplier` mapping onto
+> `Box::Layout`), never an Iris grammar one, the same "cross-reference only, not an Iris action
+> item" scoping this file already gives the "Gradient-fill Lustre property" and "Popup/overlay/
+> z-order layer" entries above. Logging a justify-content-capable stack mode as a `lustre`-side
+> ask is that repo's own follow-up, not repeated here (no local `lustre` checkout with a live
+> backlog file was confirmed writable to during this session — see "Required changes elsewhere"
+> below).
+> **Trigger:** same `pharos-proto` `src/ui/` audit as the entry above.
+
+### What landed
+
+- `IrisElementTag::Split` (`include/Iris/IrisElementTag.h`) — a new Core primitive, grounded
+  against `penumbra-proto`'s real `Penumbra::Widgets::SplitPanel`
+  (`include/Penumbra/Widgets/SplitPanel.h`: `Axis`, `SplitRatio`, `HandleThicknessLogical`,
+  `MinPaneSizeLogical`, and `SetFirst`/`SetSecond` in place of a generic children vector — not
+  just the requirements-doc description, the same "verified against the actual shipped code"
+  bar `<Scroll>`/`<Input>`'s own spec entries were held to).
+- Four new ordinary props in `PrimitivePropTypeNames()` (`CorePrimitives.cpp`): `axis`
+  (`std::string` — `"horizontal"`/`"vertical"`; resolving it to `SplitPanel`'s real
+  `SplitAxis` enum is left to the backend-mapping pass, the same treatment `icon`'s catalog-key
+  string already gets), `ratio`, `minPaneSize`, `handleThickness` (all `float`, mirroring
+  `SplitPanel`'s own field names/units). Unlike `<Native>`'s `build` above, these go through the
+  ordinary `IrisProps`/`EmitPrimitiveProps` path exactly like `wheelStep`/`preferredWidth` — a
+  `<Split>`'s props are plain data, nothing about them needs to bypass the reconciler.
+- `Codegen.cpp`'s `Emit` gained a `Split` branch enforcing **exactly two** children (leading and
+  trailing panes) before delegating to the same `EmitOrdinaryPrimitive` every other
+  element-children primitive already uses — zero, one, or three-or-more children is a codegen
+  error; `EmitChildrenList`'s existing generic per-tag `AllowsAny`/`AllowsText` logic needed no
+  changes (`<Split>` behaves like `<Frame>`: element children only, no bespoke leaf/text rules).
+- `docs/iris_core_spec.md` §3.1 gained a `<Split>` primitive-reference entry.
+- Covered by 4 new `CodegenTests.cpp` cases: two children (valid, both props and pane order
+  checked), one child, three children, and zero children (all three arity violations rejected).
+  Full `test_iris` suite (138/138) passes.
+
+### What's still actually missing
+
+`ThreeZoneRow` (left/center/right justify in one row) and `FixedLeadingStrip` ("fixed-height
+leading child + fill-remainder child, each offered the container's own full available size,
+neither shrunk") remain unaddressed — deliberately, per the scoping above. Whoever picks up a
+`lustre`-side justify-content property still needs `FixedLeadingStrip`'s specific
+"don't-shrink-either-child" sizing contract designed separately, exactly as this entry originally
+flagged: neither a justify-content stack mode nor `<Split>` covers it (`Box::Measure` handing
+every child the same full available size, rather than partitioning it per sibling the way
+`FixedLeadingStrip`'s two roles need, is a `Box`-layout-algorithm question in `penumbra-proto`,
+not a `Frame`-prop or Iris-grammar one either).
+
+### What's actually missing (original, `<Split>`'s own gap — now resolved above)
+
+`Frame`'s only layout modes are `VerticalStack`/`HorizontalStack`/`None` (mapping to
+Penumbra's `Box::Layout`). `pharos-proto` has three real layout shapes today with no Core
+primitive to express them:
+
+- A `SplitPanel`-equivalent: a draggable-handle resizable split. This is
+  `pharos-proto`'s actual top-level app layout (nested `SplitPanel`s, `src/main.cpp`) —
+  without it, no `.iris` tree could ever represent the app's real root layout, regardless
+  of how the gap above (custom widgets) resolves.
+- `FixedLeadingStrip` (`pharos-proto`'s `src/ui/layout_helpers.h`): "fixed-height leading
+  child + fill-remainder child, each offered the container's own full available size" —
+  needed because `Box::Measure` hands every child the *same* full available size rather
+  than shrinking it per sibling, so a greedy child (a `SplitPanel`/`ViewportWidget`) and a
+  fixed-size sibling can't coexist in one ordinary stack without double-counting space.
+- `ThreeZoneRow` (same file): "left/center/right justify in one row" —
+  `HorizontalStack` only stacks sequentially, no space-between/justify concept at all.
+
+### Proposed API
+
+Unlike the entry above, these three are pure layout algorithms with no custom
+draw/hit-testing involved — geometry only. Plausibly addressable by growing `Frame`'s own
+layout-mode vocabulary rather than needing an escape-hatch mechanism:
+
+- A justify-content-capable stack mode (e.g. `display: stack; justify-content:
+  space-between;` in Lustre, alongside the existing `flex-direction`/`align-items`
+  properties `StyleApplier` already maps) would cover `ThreeZoneRow`.
+- A `Split`-with-handle mode (new prop(s) for ratio/min-pane-size/handle-thickness,
+  mirroring `Penumbra::Widgets::SplitPanel`'s own fields) would cover the root-layout
+  gap.
+- `FixedLeadingStrip`'s specific "don't shrink either child" contract doesn't map cleanly
+  onto either of the above — recorded as still needing its own design, not folded into
+  this proposal.
+
+### Required changes elsewhere
+
+For `<Split>` (landed above): `penumbra-ui-backend`'s `Walker.cpp`/`PenumbraWidgetAdapter.cpp`
+need a build case mapping it onto `Penumbra::Widgets::SplitPanel` (`axis`/`ratio`/
+`minPaneSize`/`handleThickness` onto its matching fields, `Children[0]`/`Children[1]` via
+`SetFirst`/`SetSecond`) — not scoped further here, same convention the `ref`/`GetByRef` entry
+above followed. For the still-open justify-content stack mode: `lustre`'s own property table
+plus `penumbra-ui-backend`'s `StyleApplier` mapping it onto `Box::Layout`/a new justify field —
+that repo's own follow-up, not this one's, per the scoping note at the top of this entry.
+
+### Explicitly not requested
+
+- A general-purpose flexbox/grid layout engine — the three concrete shapes above are the
+  ask; a full CSS-flexbox-equivalent implementation would be a much larger project than
+  what any current consumer actually needs.

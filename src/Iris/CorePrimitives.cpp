@@ -3,8 +3,8 @@
 namespace Iris {
 
 const std::unordered_set<std::string>& CorePrimitiveTagNames() {
-    static const std::unordered_set<std::string> Names = {"Frame",  "Inline", "Grid", "Image", "Icon",
-                                                            "Text",  "Scroll", "Input", "Slot"};
+    static const std::unordered_set<std::string> Names = {"Frame", "Inline", "Grid",   "Image", "Icon",  "Text",
+                                                            "Scroll", "Input", "Slot", "Native", "Split"};
     return Names;
 }
 
@@ -22,6 +22,17 @@ const std::unordered_map<std::string, std::string>& PrimitivePropTypeNames() {
         {"icon", "std::string"},
         {"size", "float"},
         {"wheelStep", "float"},
+        // <Split>'s own dedicated props (docs/next-steps.md, "No layout-container primitive
+        // beyond Frame's three stack modes" -- resolved), mirroring
+        // Penumbra::Widgets::SplitPanel's real fields (Axis/SplitRatio/
+        // HandleThicknessLogical/MinPaneSizeLogical). `axis` is a plain string
+        // ("horizontal"|"vertical") rather than a new bool/enum IrisPropValue kind --
+        // resolving it to SplitPanel's own SplitAxis enum is a backend-mapping concern,
+        // same treatment `icon`'s catalog-key string already gets.
+        {"axis", "std::string"},
+        {"ratio", "float"},
+        {"minPaneSize", "float"},
+        {"handleThickness", "float"},
         // <Text>'s own content prop is synthesized by EmitTextPrimitive, bypassing this
         // table entirely -- this entry is only for <Input>'s initial-value prop, which
         // (unlike <Text>) is an ordinary attribute going through EmitPrimitiveProps like

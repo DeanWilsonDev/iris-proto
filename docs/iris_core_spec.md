@@ -401,15 +401,25 @@ Penumbra, `WidgetBase`, or any concrete widget type.
 
 ```cpp
 struct Component {
-    IrisElementTag Tag;             // Frame, Inline, Text, Image, Icon, Scroll, Input, or a component name
+    IrisElementTag Tag;             // Frame, Inline, Text, Image, Icon, Scroll, Input, Split, or a component name
     IrisProps Props;                // key-value prop map, `key` already stripped
     std::vector<Component> Children;
 };
 ```
 
 (Illustrative only — the real, current shape in `include/Iris/Component.h` also carries
-`SlotCallable` per §1.5/`docs/iris_stage1_codegen_decision.md`, and an `IrisElementTag::None`
-sentinel plus `nullptr_t` converting constructor per §8's resolved `nullptr`-conversion gap.)
+`SlotCallable` per §1.5/`docs/iris_stage1_codegen_decision.md`, `NativeBuilder` per §3.1's
+`<Native>` entry (`docs/next-steps.md`, "No way to declare a custom widget/imperative-draw
+node as an Iris element"), and an `IrisElementTag::None` sentinel plus `nullptr_t` converting
+constructor per §8's resolved `nullptr`-conversion gap.)
+
+`NativeBuilder` is the one place this IR's backend-agnostic guarantee is deliberately,
+narrowly relaxed: set only for `Tag == IrisElementTag::Native`, it holds a callable that
+produces an already-built `Umbra::IWidget` handle directly, rather than more `Component` IR.
+This doesn't reopen the rejected alternative above for the IR as a whole — every other tag's
+`Component` node is still pure, backend-agnostic, diffable IR; `<Native>` is a single, opt-in,
+explicitly-not-reconciled escape tag, not a change to how `Component` works in general (see its
+own entry in §3.1).
 
 `render { }` blocks construct values of this IR type — they do **not** call directly into a
 backend's widget/builder API. Between construction and backend mapping there is now a middle
@@ -442,7 +452,7 @@ miscompiles rather than failing loudly, which is why it's called out here promin
 than left as an implied pattern.
 
 Codegen branches on how a tag resolves (§1.4):
-- **Core primitive** (`Frame`, `Inline`, `Grid`, `Image`, `Icon`, `Text`, `Scroll`, `Input`) → the preprocessor emits an
+- **Core primitive** (`Frame`, `Inline`, `Grid`, `Image`, `Icon`, `Text`, `Scroll`, `Input`, `Native`, `Split`) → the preprocessor emits an
   `Component` IR node (§2.5) directly; no props-struct lookup happens.
 - **Imported component name** → the preprocessor emits `Name(NameProps{ ...prop initializers...
   })` and wraps the result as this element's `Component` — relying on the `<Name>Props`
@@ -595,6 +605,52 @@ primitive tags" — resolved).
   also why `class` isn't meaningful on it: there's nothing for Lustre to select against on a node
   that never reaches a widget tree.
 
+**`<Native>`** — An opaque escape-hatch node wrapping an already-built widget (`docs/
+next-steps.md`, "No way to declare a custom widget/imperative-draw node as an Iris element").
+Not a widget type of its own — a documented, sanctioned way to splice a hand-rolled `Box`
+subclass (the composition pattern every backend already uses for custom
+draw/hit-testing/hover-state widgets — `TreeRow`, `DropdownTrigger`, a treemap's
+`OnRenderScene`, etc.) into an otherwise-declarative tree, instead of requiring the whole
+panel it lives in to stay hand-built.
+- Props: `build` (a `{ }` escape hatch evaluating to a zero-argument callable returning
+  `std::unique_ptr<Umbra::IWidget>` — required). No `class`, no `key`/`ref` restriction (both
+  still apply the same as any other element), no event props — `<Native>`'s own subtree
+  handles its own interaction entirely; Iris dispatches nothing into it.
+  Unlike every other primitive's props, `build` is never wrapped as an ordinary `IrisProps`
+  entry — it becomes `Component::NativeBuilder` (§2.5), a dedicated field, precisely so it's
+  never treated as reconciler-diffable content.
+- Children: none (leaf) — the built widget's own internal structure is opaque to Iris.
+- Backend requirement: a backend-mapping pass calls `NativeBuilder->Build()` once and splices
+  the returned widget directly into the built tree at this position, bypassing the usual
+  Core-primitive-to-`Builder`-call mapping entirely.
+- Reconciliation: **deliberately exempt.** A `<Native>` subtree is mounted once (closer to how
+  a `ref`'d node is found than to how ordinary `Component` content is diffed) and never
+  re-diffed by content on a re-render — it stays exactly as opaque to Iris's runtime as it
+  already is to the host code that builds it today, just given a slot inside a declarative
+  tree instead of requiring the whole panel to be hand-built. This doesn't generalize to
+  ordinary primitives or components; every other tag's reconciliation is unchanged.
+
+**`<Split>`** — A draggable-handle resizable split (`docs/next-steps.md`, "No
+layout-container primitive beyond Frame's three stack modes"). Distinct from `<Frame>`'s
+stack modes (a Lustre `display`/`flex-direction` styling concern, not an Iris grammar one —
+see that entry's own scope note): `SplitPanel` is a genuinely different widget shape with
+exactly two structurally-distinct slots and its own drag-interaction state, the same kind of
+gap `<Scroll>`/`<Input>` closed for `ScrollablePanel`/`TextInput`.
+- Props: `axis` (string, optional — `"horizontal"` or `"vertical"`; resolving it to
+  `Penumbra::Widgets::SplitAxis` is backend-side, the same treatment `icon`'s catalog-key
+  string already gets), `ratio` (float, optional — initial split fraction given to the
+  leading child, mirroring `SplitPanel::SplitRatio`), `minPaneSize` (float, optional —
+  `SplitPanel::MinPaneSizeLogical`), `handleThickness` (float, optional —
+  `SplitPanel::HandleThicknessLogical`), `class`, `key`, any event prop.
+- Children: **exactly two** element children — the leading and trailing panes, in that order
+  (`SplitPanel::SetFirst`/`SetSecond`'s own two-slot shape, not a generic `AddChild`-style
+  children vector). Enforced at codegen time: neither zero, one, nor three-or-more children
+  compile.
+- Backend requirement: maps onto Penumbra's `Penumbra::Widgets::SplitPanel`, a `Box` subclass
+  with no `Builder` of its own — same "plain field, not a Builder chain" treatment `<Scroll>`/
+  `<Input>` already have, with `Children[0]`/`Children[1]` built and attached via
+  `SetFirst`/`SetSecond` instead of `AddChild`.
+
 ### 3.2 Backend-gated primitives
 
 | Primitive | Required backend | Notes |
@@ -722,7 +778,7 @@ Per decision doc §8, the entire Iris-owned vocabulary:
 | `class` | Reserved prop name | Style bridge to Lustre (§4). |
 
 That's the whole list. Primitive tag names (`Frame`, `Inline`, `Grid`, `Image`, `Icon`, `Text`, `Scroll`, `Input`,
-`Model3d`) are ordinary identifiers, not keywords (§1.4).
+`Native`, `Split`, `Model3d`) are ordinary identifiers, not keywords (§1.4).
 
 ---
 

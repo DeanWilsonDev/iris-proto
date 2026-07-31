@@ -38,8 +38,15 @@ public:
         if (CorePrimitiveTagNames().count(Node.Tag) != 0) {
             if (Node.Tag == "Slot") {
                 Base = EmitSlot(Node);
+            } else if (Node.Tag == "Native") {
+                Base = EmitNative(Node);
             } else if (Node.Tag == "Text") {
                 Base = EmitTextPrimitive(Node);
+            } else if (Node.Tag == "Split") {
+                if (Node.Children.size() != 2) {
+                    AddError("<Split> requires exactly two children (leading and trailing panes)", Node.Location);
+                }
+                Base = EmitOrdinaryPrimitive(Node);
             } else {
                 Base = EmitOrdinaryPrimitive(Node);
             }
@@ -247,6 +254,37 @@ private:
         }
         const std::string Lambda = EmitEscapeHatchExpression(*Node.Children[0].EscapeHatch);
         return "Iris::Component{Iris::IrisElementTag::Slot, Iris::IrisProps{}, {}, Iris::MakeSlotCallable(" +
+               Lambda + ")}";
+    }
+
+    // `<Native>`'s single `build` prop becomes a `Component::NativeBuilder` (docs/
+    // next-steps.md, "No way to declare a custom widget/imperative-draw node as an Iris
+    // element") -- deliberately not routed through `EmitPrimitiveProps`/`IrisProps` like an
+    // ordinary prop, the same "own dedicated field, not a Props entry" treatment `EmitSlot`
+    // above already gives `<Slot>`'s callable child, and for the same reason: nothing about
+    // `build`'s value (an already-built widget handle) belongs in the reconciler's
+    // content-diffed prop map.
+    std::string EmitNative(const ElementNode& Node) {
+        if (!Node.Children.empty()) {
+            AddError("<Native> cannot have children; pass the built widget via the `build` prop", Node.Location);
+        }
+        const Prop* BuildProp = nullptr;
+        for (const Prop& P : Node.Props) {
+            if (P.Name != "build") {
+                AddError("prop '" + P.Name + "' is not a known prop for <Native>", P.Value.Location);
+                continue;
+            }
+            BuildProp = &P;
+        }
+        if (BuildProp == nullptr || BuildProp->Value.Kind == PropValueKind::StringLiteral) {
+            AddError("<Native> requires a `build` prop set to a { } escape hatch returning "
+                      "std::unique_ptr<Umbra::IWidget>",
+                      Node.Location);
+            return "Iris::Component{Iris::IrisElementTag::Native, Iris::IrisProps{}, {}, nullptr}";
+        }
+        const std::string Lambda = EmitEscapeHatchExpression(BuildProp->Value);
+        return "Iris::Component{Iris::IrisElementTag::Native, Iris::IrisProps{}, {}, nullptr, "
+               "Iris::MakeNativeBuilder(" +
                Lambda + ")}";
     }
 
