@@ -11,7 +11,7 @@ every one of that parent's real children unconditionally, then reinserted the fu
 list unconditionally — correct (the right widget objects were always reused for props/identity
 purposes), but not the *minimum* number of `RemoveChildAt`/`InsertChildAt` calls, exactly the
 gap `docs/iris_stage3_implementation_decision.md` flagged as deliberately deferred and every
-Stage 3 `<Slot>`-wiring doc since has repeated as still open (`docs/iris_next_steps.md`'s
+Stage 3 `<Slot>`-wiring doc since has repeated as still open (`docs/archive/iris_next_steps.md`'s
 "Suggested order" §2).
 
 ## What "minimal" means here
@@ -79,6 +79,6 @@ verified clean under AddressSanitizer + UndefinedBehaviorSanitizer.
 ## What remains
 
 Nothing further deferred from `docs/iris_stage3_implementation_decision.md`'s original list —
-this closes its last open item. The only remaining item in `docs/iris_next_steps.md`'s
+this closes its last open item. The only remaining item in `docs/archive/iris_next_steps.md`'s
 "Suggested order" is Stage 4 (Lustre-lite styling), which needs its own design pass before
 there's anything to implement.

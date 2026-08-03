@@ -116,7 +116,7 @@ DESCRIBE("RenderBlockParser", {
 
     IT("a !{ } JSX-transform escape hatch recursively parses nested elements", {
         // `!{ }` — unlike the opaque `{ }` form above — recursively parses `<Tag>`
-        // runs inside it (docs/iris_next_steps.md, "Resolved: JSX inside escape
+        // runs inside it (docs/archive/iris_next_steps.md, "Resolved: JSX inside escape
         // hatches"). `onClose`'s own body has no JSX, so it stays a regular,
         // opaque `{ }` escape hatch even though it's nested inside a `!{ }`.
         const auto Result = ParseSource(

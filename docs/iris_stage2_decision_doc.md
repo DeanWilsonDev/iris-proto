@@ -4,7 +4,7 @@
 > Intended as a handoff to the agent maintaining `iris_handoff.md` and
 > `iris_core_spec.md` — update those documents to reflect the decisions below.
 >
-> All ten questions from `iris_stage2_open_questions.md` are closed here. Item 1
+> All ten questions from `docs/archive/iris_stage2_open_questions.md` are closed here. Item 1
 > (generic interactive-element mechanism) was already closed by `iris_stage1_decision_log.md`
 > and `penumbra_iris_changes.md` — noted here for completeness only.
 >

@@ -2,10 +2,10 @@
 
 > **Status:** Post-planning. Records decisions made during Stage 3 scoping conversations.
 > Intended as a handoff to the agent maintaining `iris_handoff.md`, `iris_core_spec.md`,
-> and `iris_stage3_open_questions.md` — update those documents to reflect the decisions
+> and `docs/archive/iris_stage3_open_questions.md` — update those documents to reflect the decisions
 > below.
 >
-> All ten questions from `iris_stage3_open_questions.md` are closed here. The foundational
+> All ten questions from `docs/archive/iris_stage3_open_questions.md` are closed here. The foundational
 > signal-persistence question and Item 1 (reconciliation model) are the two decisions
 > everything else depends on — read those first.
 >

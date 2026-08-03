@@ -71,7 +71,7 @@ private:
     // through verbatim and unparsed, same as everywhere else in the preprocessor;
     // a `!{ }` JSX-transform escape hatch splices each nested element's own
     // generated expression back into the surrounding verbatim text
-    // (docs/iris_next_steps.md, "Resolved: JSX inside escape hatches").
+    // (docs/archive/iris_next_steps.md, "Resolved: JSX inside escape hatches").
     std::string EmitEscapeHatchExpression(const PropValue& Value) {
         if (Value.Kind != PropValueKind::JsxEscapeHatch) {
             return Value.Text; // EscapeHatch — verbatim, unparsed

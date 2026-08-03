@@ -218,7 +218,7 @@ DESCRIBE("Codegen", {
         // Same shape as the outer-level PartyScreen test above, but with `!{ }` instead
         // of `{ }` — this time the nested <Frame> JSX must actually be transformed into
         // a real Iris::Component-constructing expression and spliced back into
-        // the surrounding lambda text (docs/iris_next_steps.md, "Resolved: JSX inside
+        // the surrounding lambda text (docs/archive/iris_next_steps.md, "Resolved: JSX inside
         // escape hatches"), not passed through verbatim.
         const auto Result = Generate(R"(render {
             <Slot>

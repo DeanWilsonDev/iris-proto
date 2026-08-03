@@ -216,7 +216,7 @@ block/escape hatch.
   by design.
 - Nested `<Slot>`s are fully rediscovered on every outer re-render even when
   unchanged — a known, accepted perf cost, not a bug.
-- `docs/iris_next_steps.md` is a frozen historical snapshot — use
+- `docs/archive/iris_next_steps.md` is a frozen historical snapshot — use
   `docs/next-steps.md` for the live list of open gaps.
 
 ## Project structure reference

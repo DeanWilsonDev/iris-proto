@@ -311,7 +311,7 @@ PropValue RenderBlockParser::ParseEscapeHatch() {
     return Value;
 }
 
-// `!{ }` — the JSX-transform escape hatch (docs/iris_next_steps.md, "Resolved: JSX
+// `!{ }` — the JSX-transform escape hatch (docs/archive/iris_next_steps.md, "Resolved: JSX
 // inside escape hatches"). Unlike the opaque `{ }` form, this one is walked at the
 // structured GToken level rather than scanned as a raw byte span: a `<Identifier`
 // run is recursively parsed as a nested element via the ordinary

@@ -81,7 +81,7 @@ These are hard parts of Iris itself — no backend choice avoids them:
 > **Updated post-Stage-2-scoping, verified against the real `penumbra-proto` source** (this
 > section originally described what Penumbra *would need*; several items below have since
 > actually landed there — see `docs/iris_stage2_decision_doc.md` and
-> `docs/iris_stage2_open_questions.md` for the full trail). One claim below was wrong even at
+> `docs/archive/iris_stage2_open_questions.md` for the full trail). One claim below was wrong even at
 > the time it was written — see the event-props bullet.
 
 - A codegen pass that walks a parsed, props-resolved Iris component tree — represented as a
@@ -143,7 +143,7 @@ These are hard parts of Iris itself — no backend choice avoids them:
 | Stage | Scope |
 | --- | --- |
 | 0 | Formalize the Iris Core language spec. *(Done — see `docs/iris_core_spec.md`. Post-pivot, scope narrowed to: `render`-block element-tree grammar, `import` resolution, the `key`/`class` reserved props, and backend-capability tagging; component/props/state/event model is host-language, not Iris-defined.)* |
-| 1 | Front end: a preprocessor that detects `render { }` blocks in host-language (C++23) source, parses the element-tree grammar and `{ }` escape hatches inside them, and rewrites the file to valid host-language output — passthrough for everything outside `render { }`. Open questions being scoped in `docs/iris_stage1_open_questions.md`. |
+| 1 | Front end: a preprocessor that detects `render { }` blocks in host-language (C++23) source, parses the element-tree grammar and `{ }` escape hatches inside them, and rewrites the file to valid host-language output — passthrough for everything outside `render { }`. Open questions being scoped in `docs/archive/iris_stage1_open_questions.md`. |
 | 2 | Penumbra backend, static slice first: build a real Penumbra widget tree once from a parsed, props-resolved `Component` IR tree via Penumbra's `Builder` API, no state/re-render yet. Implemented in the separate `iris-penumbra-backend` repo (depends on both `iris` and `penumbra-proto`), not in this repo — `iris` itself only ever produces the backend-agnostic IR. *(Scoped — see `docs/iris_stage2_decision_doc.md` for all ten planning decisions and `docs/iris_core_spec.md` §2.5–§2.6, §3 for what they mean for the language/primitive reference. Two Penumbra-side prerequisites — generic `WidgetBase` callbacks, `InlineContainer` — already landed; `<Image>`'s decode-from-path pipeline has not, see §8 there.)* |
 | 3 | Reactive runtime: state, re-render triggers, the reconciler (diff + minimal mutation), consuming Penumbra's child-mutation API. *(Fully scoped — see `docs/iris_stage3_decision_doc.md` for the complete architecture: `<Slot>`-scoped diffing, `IWidget`/`IrisPropDiff` as the backend-agnostic update boundary, minimal-move keyed list diffing, batched `iris::Tick()` frame-loop integration, `IWidgetLifecycle` hooks. All Penumbra-side prerequisites — structural mutation, tree-walking, and (as of `penumbra-proto` commit `663fece`) `IWidgetLifecycle` — have landed; see `docs/iris_core_spec.md` §10 and §5 above. Nothing known is blocking Stage 3 implementation from the Penumbra side.)* |
 | 4 | Lustre-lite: global + component-scoped style resolution mapped onto Penumbra's `BoxStyle`/`ButtonStyle`/etc. and its gradient/shadow/blend-mode primitives. |

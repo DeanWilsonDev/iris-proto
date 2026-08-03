@@ -2,7 +2,7 @@
 
 > **Status:** Urgent change, delivered directly (not as a separate handover file this time).
 > Supersedes an earlier, unrecorded handover brief about re-invokable lambdas that this repo's
-> docs never saw directly. Closes the foundational question `docs/iris_stage3_open_questions.md`
+> docs never saw directly. Closes the foundational question `docs/archive/iris_stage3_open_questions.md`
 > opened: how `iris::Signal<T>` survives being declared as a "local variable" across re-renders.
 
 ---
@@ -14,7 +14,7 @@ the previous plan of storing escape-hatch lambdas as named variables. **The comp
 still runs once at mount** — but dynamic regions are now explicitly marked in the source by the
 author using `<Slot>`, not implicitly detected by the runtime via generated variable names.
 
-This resolves `docs/iris_stage3_open_questions.md`'s lead question in favor of the "instance-owned,
+This resolves `docs/archive/iris_stage3_open_questions.md`'s lead question in favor of the "instance-owned,
 run-once component bodies" candidate: the outer function executes once, establishing
 `iris::Signal<T>` locals as genuinely persistent (no call-order-indexed slot trick needed,
 avoiding the React Hooks footgun that approach carried) — only `<Slot>`'s callables get

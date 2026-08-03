@@ -11,7 +11,7 @@ namespace Iris {
 
 struct ElementNode;
 
-// One piece of a `!{ }` JSX-transform escape hatch's body (docs/iris_next_steps.md,
+// One piece of a `!{ }` JSX-transform escape hatch's body (docs/archive/iris_next_steps.md,
 // "Resolved: JSX inside escape hatches"): either a run of ordinary host-language
 // text (reconstructed token-for-token, not necessarily byte-identical to the
 // original source — whitespace is normalized the same way literal element text

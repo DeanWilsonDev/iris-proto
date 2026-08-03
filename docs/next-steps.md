@@ -4,7 +4,7 @@ Running log of active feature requests / capability gaps for this repo, per
 `~/.claude/skills/feature-request`. Each entry below is appended, never edited in place once
 resolved — resolved entries get a `RESOLVED` status line and stay for the record instead of
 being deleted. For the full historical status log of Stage 0–3 work (all done, effectively a
-changelog), see `docs/iris_next_steps.md`; for closed design decisions, see the various
+changelog), see `docs/archive/iris_next_steps.md`; for closed design decisions, see the various
 `docs/iris_*_decision*.md` files — `CLAUDE.md` explains how those relate to
 `docs/iris_core_spec.md`, the authoritative language reference.
 

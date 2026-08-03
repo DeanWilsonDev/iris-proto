@@ -292,7 +292,7 @@ difference is transparent to the host language author.
 
 ---
 
-## 11. Questions closed from `iris_stage1_open_questions.md`
+## 11. Questions closed from `docs/archive/iris_stage1_open_questions.md`
 
 For the agent updating the Stage 1 open questions doc — all eight questions are now
 closed. Summary:

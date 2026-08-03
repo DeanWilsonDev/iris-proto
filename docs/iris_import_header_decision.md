@@ -2,7 +2,7 @@
 
 > **Status:** Closed and implemented. Records how `import Name` (not valid C++23) gets
 > turned into something the host compiler can actually resolve `Name` against, closing the
-> one gap `docs/iris_next_steps.md` flagged after the preprocessor driver/CLI first landed.
+> one gap `docs/archive/iris_next_steps.md` flagged after the preprocessor driver/CLI first landed.
 
 ---
 
@@ -95,7 +95,7 @@ successfully with `g++ -std=c++23`.
 
 ## What is now unblocked
 
-Per `docs/iris_next_steps.md`'s suggested order, this was the one concrete gap standing
+Per `docs/archive/iris_next_steps.md`'s suggested order, this was the one concrete gap standing
 between `iris_cc` and actually compiling a real, multi-file project. With it closed:
 
 1. **Stage 2 walker in `iris-penumbra-backend`** — consuming codegen's output, now
@@ -110,6 +110,6 @@ between `iris_cc` and actually compiling a real, multi-file project. With it clo
   consumer's build times or link-model needs make header-only definitions genuinely costly.
 - **`IrisElementTag::None`'s reconciler contract** (how a walker/backend should treat a
   `<Slot>` callable returning nothing) — orthogonal to this decision, deferred to Stage 3's
-  own design pass per `docs/iris_next_steps.md`.
+  own design pass per `docs/archive/iris_next_steps.md`.
 - **A comment between `import` and `Name`** breaking `ImportStatementEndOffset` — no
   example in the spec or this codebase needs this; revisit if a real one does.

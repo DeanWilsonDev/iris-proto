@@ -2,10 +2,10 @@
 
 > **Status:** Post-planning. Records decisions made during Stage 1 scoping conversations.
 > Intended as a handoff to the agent maintaining `iris_handoff.md`,
-> `iris_core_spec.md`, and `iris_stage1_open_questions.md` — update those documents to
+> `iris_core_spec.md`, and `docs/archive/iris_stage1_open_questions.md` — update those documents to
 > reflect the decisions below.
 >
-> All eight questions from `iris_stage1_open_questions.md` §2 are closed here. The
+> All eight questions from `docs/archive/iris_stage1_open_questions.md` §2 are closed here. The
 > original eight questions from §1 were already closed by `iris_stage1_decision_doc.md`.
 
 ______________________________________________________________________

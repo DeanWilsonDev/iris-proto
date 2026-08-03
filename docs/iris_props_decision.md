@@ -158,7 +158,7 @@ a throwing `std::get` is the correct failure mode.
 
 ## What is now unblocked
 
-Per `docs/iris_next_steps.md`'s suggested order — all items are now unblocked:
+Per `docs/archive/iris_next_steps.md`'s suggested order — all items are now unblocked:
 
 1. ~~Decide `IrisProps`~~ — **done, this document**
 2. Stage 1 codegen in `iris`

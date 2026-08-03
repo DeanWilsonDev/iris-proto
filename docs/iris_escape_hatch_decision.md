@@ -2,7 +2,7 @@
 
 > **Status:** Closed and implemented. Records the decision on how a `<Slot>` (or any
 > escape hatch)'s body gets its nested JSX transformed, and closes the gap
-> `docs/iris_next_steps.md` and `docs/iris_core_spec.md` §8 flagged after Stage 1
+> `docs/archive/iris_next_steps.md` and `docs/iris_core_spec.md` §8 flagged after Stage 1
 > codegen was written against `docs/iris_props_decision.md` and
 > `docs/iris_stage1_codegen_decision.md`.
 >
@@ -120,7 +120,7 @@ succeeds with no workarounds.)
 
 ## What is now unblocked
 
-Per `docs/iris_next_steps.md`'s suggested order:
+Per `docs/archive/iris_next_steps.md`'s suggested order:
 
 1. ~~Write this decision doc~~ — **done**
 2. ~~Implement `!{ }` in `RenderBlockParser`~~ — **done**, this document

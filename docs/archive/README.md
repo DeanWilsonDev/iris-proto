@@ -1,0 +1,19 @@
+# Archive
+
+Docs moved here are self-superseded: each one's own status header says it's closed, resolved,
+or no longer updated, and nothing outside `docs/` cites it directly (only other docs do, by
+path — those references were updated to point here). They're kept for the historical trail,
+not as current truth.
+
+This does **not** include the `iris_*_decision*.md` / `iris_stage*_decision_doc.md` files —
+those remain in `docs/` because `docs/iris_core_spec.md`'s own status header lists them, in
+precedence order, as its sources, and because they're cited throughout `include/`, `src/`, and
+`tests/` as permanent inline citations (per `CLAUDE.md`: "chronological decision records/
+handoffs, kept for the reasoning trail").
+
+| File | Superseded by |
+| --- | --- |
+| `iris_next_steps.md` | `docs/next-steps.md` (the active tracker) |
+| `iris_stage1_open_questions.md` | Closed by `docs/iris_stage1_decision_doc.md` / `_pt2.md`; current reference is `docs/iris_core_spec.md` |
+| `iris_stage2_open_questions.md` | Closed by `docs/iris_stage2_decision_doc.md`; current reference is `docs/iris_core_spec.md` |
+| `iris_stage3_open_questions.md` | Closed by `docs/iris_stage3_decision_doc.md`; current reference is `docs/iris_core_spec.md` |

@@ -85,7 +85,7 @@ plus an `Application` host that dispatches `OnTick`, exactly matching what
 `docs/iris_stage3_decision_doc.md` §8 specified. This closed the one real, verified
 Penumbra-side gap that was blocking Stage 3 lifecycle hooks.
 
-`docs/iris_core_spec.md` §10, `docs/iris_handoff.md` §5, `docs/iris_stage3_open_questions.md`,
+`docs/iris_core_spec.md` §10, `docs/iris_handoff.md` §5, `docs/archive/iris_stage3_open_questions.md`,
 `docs/iris_stage3_decision_doc.md` §10's checklist, and `CLAUDE.md` have all been updated to
 mark this resolved (mirroring how the `<Image>` gap's resolution was documented). Stage 3 now
 has every known Penumbra-side prerequisite it needs.

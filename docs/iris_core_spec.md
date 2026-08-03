@@ -335,7 +335,7 @@ Mutating a signal (`settingsOpen.set(true)`) notifies the Iris runtime to re-inv
 last time. On Penumbra specifically — which is retained-mode and redraws every frame regardless
 — this reconciliation patches the live widget tree; Penumbra reflects the resulting mutations on
 its next frame automatically. The reconciler's own diffing algorithm remains Stage 3 work still
-being planned (`docs/iris_stage3_open_questions.md`); this section only fixes what triggers it
+being planned (`docs/archive/iris_stage3_open_questions.md`); this section only fixes what triggers it
 and what scope it runs over — `<Slot>`-produced regions, not the whole tree from the root.
 
 ### 2.3 The `key` prop
@@ -1007,7 +1007,7 @@ just the decision doc's prose — two of the ten Stage 2 decisions turned out no
 actually shipped (see below).
 
 1. `Component` confirmed as a backend-agnostic IR node (tag/props/children), not a
-   live-widget facade (§2.5) — closes the representation question `docs/iris_stage2_open_questions.md`
+   live-widget facade (§2.5) — closes the representation question `docs/archive/iris_stage2_open_questions.md`
    §4 raised.
 2. New `<Name>Props` required naming rule for component-invocation codegen, and the
    primitive-vs-component codegen branch (§2.6).
@@ -1052,7 +1052,7 @@ decision, not by gap).
 
 Per `docs/iris_stage3_decision_slot.md`, delivered directly rather than as a separate handover
 file this repo saw. Closes the single most important open question this spec had left
-unresolved (previously tracked only in `docs/iris_stage3_open_questions.md`'s lead item, never
+unresolved (previously tracked only in `docs/archive/iris_stage3_open_questions.md`'s lead item, never
 in this document's own §8, since it only surfaced once Stage 3 planning began):
 
 1. **Component functions run exactly once, at mount** — not re-invoked on every render as
@@ -1074,7 +1074,7 @@ in this document's own §8, since it only surfaced once Stage 3 planning began):
    escape-hatch grammar as any other primitive (§1.4). The constraints on its child (exactly one,
    must be callable) are runtime-enforced, not compile-time.
 5. Narrows Stage 3's remaining scope favorably, worth noting for
-   `docs/iris_stage3_open_questions.md`: reconciliation only ever needs to happen *within* what a
+   `docs/archive/iris_stage3_open_questions.md`: reconciliation only ever needs to happen *within* what a
    `<Slot>` callable produces, comparing its new result against its previous one — never across
    the whole component tree from the root, since everything outside a `<Slot>` is now provably
    static once mounted.
@@ -1085,7 +1085,7 @@ in this document's own §8, since it only surfaced once Stage 3 planning began):
 
 Full interfaces and reasoning live in `docs/iris_stage3_decision_doc.md` — this section is a
 map to that document for whoever implements Stage 3, not a restatement. All ten questions
-`docs/iris_stage3_open_questions.md` raised are closed there.
+`docs/archive/iris_stage3_open_questions.md` raised are closed there.
 
 > Note on the `vendor/penumbra` references below: at the time this verification was performed,
 > `iris` vendored Penumbra directly at that path. That repo/build decision was later corrected
