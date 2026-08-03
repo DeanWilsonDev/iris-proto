@@ -231,7 +231,11 @@ needing "the whole mounted tree" (a debugger, an inspector) gets this for free.
   scripting-language host — a substantially bigger design question (state migration across a
   reload, mounted-widget identity, whether the reconciler can treat a reload as "just another
   re-render"). Revisit when that host is scoped, informed by what Lustre's narrower
-  styling-only hot-reload turns out to need in practice.
+  styling-only hot-reload turns out to need in practice. Sized (not designed) against the
+  real current code in `docs/iris_interpreted_host_hot_reload_gap.md` — `ComponentInstance`
+  has no identity across two runs of the same component (state would reset), the reconciler
+  has no entry point that accepts "diff against whatever's live right now," and Nyx as
+  currently specced is still a compiled host, not a genuinely interpreted one.
 
 ---
 
