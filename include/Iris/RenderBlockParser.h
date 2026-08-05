@@ -1,10 +1,11 @@
 #pragma once
 
-#include "Iris/CppTokenizer.h"
 #include "Iris/ElementNode.h"
+#include "Iris/IHostLanguageTokenizer.h"
 
 #include <cstddef>
 #include <deque>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -91,10 +92,11 @@ private:
     void                     ParseRenderBlock(SourceLocation BlockLocation);
     void                     RecoverToBlockEnd();
 
-    std::string_view Source_;
-    std::string       FilePath_;
-    CppTokenizer      Tokenizer_;
-    std::size_t       RawOffset_{0};
+    std::string_view                          Source_;
+    std::string                               FilePath_;
+    std::unique_ptr<IHostLanguageTokenizer>   Tokenizer_; // CppTokenizer for `.iris`, NyxTokenizer
+                                                            // for `.irisx` — see TokenizerFactory.h.
+    std::size_t                               RawOffset_{0};
 
     GToken                 Current_;
     std::deque<GToken>     Pending_;

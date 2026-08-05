@@ -80,6 +80,7 @@ set_target_properties(nyx-lexer PROPERTIES
 add_library(iris STATIC
     src/Iris/CppTokenizer.cpp
     src/Iris/NyxTokenizer.cpp
+    src/Iris/TokenizerFactory.cpp
     src/Iris/RenderBlockParser.cpp
     src/Iris/IrisConfig.cpp
     src/Iris/ImportResolver.cpp

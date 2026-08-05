@@ -1,5 +1,7 @@
 #include "Iris/RenderBlockParser.h"
 
+#include "Iris/TokenizerFactory.h"
+
 #include <cctype>
 
 namespace Iris {
@@ -21,10 +23,10 @@ std::string Trim(std::string_view Text) {
 } // namespace
 
 RenderBlockParser::RenderBlockParser(std::string_view Source, std::string FilePath)
-    : Source_(Source), FilePath_(std::move(FilePath)), Tokenizer_(Source_, FilePath_) {}
+    : Source_(Source), FilePath_(std::move(FilePath)), Tokenizer_(CreateHostLanguageTokenizer(Source_, FilePath_)) {}
 
 Token RenderBlockParser::PullRawToken() {
-    Token Tok = Tokenizer_.NextToken();
+    Token Tok = Tokenizer_->NextToken();
     RawOffset_ += Tok.Lexeme.size();
     return Tok;
 }

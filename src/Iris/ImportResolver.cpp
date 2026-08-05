@@ -1,9 +1,10 @@
 #include "Iris/ImportResolver.h"
 
-#include "Iris/CppTokenizer.h"
+#include "Iris/TokenizerFactory.h"
 
 #include <cctype>
 #include <filesystem>
+#include <memory>
 #include <optional>
 
 namespace Iris {
@@ -13,7 +14,10 @@ namespace {
 // True for an Other token that is pure whitespace — CppTokenizer bundles
 // whitespace runs (and other non-identifier text) into a single Other token,
 // so the gap between "import" and its name is exactly one such token when
-// nothing else separates them.
+// nothing else separates them. NyxTokenizer never emits this at all (Nyx's
+// own lexer discards whitespace outright, per NyxTokenizer.h) — harmless
+// here, since PendingImport's very next token is then the name identifier
+// directly, with no Other token in between to classify either way.
 bool IsWhitespaceOnly(const Token& Tok) {
     if (Tok.Kind != TokenKind::Other) {
         return false;
@@ -30,10 +34,10 @@ bool IsWhitespaceOnly(const Token& Tok) {
 
 std::vector<ImportStatement> ScanImports(std::string_view Source, std::string FilePath) {
     std::vector<ImportStatement> Imports;
-    CppTokenizer                 Tokenizer(Source, FilePath);
+    std::unique_ptr<IHostLanguageTokenizer> Tokenizer = CreateHostLanguageTokenizer(Source, FilePath);
 
     std::optional<Token> PendingImport;
-    Token                Tok = Tokenizer.NextToken();
+    Token                Tok = Tokenizer->NextToken();
     while (Tok.Kind != TokenKind::EndOfFile) {
         if (PendingImport) {
             if (Tok.Kind == TokenKind::Identifier) {
@@ -49,7 +53,7 @@ std::vector<ImportStatement> ScanImports(std::string_view Source, std::string Fi
             PendingImport = Tok;
         }
 
-        Tok = Tokenizer.NextToken();
+        Tok = Tokenizer->NextToken();
     }
 
     return Imports;

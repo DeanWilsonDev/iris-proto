@@ -14,10 +14,15 @@ both since removed) plus one gap identified directly against `docs/iris_core_spe
 
 ---
 
-## `NyxTokenizer` (IHostLanguageTokenizer for `.irisx`) — PARTIALLY RESOLVED (2026-08-05)
+## `NyxTokenizer` (IHostLanguageTokenizer for `.irisx`) — RESOLVED for the compile path; `@signal` authoring still open (2026-08-05)
 
-> **Status:** The tokenizer adapter itself landed. Wiring it into the actual `.irisx` compile
-> path did not — deliberately scoped out, confirmed with Dean, tracked below.
+> **Status:** The tokenizer adapter landed, and — as a same-day follow-up, prompted by
+> Pharos-proto wanting to get ahead of a not-yet-ready Nyx integration — so did wiring it into
+> the actual `.irisx` compile path (`RenderBlockParser`/`ImportResolver`/`Driver::CompileFile`
+> now genuinely dispatch by file extension). What's still open is unrelated to tokenizing:
+> `@signal`/`<Slot>` authoring inside a `.irisx` component body has no Nyx-side mechanism yet,
+> tracked below, plus `iris-lsp`'s `NyxLspProxy` seam (LSP tooling, not the compile path) was
+> not touched by this pass.
 > **Trigger:** nyx-proto's `docs/nyx-scripting-language/decision-log.md` §7.1 (that repo's own
 > Phase 7 — originally scoped as a full Chaos preprocessor rewrite inside nyx-proto — was moved
 > here, then narrowed to "just the tokenizer adapter" once it became clear this repo's own
@@ -54,28 +59,40 @@ both since removed) plus one gap identified directly against `docs/iris_core_spe
   literal is caught and turned into a clean, immediate `EndOfFile` rather than a partial token
   stream, matching `CppTokenizer`'s own never-throws contract.
 
-### What's actually missing
+### Follow-up landed (2026-08-05): tokenizer dispatch
 
-`RenderBlockParser`, `ImportResolver`, and `Driver::CompileFile` all still construct
-`CppTokenizer` *concretely* rather than through the `IHostLanguageTokenizer` interface
-(`RenderBlockParser.h`'s `Tokenizer_` member is typed `CppTokenizer`, not
-`std::unique_ptr<IHostLanguageTokenizer>` or a template parameter) — so a `.irisx` file does not
-yet actually get compiled through `NyxTokenizer`. `IHostLanguageTokenizer.h`'s own doc comment
-("selected by file extension at preprocessor startup") describes a dispatch point that doesn't
-exist in code anywhere yet; `ImportResolver.cpp:62` is the only place `.irisx` vs `.iris` is
-branched on today, and that only picks an import's file extension, not which tokenizer scans it.
+`IHostLanguageTokenizer.h`'s own doc comment ("selected by file extension at preprocessor
+startup") now describes a dispatch point that actually exists:
 
-### Proposed follow-up (not scoped or designed here)
+- New `Iris::CreateHostLanguageTokenizer(Source, FilePath)` (`include/Iris/TokenizerFactory.h`,
+  `src/Iris/TokenizerFactory.cpp`) — returns a `NyxTokenizer` when `FilePath` ends in `.irisx`,
+  a `CppTokenizer` otherwise, per `docs/iris_core_spec.md` §0's File model ("the file extension
+  is the sole source of truth for which host language a file uses").
+- `RenderBlockParser::Tokenizer_` is now `std::unique_ptr<IHostLanguageTokenizer>`, built via the
+  factory in the constructor, instead of a concrete `CppTokenizer` member.
+- `ImportResolver.cpp`'s `ScanImports` builds its tokenizer through the same factory instead of
+  constructing `CppTokenizer` directly.
+- `Driver::CompileFile` needed no changes at all — it only ever calls `ScanImports` and
+  constructs `RenderBlockParser`, both of which now dispatch correctly on their own. `iris_cc`
+  (which just wraps `CompileFile`) picks this up for free too.
+- New test, `RenderBlockParserTests.cpp`'s "a .irisx FilePath routes through NyxTokenizer, not
+  CppTokenizer" — parses the *same* source (a `content={` `hi}there` `}` prop value, a Nyx
+  template string whose unescaped `}` would desync `CppTokenizer`'s raw brace-balance counting
+  in `ParseEscapeHatch` but is swallowed as one opaque token by `NyxTokenizer`) twice, once as
+  `test.iris` and once as `test.irisx`, and asserts the `.iris` parse errors while the `.irisx`
+  parse doesn't — proving the dispatch is real, not just "constructs without crashing." Full
+  suite: 148/148 passing (was 147; one test added).
 
-Making `RenderBlockParser`/`ImportResolver`/`Driver` tokenizer-polymorphic (template parameter vs.
-`std::unique_ptr<IHostLanguageTokenizer>` is an open question) and wiring real `.irisx`-vs-`.iris`
-dispatch into `Driver::CompileFile`, `iris_cc`, and `iris-lsp`'s `ClangdProxy`/`NyxLspProxy` seam
-is a larger refactor of already-tested core code, not attempted here. Also still blocked
-independent of that refactor: there is no Nyx-side equivalent yet for `@signal`/`<Slot>`
-authoring inside a `.irisx` component body (`IRIS_SIGNAL`'s C++ macro form doesn't translate), so
-even a fully wired `NyxTokenizer` couldn't compile a real `.irisx` component end-to-end today —
-matching `roadmap.md` §26.1's framing of that as "a Penumbra/Chaos integration concern," still
-open on the Nyx-proto side too.
+### What's still open
+
+There is no Nyx-side equivalent yet for `@signal`/`<Slot>` authoring inside a `.irisx` component
+body (`IRIS_SIGNAL`'s C++ macro form doesn't translate) — so even with the dispatch now wired, a
+real `.irisx` component with reactive state still can't compile end-to-end today. Matches
+`roadmap.md` §26.1's framing of that as "a Penumbra/Chaos integration concern," still open on the
+nyx-proto side too; nyx-proto's own `NyxRuntime` has no `RegisterDecorator`-shaped mechanism for
+this yet either. Also not touched by this pass: `iris-lsp`'s `ClangdProxy`/`NyxLspProxy` seam
+(semantic completion / goto-definition for `.irisx` in the LSP, a separate concern from the
+`iris_cc` compile path this entry covers).
 
 ### Explicitly not requested
 

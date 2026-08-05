@@ -9,6 +9,11 @@ Iris::RenderBlockParser::Result ParseSource(std::string_view Source) {
     return Parser.Parse();
 }
 
+Iris::RenderBlockParser::Result ParseSourceAs(std::string_view Source, std::string FilePath) {
+    Iris::RenderBlockParser Parser(Source, std::move(FilePath));
+    return Parser.Parse();
+}
+
 const Iris::Prop* FindProp(const Iris::ElementNode& Node, std::string_view Name) {
     for (const auto& P : Node.Props) {
         if (P.Name == Name) {
@@ -270,5 +275,33 @@ DESCRIBE("RenderBlockParser", {
         const auto& Root = Result.Blocks[0].Root;
         ASSERT_TRUE(Root.Tag == "Frame" && Root.Children.size() == 2);
         // root Frame has two children: the Button and the outer Slot
+    });
+
+    IT("a .irisx FilePath routes through NyxTokenizer, not CppTokenizer", {
+        // A Nyx template-string literal (backtick-delimited) whose `${ }` interpolation
+        // contains a stray, unbalanced '}' with no matching '{' before it. NyxTokenizer
+        // (per its own doc comment) captures the whole backtick-to-backtick span as one
+        // opaque StringLiteral token, so this inner '}' never reaches the escape hatch's
+        // brace balancer. CppTokenizer has no notion of backtick strings at all — it sees
+        // the stray '}' as a bare CloseBrace token, which closes the `content={ }` escape
+        // hatch prematurely and desyncs the rest of the parse. Same source, only the
+        // FilePath extension differs — this is the one place TokenizerFactory's dispatch
+        // (docs/next-steps.md's "NyxTokenizer... PARTIALLY RESOLVED" entry) is actually
+        // observable from RenderBlockParser's output rather than just from a unit test
+        // against NyxTokenizer in isolation.
+        constexpr std::string_view Source = R"(render { <Text content={`hi}there`} /> })";
+
+        const auto CppResult = ParseSourceAs(Source, "test.iris");
+        ASSERT_FALSE(CppResult.Errors.empty());
+        // CppTokenizer treats the backtick as ordinary text and the stray '}' inside the
+        // template string as a real CloseBrace, ending the escape hatch early and leaving
+        // trailing text ("there`") where a new attribute or '/>' was expected.
+
+        const auto NyxResult = ParseSourceAs(Source, "test.irisx");
+        ASSERT_TRUE(NyxResult.Errors.empty());
+        // NyxTokenizer swallows the whole `hi}there` template string as one token, so the
+        // escape hatch closes correctly at the real trailing '}' and the element parses clean.
+        REQUIRE_EQUAL(NyxResult.Blocks.size(), static_cast<std::size_t>(1));
+        ASSERT_TRUE(NyxResult.Blocks[0].Root.Tag == "Text");
     });
 });
