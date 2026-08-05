@@ -44,6 +44,32 @@ set(CIMMERIAN_VISUAL_PLATFORM "None" CACHE STRING "" FORCE)
 add_subdirectory(libs/cimmerian)
 
 # ---------------------------------------------------------------------------
+# nyx-lexer — just nyx-proto's Lexer/Token translation units (libs/nyx-proto,
+# a git submodule), used by NyxTokenizer (below) to reuse Nyx's real,
+# already-tested tokenizer rather than reimplementing its string-escape/
+# template-interpolation scanning a second time
+# (nyx-proto's docs/nyx-scripting-language/decision-log.md §7.1). Deliberately
+# does NOT add_subdirectory(libs/nyx-proto) and build nyx-proto's own
+# CMakeLists.txt: that pulls in nyx-proto's own vendored Firefly/Amanuensis/
+# Cimmerian submodules, which would define `amanuensis` and `cimmerian`
+# targets a second time and collide with this repo's own libs/amanuensis and
+# libs/cimmerian above. Lexer.cpp/Token.cpp have zero dependency on the rest
+# of nyx-proto (no Firefly, no runtime/interpreter code — verified by
+# inspection), so compiling just those two translation units sidesteps the
+# collision entirely while still linking Nyx's real lexer. Built at C++26
+# (nyx-proto's own required standard, per its CLAUDE.md) independent of this
+# project's own CMAKE_CXX_STANDARD, since nothing else here assumes it can
+# use C++26 features.
+# ---------------------------------------------------------------------------
+add_library(nyx-lexer STATIC
+    libs/nyx-proto/src/lexer/lexer.cpp
+    libs/nyx-proto/src/lexer/token.cpp)
+target_include_directories(nyx-lexer PUBLIC libs/nyx-proto/src)
+set_target_properties(nyx-lexer PROPERTIES
+    CXX_STANDARD 26
+    CXX_STANDARD_REQUIRED ON)
+
+# ---------------------------------------------------------------------------
 # Iris preprocessor/runtime — static library. Nothing in here references
 # demo/ or tests/, and nothing in here references Penumbra or any other
 # backend — Iris's core is backend-agnostic by design (docs/iris_core_spec.md
@@ -53,6 +79,7 @@ add_subdirectory(libs/cimmerian)
 # ---------------------------------------------------------------------------
 add_library(iris STATIC
     src/Iris/CppTokenizer.cpp
+    src/Iris/NyxTokenizer.cpp
     src/Iris/RenderBlockParser.cpp
     src/Iris/IrisConfig.cpp
     src/Iris/ImportResolver.cpp
@@ -67,6 +94,10 @@ add_library(iris STATIC
 target_include_directories(iris PUBLIC include)
 target_compile_features(iris PUBLIC cxx_std_23)
 target_link_libraries(iris PUBLIC amanuensis umbra_interfaces)
+# nyx-lexer stays PRIVATE: NyxTokenizer.h exposes no nyx:: types in its own
+# public interface (only Iris::Token, via IHostLanguageTokenizer), so
+# consumers of `iris` never need libs/nyx-proto/src on their include path.
+target_link_libraries(iris PRIVATE nyx-lexer)
 
 # ---------------------------------------------------------------------------
 # iris_cc — the preprocessor CLI (tools/IrisCc.cpp), wrapping Iris::CompileFile
@@ -126,6 +157,7 @@ target_link_libraries(iris_lsp PRIVATE iris_lsp_lib)
 add_executable(test_iris
     tests/TestMain.cpp
     tests/CppTokenizerTests.cpp
+    tests/NyxTokenizerTests.cpp
     tests/RenderBlockParserTests.cpp
     tests/IrisConfigTests.cpp
     tests/ImportResolverTests.cpp

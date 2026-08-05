@@ -14,6 +14,79 @@ both since removed) plus one gap identified directly against `docs/iris_core_spe
 
 ---
 
+## `NyxTokenizer` (IHostLanguageTokenizer for `.irisx`) — PARTIALLY RESOLVED (2026-08-05)
+
+> **Status:** The tokenizer adapter itself landed. Wiring it into the actual `.irisx` compile
+> path did not — deliberately scoped out, confirmed with Dean, tracked below.
+> **Trigger:** nyx-proto's `docs/nyx-scripting-language/decision-log.md` §7.1 (that repo's own
+> Phase 7 — originally scoped as a full Chaos preprocessor rewrite inside nyx-proto — was moved
+> here, then narrowed to "just the tokenizer adapter" once it became clear this repo's own
+> `render{}`/IR/`<Slot>`/reconciler pipeline already covers everything else host-agnostically).
+
+### What landed
+
+- `Iris::NyxTokenizer` (`include/Iris/NyxTokenizer.h`, `src/Iris/NyxTokenizer.cpp`) — a real
+  `IHostLanguageTokenizer` implementation wrapping nyx-proto's own `nyx::Lexer`, translating its
+  richer `nyx::TokenKind` down into this repo's coarse 8-variant `Iris::TokenKind`, mirroring
+  `CppTokenizer`'s own shape exactly. Every Nyx keyword (`Class`, `Import`, `If`, …) collapses to
+  `Identifier` alongside plain identifiers — matching `CppTokenizer`'s uniform treatment of C++
+  keywords, since `RenderBlockParser`/`ImportResolver` only ever match on lexeme text. Both
+  `StringLiteral` and `TemplateStringLiteral` collapse to `Iris::TokenKind::StringLiteral` — Nyx's
+  lexer already captures a whole backtick-to-backtick template string (including any `{`/`}`
+  inside a `${ }` interpolation) as one verbatim token, so no interpolation-aware sub-tokenization
+  was needed for correct brace balancing.
+- `libs/nyx-proto` added as a git submodule (`github.com/DeanWilsonDev/nyx-proto`, private).
+  Deliberately **not** consumed via `add_subdirectory` + nyx-proto's own `CMakeLists.txt` — that
+  would pull in nyx-proto's own vendored Firefly/Amanuensis/Cimmerian submodules a second time,
+  colliding with this repo's own `libs/amanuensis`/`libs/cimmerian` targets. Instead, a new
+  `nyx-lexer` CMake target compiles only `src/lexer/lexer.cpp`/`token.cpp` directly (verified by
+  inspection to have zero dependency on the rest of nyx-proto — no Firefly, no
+  runtime/interpreter code), built at C++26 (nyx-proto's own required standard) independently of
+  this project's C++23, and linked `PRIVATE` into `iris` (`NyxTokenizer.h` exposes no `nyx::`
+  types publicly, so nothing about this dependency leaks to consumers of `iris`).
+- Covered by 9 new Cimmerian tests (`tests/NyxTokenizerTests.cpp`), mirroring
+  `CppTokenizerTests.cpp`'s cases plus a Nyx-specific one for template-string `${ }` interpolation
+  brace-balancing. Full `test_iris` suite (147/147) passes.
+- Two documented, deliberate behavioral differences from `CppTokenizer` (see `NyxTokenizer.h`'s
+  own doc comment for the full reasoning): its `StringLiteral`/`TemplateStringLiteral` `Lexeme` is
+  Nyx's *resolved* value (quotes/escapes already processed), not a raw source substring the way
+  `CppTokenizer`'s is; and `nyx::Lexer::Tokenize()`'s exception on an unterminated string/template
+  literal is caught and turned into a clean, immediate `EndOfFile` rather than a partial token
+  stream, matching `CppTokenizer`'s own never-throws contract.
+
+### What's actually missing
+
+`RenderBlockParser`, `ImportResolver`, and `Driver::CompileFile` all still construct
+`CppTokenizer` *concretely* rather than through the `IHostLanguageTokenizer` interface
+(`RenderBlockParser.h`'s `Tokenizer_` member is typed `CppTokenizer`, not
+`std::unique_ptr<IHostLanguageTokenizer>` or a template parameter) — so a `.irisx` file does not
+yet actually get compiled through `NyxTokenizer`. `IHostLanguageTokenizer.h`'s own doc comment
+("selected by file extension at preprocessor startup") describes a dispatch point that doesn't
+exist in code anywhere yet; `ImportResolver.cpp:62` is the only place `.irisx` vs `.iris` is
+branched on today, and that only picks an import's file extension, not which tokenizer scans it.
+
+### Proposed follow-up (not scoped or designed here)
+
+Making `RenderBlockParser`/`ImportResolver`/`Driver` tokenizer-polymorphic (template parameter vs.
+`std::unique_ptr<IHostLanguageTokenizer>` is an open question) and wiring real `.irisx`-vs-`.iris`
+dispatch into `Driver::CompileFile`, `iris_cc`, and `iris-lsp`'s `ClangdProxy`/`NyxLspProxy` seam
+is a larger refactor of already-tested core code, not attempted here. Also still blocked
+independent of that refactor: there is no Nyx-side equivalent yet for `@signal`/`<Slot>`
+authoring inside a `.irisx` component body (`IRIS_SIGNAL`'s C++ macro form doesn't translate), so
+even a fully wired `NyxTokenizer` couldn't compile a real `.irisx` component end-to-end today —
+matching `roadmap.md` §26.1's framing of that as "a Penumbra/Chaos integration concern," still
+open on the Nyx-proto side too.
+
+### Explicitly not requested
+
+- Reimplementing `render{}`/JSX parsing, `@signal` lifting, `<Slot>` resolution, or Chaos-IR
+  production as new iris-proto code, even though nyx-proto's own (now-superseded) Phase 7 task
+  list originally described all of that — this repo's existing `RenderBlockParser`/`Codegen`/
+  `Component` IR/`SlotRuntime`/`Reconciler` already cover it host-agnostically; only the lexical
+  front end differs per host language.
+
+---
+
 ## Named-child-handle (`ref`) prop, for host code reaching one mounted child directly — RESOLVED (2026-07-23)
 
 > **Status:** Resolved in this repo — the parser/codegen/`Component` plumbing this entry asked
