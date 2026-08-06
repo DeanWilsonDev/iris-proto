@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Iris/ComponentReloadTier.h"
 #include "Iris/Signal.h"
 #include "Iris/SlotRuntime.h"
 
@@ -8,6 +9,8 @@
 #include <cassert>
 #include <cstddef>
 #include <memory>
+#include <typeindex>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 
@@ -25,16 +28,23 @@ namespace Detail {
 
 // Type-erased base so ComponentInstance can hold a heterogeneous collection of
 // Signal<T> instances (one per IRIS_SIGNAL declaration in a component's body) without
-// needing to know every T.
+// needing to know every T. `TypeId()` is a manual type tag on top of that same
+// type-erasure idea — used only during a reload replay (docs/
+// iris_hot_reload_reconciliation_decision.md §1) to check "is the signal previously
+// declared at this position still the same T" before reusing its storage. Deliberately
+// not `dynamic_cast`/RTTI: this codebase has never depended on RTTI, and a manual tag
+// fits the existing base+derived type-erasure shape here better than reaching for it.
 class SignalStorageBase {
 public:
     virtual ~SignalStorageBase() = default;
+    virtual std::type_index TypeId() const = 0;
 };
 
 template <typename T>
 class SignalStorage : public SignalStorageBase {
 public:
     explicit SignalStorage(T InitialValue) : Value(std::move(InitialValue)) {}
+    std::type_index TypeId() const override { return std::type_index(typeid(T)); }
     Signal<T> Value;
 };
 
@@ -63,6 +73,32 @@ class ComponentInstance {
 public:
     template <typename T>
     Signal<T>& AllocateSignal(T InitialValue) {
+        if (ReplayActive_) {
+            // Reload replay (docs/iris_hot_reload_reconciliation_decision.md §1):
+            // declaration order is this signal's identity across two separate runs of
+            // the same instance, the same rule React's own hooks use. A match at this
+            // position, of the same T, reuses the existing storage untouched --
+            // InitialValue is discarded, exactly like tier 1's "state preserved"
+            // requirement. Anything else (past the previously-recorded count, or a type
+            // change at this position) is the tier-2 case: replace/append fresh storage
+            // and flag that this replay's layout changed.
+            if (ReplayIndex_ < Signals_.size() &&
+                Signals_[ReplayIndex_]->TypeId() == std::type_index(typeid(T))) {
+                auto& Existing = static_cast<Detail::SignalStorage<T>&>(*Signals_[ReplayIndex_]);
+                ++ReplayIndex_;
+                return Existing.Value;
+            }
+            ReplayLayoutChanged_ = true;
+            auto        Storage = std::make_unique<Detail::SignalStorage<T>>(std::move(InitialValue));
+            Signal<T>& Ref = Storage->Value;
+            if (ReplayIndex_ < Signals_.size()) {
+                Signals_[ReplayIndex_] = std::move(Storage); // type-changed field: replace this slot
+            } else {
+                Signals_.push_back(std::move(Storage)); // new field: append
+            }
+            ++ReplayIndex_;
+            return Ref;
+        }
         auto Storage = std::make_unique<Detail::SignalStorage<T>>(std::move(InitialValue));
         Signal<T>& Ref = Storage->Value;
         Signals_.push_back(std::move(Storage));
@@ -80,6 +116,21 @@ public:
     // instance's whole lifetime regardless of how many further signals get
     // registered afterward and reallocate `NyxSignals_` itself.
     SignalId RegisterSignal(const nyx::runtime::Value& InitialValue) {
+        if (ReplayActive_) {
+            // Same declaration-order reuse as AllocateSignal<T> above, minus the type-
+            // tag check: nyx::runtime::Value is already dynamically typed on the Nyx
+            // side, so whether the type at this position is compatible with what's
+            // stored is a question nyx-proto's own Value comparison is better placed to
+            // answer than a blind reuse here (docs/iris_hot_reload_reconciliation_
+            // decision.md §1 -- left open, not resolved by this scaffolding).
+            if (NyxReplayIndex_ < NyxSignals_.size()) {
+                return NyxReplayIndex_++;
+            }
+            ReplayLayoutChanged_ = true;
+            NyxSignals_.push_back(std::make_unique<nyx::runtime::Value>(InitialValue));
+            ++NyxReplayIndex_;
+            return NyxSignals_.size() - 1;
+        }
         NyxSignals_.push_back(std::make_unique<nyx::runtime::Value>(InitialValue));
         return NyxSignals_.size() - 1;
     }
@@ -107,9 +158,46 @@ public:
         NotifySignalDependents(Storage);
     }
 
+    // Puts this already-mounted instance into replay mode (docs/
+    // iris_hot_reload_reconciliation_decision.md §1): the next run of AllocateSignal<T>/
+    // RegisterSignal calls made while this instance is ambient reuse existing signal
+    // storage by declaration order instead of appending fresh entries. Must be paired
+    // with a later EndReloadReplay() call once the render body finishes -- see
+    // iris::ReloadComponentInstance below, the only intended caller.
+    void BeginReloadReplay() {
+        ReplayActive_ = true;
+        ReplayIndex_ = 0;
+        NyxReplayIndex_ = 0;
+        ReplayLayoutChanged_ = false;
+    }
+
+    // Ends a replay pass: discards any trailing signal storage this run's render body
+    // didn't re-declare (a removed @signal/IRIS_SIGNAL -- Nyx's own field-layout-change
+    // semantics, execution-model.md §21.4, "removed fields are discarded"), and reports
+    // which tier the just-finished replay turned out to be.
+    ComponentReloadTier EndReloadReplay() {
+        if (ReplayIndex_ < Signals_.size()) {
+            Signals_.resize(ReplayIndex_);
+            ReplayLayoutChanged_ = true;
+        }
+        if (NyxReplayIndex_ < NyxSignals_.size()) {
+            NyxSignals_.resize(NyxReplayIndex_);
+            ReplayLayoutChanged_ = true;
+        }
+        ReplayActive_ = false;
+        const bool Changed = ReplayLayoutChanged_;
+        ReplayLayoutChanged_ = false;
+        return Changed ? ComponentReloadTier::SignalLayoutChanged : ComponentReloadTier::Unchanged;
+    }
+
 private:
     std::vector<std::unique_ptr<Detail::SignalStorageBase>> Signals_;
     std::vector<std::unique_ptr<nyx::runtime::Value>>       NyxSignals_;
+
+    bool        ReplayActive_{false};
+    std::size_t ReplayIndex_{0};
+    std::size_t NyxReplayIndex_{0};
+    bool        ReplayLayoutChanged_{false};
 };
 
 namespace Detail {
@@ -168,6 +256,33 @@ Iris::Component MountComponentInstance(Callable&& Fn) {
 template <typename Callable>
 Iris::Component Mount(Callable&& RootComponentFn) {
     return MountComponentInstance(std::forward<Callable>(RootComponentFn));
+}
+
+// The reload counterpart to `MountComponentInstance` (docs/
+// iris_hot_reload_reconciliation_decision.md §1): re-runs `Fn` against `Prior` — an
+// already-mounted instance from a previous run, matched by whatever identity a reload
+// driver uses (position/key, external to this function) — instead of allocating a fresh
+// `ComponentInstance`. Every `IRIS_SIGNAL`/`RegisterSignal` call `Fn` makes reuses
+// `Prior`'s existing signal storage by declaration order (`BeginReloadReplay`'s doc
+// comment), so a matched signal's value, and its `Signal<T>`/`Value` object identity
+// (dependency tracking is keyed on that object's own address — `Signal.h`), survive the
+// reload untouched. `Result.ReloadTier` reports whether every signal matched (tier 1) or
+// at least one was added, removed, or changed type (tier 2) — see `Component.h`'s own
+// `ReloadTier` field doc comment.
+template <typename Callable>
+Iris::Component ReloadComponentInstance(std::shared_ptr<ComponentInstance> Prior, Callable&& Fn) {
+    assert(Prior != nullptr &&
+           "ReloadComponentInstance requires a prior ComponentInstance to replay against -- "
+           "use MountComponentInstance for a subtree with no prior match.");
+    Prior->BeginReloadReplay();
+    Iris::Component Result = [&]() -> Iris::Component {
+        Detail::ScopedComponentInstance Guard(Prior.get());
+        return Fn();
+    }();
+    const ComponentReloadTier Tier = Prior->EndReloadReplay();
+    Result.Instance = Prior;
+    Result.ReloadTier = Tier;
+    return Result;
 }
 
 } // namespace iris

@@ -24,6 +24,7 @@ using MountFn = std::function<std::unique_ptr<Umbra::IWidget>(const Iris::Compon
 
 class SlotState;
 class ComponentInstance;
+class ReloadTarget;
 
 // Coordinates a set of `<Slot>` siblings attached under the *same* static parent
 // (`SlotResolution.h`'s `ResolveSlots` builds one per parent's children list), so a
@@ -180,6 +181,13 @@ class IrisRuntime {
 public:
     static IrisRuntime& Instance();
 
+    // Declared (not defaulted here) so it's defined out-of-line, in SlotRuntime.cpp,
+    // where ReloadTarget_ below is a complete type -- the usual fix for a unique_ptr
+    // member of a forward-declared type (ReloadTarget.h itself includes this header for
+    // MountFn, so the reverse include would be circular; forward-declaring it here and
+    // completing the type only where it's actually destroyed avoids that).
+    ~IrisRuntime();
+
     // Wraps a batch of signal writes — typically one event-handler invocation
     // (docs/iris_stage3_decision_doc.md §6) — so several `Signal<T>::set()` calls in a
     // row only reconcile once, at the matching `EndBatch()`, rather than once per
@@ -230,6 +238,14 @@ public:
     void            RegisterRoot(Umbra::IWidget* Root);
     Umbra::IWidget* GetRoot() const;
 
+    // The whole-app reconcile-target registry (docs/
+    // iris_hot_reload_reconciliation_decision.md §2) — separate from RegisterRoot/GetRoot
+    // above, not a replacement for them (see ReloadTarget.h's own doc comment for why).
+    // Null until an app that actually wants reload calls RegisterReloadTarget; ordinary
+    // Stage 2/3 apps never touch this and pay nothing for it.
+    void          RegisterReloadTarget(std::unique_ptr<ReloadTarget> Target);
+    ReloadTarget* GetReloadTarget() const;
+
 private:
     IrisRuntime() = default;
 
@@ -237,6 +253,7 @@ private:
     std::vector<SlotState*>         DirtySlots_;
     int                              BatchDepth_{0};
     std::vector<ComponentInstance*> ComponentInstanceStack_;
+    std::unique_ptr<ReloadTarget>    ReloadTarget_;
     Umbra::IWidget*                 Root_{nullptr};
 };
 
@@ -268,5 +285,15 @@ void RegisterRoot(Umbra::IWidget* Root);
 // (docs/archive/iris_next_steps_resolved.md, "Live-widget root registry, for Lustre's
 // hot-reload").
 Umbra::IWidget* GetRoot();
+
+// Registers `Target` as the whole application's reload registry
+// (`IrisRuntime::RegisterReloadTarget`, docs/iris_hot_reload_reconciliation_decision.md
+// §2) — callable by any consuming app that wants hot reload, right after it builds its
+// initial tree. A later call replaces the previous target, same convention as
+// `RegisterRoot`.
+void RegisterReloadTarget(std::unique_ptr<ReloadTarget> Target);
+
+// The most recently registered reload target, or nullptr if none has been.
+ReloadTarget* GetReloadTarget();
 
 } // namespace iris

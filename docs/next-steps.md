@@ -106,13 +106,23 @@ compared to the above, but real — a diagnostics story for this is future work.
   `iris_compile_directory` answers "as a build step, via CMake" for a compiled pipeline, but an
   editor/LSP-triggered regeneration for a real hot-reload workflow remains an open question.
 - **Real hot-reload of component logic itself** (state, structure, handlers, not just Lustre's
-  narrower style-only reload) is a separate, larger, deliberately-deferred design question —
-  sized against the real code (not designed) in `docs/iris_interpreted_host_hot_reload_gap.md`.
-  nyx-proto's `decision-log.md` §9.1 (2026-08-06) has since settled the target shape on its
-  side (a three-tier model, not unconditional full remount) — `docs/
-  iris_hot_reload_alignment_decision.md` works out what that implies here. Still blocked on
-  the Chaos runtime above (no real `NyxEvaluator` yet), and on the whole-app reconcile-target
-  registry §2 of that new doc names as a concrete prerequisite, not just a someday item.
+  narrower style-only reload) — sized against the real code in `docs/
+  iris_interpreted_host_hot_reload_gap.md`, then given a concrete design in `docs/
+  iris_hot_reload_reconciliation_decision.md` (2026-08-06) following nyx-proto's own tiered
+  `decision-log.md` §9.1. **The two core primitives that design named are now implemented and
+  tested** (`test_iris`, `ComponentInstance`/`ReloadTarget` groups): `iris::
+  ReloadComponentInstance`/`ComponentInstance::BeginReloadReplay`/`EndReloadReplay`
+  (`ComponentInstance.h`) replay a render body against an already-mounted instance, reusing
+  `@signal`/`IRIS_SIGNAL` storage by declaration order and reporting tier 1
+  (`ComponentReloadTier::Unchanged`) vs. tier 2 (`SignalLayoutChanged`) as a structural side
+  effect; `iris::ReloadTarget` (`ReloadTarget.h`/`.cpp`, registered via `IrisRuntime::
+  RegisterReloadTarget`/`GetReloadTarget`, alongside not instead of `RegisterRoot`/`GetRoot`)
+  is the owning root-widget-plus-prior-tree registry `ReconcileWidget` needs but nothing held
+  before. Tier 3 needed no new code — `ReconcileWidget`'s existing tag/key-mismatch fallback
+  already is it. **Still not built:** the actual reload driver — blocked on the Chaos runtime
+  above (no real `NyxEvaluator` yet) — and the component-invocation lockstep matching a driver
+  would use to find which `ComponentInstance` to replay at each position (`docs/
+  iris_hot_reload_reconciliation_decision.md` §4, deliberately left external, single caller).
 
 ### Explicitly not requested
 

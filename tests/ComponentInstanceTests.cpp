@@ -3,6 +3,7 @@
 #include "Iris/ComponentInstance.h"
 
 #include <functional>
+#include <string>
 
 DESCRIBE("ComponentInstance", {
     // The exact shape of the bug docs/iris_signal_lifetime_decision.md fixes: a function
@@ -72,5 +73,104 @@ DESCRIBE("ComponentInstance", {
         (void)Node;
         SetIt(99);
         ASSERT_EQUAL(GetIt(), 99);
+    });
+
+    // docs/iris_hot_reload_reconciliation_decision.md §1: ReloadComponentInstance
+    // replays a render body against an already-mounted ComponentInstance instead of
+    // allocating a fresh one -- these tests cover the tier-1/tier-2 classification that
+    // falls out of that replay.
+    IT("a tier-1 replay preserves the signal's current value, not its InitExpr", {
+        std::function<void(int)> SetIt;
+        std::function<int()>      GetIt;
+        Iris::Component Node = iris::MountComponentInstance([&]() -> Iris::Component {
+            IRIS_SIGNAL(int, Count, 1);
+            SetIt = [&](int V) { Count.set(V); };
+            return Iris::Component(nullptr);
+        });
+        SetIt(99); // simulates runtime state accrued before the reload fires
+
+        Iris::Component Reloaded = iris::ReloadComponentInstance(Node.Instance, [&]() -> Iris::Component {
+            IRIS_SIGNAL(int, Count, 1); // same declaration -- InitExpr is ignored on replay
+            GetIt = [&]() { return Count.get(); };
+            return Iris::Component(nullptr);
+        });
+
+        REQUIRE_TRUE(Reloaded.ReloadTier.has_value());
+        ASSERT_TRUE(*Reloaded.ReloadTier == iris::ComponentReloadTier::Unchanged);
+        ASSERT_EQUAL(GetIt(), 99);                    // not reset to InitExpr's 1
+        ASSERT_TRUE(Reloaded.Instance == Node.Instance); // same ComponentInstance carried forward
+    });
+
+    IT("a tier-1 replay keeps the same Signal object identity -- pre-reload closures stay valid", {
+        std::function<int()> OldGetter;
+        Iris::Component Node = iris::MountComponentInstance([&]() -> Iris::Component {
+            IRIS_SIGNAL(int, Count, 1);
+            OldGetter = [&]() { return Count.get(); }; // captured before any reload
+            return Iris::Component(nullptr);
+        });
+
+        std::function<void(int)> NewSetter;
+        Iris::Component Reloaded = iris::ReloadComponentInstance(Node.Instance, [&]() -> Iris::Component {
+            IRIS_SIGNAL(int, Count, 1);
+            NewSetter = [&](int V) { Count.set(V); };
+            return Iris::Component(nullptr);
+        });
+        (void)Reloaded;
+
+        NewSetter(7); // set via the NEW closure's reference
+        ASSERT_EQUAL(OldGetter(), 7); // the OLD closure reads the same, updated storage
+    });
+
+    IT("a replay that declares a new signal is tier-2 (SignalLayoutChanged)", {
+        Iris::Component Node = iris::MountComponentInstance([&]() -> Iris::Component {
+            IRIS_SIGNAL(int, A, 1);
+            return Iris::Component(nullptr);
+        });
+
+        std::function<int()> GetB;
+        Iris::Component Reloaded = iris::ReloadComponentInstance(Node.Instance, [&]() -> Iris::Component {
+            IRIS_SIGNAL(int, A, 1);
+            IRIS_SIGNAL(int, B, 2); // new field this run
+            GetB = [&]() { return B.get(); };
+            return Iris::Component(nullptr);
+        });
+
+        REQUIRE_TRUE(Reloaded.ReloadTier.has_value());
+        ASSERT_TRUE(*Reloaded.ReloadTier == iris::ComponentReloadTier::SignalLayoutChanged);
+        ASSERT_EQUAL(GetB(), 2); // a new field initializes to its declared default
+    });
+
+    IT("a replay that declares fewer signals than before is tier-2 (SignalLayoutChanged)", {
+        Iris::Component Node = iris::MountComponentInstance([&]() -> Iris::Component {
+            IRIS_SIGNAL(int, A, 1);
+            IRIS_SIGNAL(int, B, 2);
+            return Iris::Component(nullptr);
+        });
+
+        Iris::Component Reloaded = iris::ReloadComponentInstance(Node.Instance, [&]() -> Iris::Component {
+            IRIS_SIGNAL(int, A, 1); // B no longer declared this run -- a removed field
+            return Iris::Component(nullptr);
+        });
+
+        REQUIRE_TRUE(Reloaded.ReloadTier.has_value());
+        ASSERT_TRUE(*Reloaded.ReloadTier == iris::ComponentReloadTier::SignalLayoutChanged);
+    });
+
+    IT("a replay whose signal changed type at the same position is tier-2, with a fresh value", {
+        Iris::Component Node = iris::MountComponentInstance([&]() -> Iris::Component {
+            IRIS_SIGNAL(int, Count, 1);
+            return Iris::Component(nullptr);
+        });
+
+        std::function<std::string()> GetIt;
+        Iris::Component Reloaded = iris::ReloadComponentInstance(Node.Instance, [&]() -> Iris::Component {
+            IRIS_SIGNAL(std::string, Count, "hello"); // same position, different T
+            GetIt = [&]() { return Count.get(); };
+            return Iris::Component(nullptr);
+        });
+
+        REQUIRE_TRUE(Reloaded.ReloadTier.has_value());
+        ASSERT_TRUE(*Reloaded.ReloadTier == iris::ComponentReloadTier::SignalLayoutChanged);
+        ASSERT_EQUAL(GetIt(), "hello"); // no compatible old value to carry forward -- uses InitExpr
     });
 });

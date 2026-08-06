@@ -1,5 +1,6 @@
 #include "Iris/SlotRuntime.h"
 #include "Iris/Reconciler.h"
+#include "Iris/ReloadTarget.h"
 #include "Iris/SlotResolution.h"
 
 #include <algorithm>
@@ -261,10 +262,25 @@ void IrisRuntime::RegisterRoot(Umbra::IWidget* Root) { Root_ = Root; }
 
 Umbra::IWidget* IrisRuntime::GetRoot() const { return Root_; }
 
+// Defined here, not defaulted in the header, so ~unique_ptr<ReloadTarget> runs where
+// ReloadTarget.h (included above) makes it a complete type -- see the declaration's own
+// doc comment in SlotRuntime.h.
+IrisRuntime::~IrisRuntime() = default;
+
+void IrisRuntime::RegisterReloadTarget(std::unique_ptr<ReloadTarget> Target) { ReloadTarget_ = std::move(Target); }
+
+ReloadTarget* IrisRuntime::GetReloadTarget() const { return ReloadTarget_.get(); }
+
 void Tick() { IrisRuntime::Instance().ReconcileDirtySlots(); }
 
 void RegisterRoot(Umbra::IWidget* Root) { IrisRuntime::Instance().RegisterRoot(Root); }
 
 Umbra::IWidget* GetRoot() { return IrisRuntime::Instance().GetRoot(); }
+
+void RegisterReloadTarget(std::unique_ptr<ReloadTarget> Target) {
+    IrisRuntime::Instance().RegisterReloadTarget(std::move(Target));
+}
+
+ReloadTarget* GetReloadTarget() { return IrisRuntime::Instance().GetReloadTarget(); }
 
 } // namespace iris

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Iris/ComponentReloadTier.h"
 #include "Iris/IrisElementTag.h"
 #include "Iris/IrisProps.h"
 
@@ -80,6 +81,15 @@ struct IrisNativeBuilder;
 // for diffing) is what keeps a component's signals alive for exactly as long as it
 // stays in the tree, and frees them the moment nothing retains it any longer — no
 // separate "on unmount" hook needed anywhere else.
+//
+// `ReloadTier` (docs/iris_hot_reload_reconciliation_decision.md §1) is set only by
+// `iris::ReloadComponentInstance` — `nullopt` for every ordinary `MountComponentInstance`/
+// `Mount` call, same "present only where relevant" convention `Key`/`Ref` already use.
+// Reports whether replaying this component's render body against its prior
+// `ComponentInstance` preserved every `@signal`/`IRIS_SIGNAL` unchanged (`Unchanged`) or
+// found one added, removed, or type-changed (`SignalLayoutChanged`) — the tier-1/tier-2
+// distinction a reload driver needs, computed structurally rather than predicted ahead of
+// time from source text.
 struct Component {
     IrisElementTag                    Tag{IrisElementTag::Frame};
     IrisProps                         Props;
@@ -89,6 +99,7 @@ struct Component {
     std::optional<IrisPropValue>      Key;
     std::optional<IrisPropValue>      Ref;
     std::shared_ptr<iris::ComponentInstance> Instance;
+    std::optional<iris::ComponentReloadTier> ReloadTier;
 
     Component() = default;
     Component(IrisElementTag Tag, IrisProps Props, std::vector<Component> Children,
