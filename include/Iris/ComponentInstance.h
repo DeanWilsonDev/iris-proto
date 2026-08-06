@@ -3,12 +3,23 @@
 #include "Iris/Signal.h"
 #include "Iris/SlotRuntime.h"
 
+#include "runtime/value.hpp"
+
 #include <cassert>
+#include <cstddef>
 #include <memory>
 #include <utility>
 #include <vector>
 
 namespace iris {
+
+// Opaque handle to one `nyx::runtime::Value`-typed signal registered via
+// `ComponentInstance::RegisterSignal` — the Nyx `@signal` decorator's
+// counterpart to a C++ `IRIS_SIGNAL`'s `Signal<T>&` reference
+// (nyx-proto's docs/nyx-scripting-language/decision-log.md §6.7). Just an
+// index into `ComponentInstance::NyxSignals_`; meaningless outside the
+// `ComponentInstance` that produced it.
+using SignalId = std::size_t;
 
 namespace Detail {
 
@@ -58,8 +69,47 @@ public:
         return Ref;
     }
 
+    // The `@signal` Nyx decorator's counterpart to `AllocateSignal<T>` above —
+    // type-erased on the `nyx::runtime::Value` side rather than templated,
+    // since the Nyx interpreter only ever works in `Value`, never a concrete
+    // C++ `T` (nyx-proto's docs/nyx-scripting-language/decision-log.md §6.7).
+    // Storage is heap-stable (one `unique_ptr<Value>` per signal, same
+    // reasoning as `Signals_` above) so the `SignalId` returned here, and the
+    // `const void*` identity `GetSignal`/`SetSignal` hand to
+    // `TrackSignalDependency`/`NotifySignalDependents`, stay valid for this
+    // instance's whole lifetime regardless of how many further signals get
+    // registered afterward and reallocate `NyxSignals_` itself.
+    SignalId RegisterSignal(const nyx::runtime::Value& InitialValue) {
+        NyxSignals_.push_back(std::make_unique<nyx::runtime::Value>(InitialValue));
+        return NyxSignals_.size() - 1;
+    }
+
+    // The Nyx-side counterpart to `Signal<T>::get()`: registers whichever
+    // `<Slot>` is currently being (re-)invoked as a dependent of this signal
+    // (same ambient active-slot tracking, `TrackSignalDependency` in
+    // `SlotRuntime.h`), then returns the current value.
+    const nyx::runtime::Value& GetSignal(SignalId Id) const {
+        nyx::runtime::Value* Storage = NyxSignals_.at(Id).get();
+        TrackSignalDependency(Storage);
+        return *Storage;
+    }
+
+    // The Nyx-side counterpart to `Signal<T>::set()`: updates storage, then
+    // marks every dependent `<Slot>` dirty (`NotifySignalDependents`) — never
+    // reconciles synchronously, exactly like `Signal<T>::set()` (reconciling
+    // only ever happens inside `iris::Tick()`). Installed as the `onWrite`
+    // callback the `@signal` decorator attaches via `NyxVariable::OnWrite`,
+    // so this fires on every subsequent Nyx-script assignment to the
+    // decorated variable.
+    void SetSignal(SignalId Id, const nyx::runtime::Value& NewValue) {
+        nyx::runtime::Value* Storage = NyxSignals_.at(Id).get();
+        *Storage = NewValue;
+        NotifySignalDependents(Storage);
+    }
+
 private:
     std::vector<std::unique_ptr<Detail::SignalStorageBase>> Signals_;
+    std::vector<std::unique_ptr<nyx::runtime::Value>>       NyxSignals_;
 };
 
 namespace Detail {

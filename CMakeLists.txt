@@ -65,7 +65,61 @@ add_library(nyx-lexer STATIC
     libs/nyx-proto/src/lexer/lexer.cpp
     libs/nyx-proto/src/lexer/token.cpp)
 target_include_directories(nyx-lexer PUBLIC libs/nyx-proto/src)
+# Built at this project's own C++23, *not* nyx-proto's own required C++26
+# (its CLAUDE.md/CMakeLists): nyx-runtime below shares nyx::runtime::Value
+# (a std::variant of libc++ container types) directly with `iris`/`test_iris`,
+# both C++23 — libc++ versions std::variant/std::string's ABI by language
+# dialect (visible as an `[abi:...]` symbol tag), so a Value built under
+# C++26 and read under C++23 is a genuine binary incompatibility, not just a
+# style mismatch. Confirmed the hard way: linking this at C++26 alongside a
+# C++23 `iris` corrupted memory the moment a test read a Value round-tripped
+# through nyx-runtime's Interpreter. nyx-lexer's own Token has no such type
+# crossing the boundary (plain struct/enum + std::string, which happens to be
+# ABI-stable across 23/26 in practice) so this was never an issue before
+# nyx-runtime started sharing Value across it — kept at C++23 here anyway so
+# nothing in this dependency chain risks the same mismatch again. Confirmed
+# these two translation units compile fine at C++23 (nothing here needs a
+# C++26-only language feature).
 set_target_properties(nyx-lexer PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON)
+
+# ---------------------------------------------------------------------------
+# nyx-runtime — the additional nyx-proto surface the `@signal` decorator
+# (Iris/NyxSignalDecorator.h) needs beyond nyx-lexer above: Parser, the
+# Value/Environment runtime, and the Interpreter (whose RegisterDecorator
+# dispatch is the whole extension point `@signal` is built on) —
+# nyx-proto's docs/nyx-scripting-language/decision-log.md §6.7. Same
+# collision to avoid as nyx-lexer's own comment describes, and the same fix:
+# hand-pick just the translation units that don't touch Firefly/Amanuensis/
+# Cimmerian, rather than add_subdirectory(libs/nyx-proto)'s whole tree.
+# Verified by inspection that parser.cpp, runtime/value.cpp,
+# runtime/environment.cpp, interpreter/interpreter.cpp, and
+# interpreter/decl-registry.cpp have zero dependency on the rest of
+# nyx-proto — unlike host/logging.cpp and host/stub-types.cpp (both Firefly-
+# touching, and both unneeded here: `@signal` never calls RegisterPharosStubs
+# or the Log stub type), which are deliberately excluded. host/nyx-runtime.hpp
+# itself (NyxRuntime, DecoratorBuilder) is header-only, so it needs no
+# translation unit of its own. Built at this project's own C++23, not
+# nyx-proto's own required C++26 -- see nyx-lexer's own CXX_STANDARD comment
+# above for why: this target is exactly where that ABI mismatch was found,
+# since ComponentInstance.h/NyxSignalDecorator.h pass nyx::runtime::Value
+# across the nyx-runtime/iris boundary directly. Publicly links nyx-lexer so
+# consumers of this target automatically get lexer.cpp/token.cpp linked in
+# too, rather than duplicating them here.
+# ---------------------------------------------------------------------------
+add_library(nyx-runtime STATIC
+    libs/nyx-proto/src/parser/parser.cpp
+    libs/nyx-proto/src/runtime/value.cpp
+    libs/nyx-proto/src/runtime/environment.cpp
+    libs/nyx-proto/src/interpreter/interpreter.cpp
+    libs/nyx-proto/src/interpreter/decl-registry.cpp)
+target_include_directories(nyx-runtime PUBLIC libs/nyx-proto/src)
+target_link_libraries(nyx-runtime PUBLIC nyx-lexer)
+set_target_properties(nyx-runtime PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON)
+set_target_properties(nyx-runtime PROPERTIES
     CXX_STANDARD 26
     CXX_STANDARD_REQUIRED ON)
 
@@ -90,15 +144,21 @@ add_library(iris STATIC
     src/Iris/Driver.cpp
     src/Iris/SlotRuntime.cpp
     src/Iris/Reconciler.cpp
-    src/Iris/SlotResolution.cpp)
+    src/Iris/SlotResolution.cpp
+    src/Iris/NyxSignalDecorator.cpp)
 
 target_include_directories(iris PUBLIC include)
 target_compile_features(iris PUBLIC cxx_std_23)
 target_link_libraries(iris PUBLIC amanuensis umbra_interfaces)
-# nyx-lexer stays PRIVATE: NyxTokenizer.h exposes no nyx:: types in its own
-# public interface (only Iris::Token, via IHostLanguageTokenizer), so
-# consumers of `iris` never need libs/nyx-proto/src on their include path.
-target_link_libraries(iris PRIVATE nyx-lexer)
+# nyx-runtime PUBLIC (not PRIVATE, unlike the plain-nyx-lexer link this
+# replaced): ComponentInstance.h's RegisterSignal/GetSignal/SetSignal and
+# NyxSignalDecorator.h's RegisterSignalDecorator both name nyx::runtime::Value
+# / nyx::host::NyxRuntime in their own public signatures (decision-log.md
+# §6.7), so consumers of `iris` that touch either header need
+# libs/nyx-proto/src on their include path too. nyx-runtime already links
+# nyx-lexer PUBLIC, so NyxTokenizer.cpp's own lexer.hpp include keeps working
+# through this one link.
+target_link_libraries(iris PUBLIC nyx-runtime)
 
 # ---------------------------------------------------------------------------
 # iris_cc — the preprocessor CLI (tools/IrisCc.cpp), wrapping Iris::CompileFile
@@ -169,6 +229,7 @@ add_executable(test_iris
     tests/ReconcilerTests.cpp
     tests/SlotRuntimeTests.cpp
     tests/ComponentInstanceTests.cpp
+    tests/NyxSignalDecoratorTests.cpp
     tests/SlotResolutionTests.cpp
     tests/SlotSiblingGroupTests.cpp)
 
