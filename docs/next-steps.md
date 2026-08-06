@@ -1084,3 +1084,144 @@ already-documented `returncount` whitespace-collapse defect was found. All three
   external repos/docs this repo doesn't own; the terminology rule is scoped to this repo's own
   code and comments only, per the new CLAUDE.md wording itself.
 - Building the Chaos runtime — out of scope for this pass, as every prior entry already said.
+
+### Follow-up landed (2026-08-06): the `returncount` whitespace-collapse defect — already fixed, now covered by a regression test
+
+> **Status:** Resolved. This closes the one remaining loose end this entry's own history kept
+> re-flagging as deferred ("Explicitly not requested" in three separate follow-ups above) —
+> turns out it wasn't actually still broken, just never re-verified after the fix that
+> incidentally repaired it.
+
+#### What was found
+
+The original repro in this entry's "What was found" section (above) reported
+`Iris::MakeSlotCallable(()->{returncount;})` — `return` and `count` fused with no space — and
+attributed it to `NyxTokenizer`'s coarse `Identifier`-collapsing losing the source gap when
+escape-hatch text gets reconstructed token-by-token. Every follow-up after that (the IR
+serializer pass, the CMake-naming pass) explicitly carried this forward as "still real, still
+separate, still not this pass's ask" without re-checking it against the current code.
+
+Re-running the same `() -> { return count; }` repro through the real `iris_cc` (this repo's
+current `b2e2fa7`) shows it already comes back correct — `"source": "() -> { return count; }"`
+in the emitted `.iris.ir`, space intact. The fix was an unintended side effect of the *other*
+bug fixed in the same pass that introduced the original repro's own follow-up (`83e5a46`,
+"fix `NyxTokenizer` parsing bugs it surfaced"): `RenderBlockParser::Advance()` gained a
+tokenizer-agnostic whitespace fallback (checking the raw source byte immediately before a
+token's own start, rather than trusting the tokenizer to have surfaced whitespace as its own
+token) to fix a *different* symptom — `<Tag>` runs inside a `.irisx` `!{ }` body never being
+recognized as JSX at all. That same fallback also feeds `ParseJsxEscapeHatch`'s
+`AppendText(Text, PrecededByWhitespace)` reconstruction, which is what the `returncount` bug
+was actually rooted in (`ParseJsxEscapeHatch`, not `Codegen.cpp`'s `EmitEscapeHatchExpression`
+as the original repro guessed — that function just returns `Value.Text` verbatim for a
+non-JSX escape hatch, and `Value.Text` itself is byte-sliced straight from source since the
+same commit's `LocationToOffset`-based `ParseEscapeHatch` rewrite, never token-concatenated at
+all). So the JSX-detection fix and the whitespace-collapse fix were the same fix, just never
+connected back to each other in this doc.
+
+#### What landed
+
+- One new regression test, `tests/RenderBlockParserTests.cpp`'s "a .irisx `!{ }` body
+  preserves whitespace between adjacent identifiers" — parses the exact
+  `() -> { return count; }` repro as `.irisx` and asserts the reconstructed `JsxSegment` text
+  contains `"return count"` (not `"returncount"`). Nothing else changed; there was no code fix
+  to make here, only verification and a test to keep it that way. Full `test_iris` suite
+  (163/163, was 162) passes.
+
+#### Explicitly not requested
+
+- Re-litigating whether `ParseJsxEscapeHatch`'s whitespace reconstruction is byte-exact in
+  general — it isn't, and was never meant to be (its own doc comment: "token-for-token, not
+  byte-for-byte... whitespace is normalized," e.g. multiple spaces/newlines between tokens
+  still collapse to one space). Only the specific *zero-gap* regression this entry originally
+  flagged was in question, and it's the one now covered.
+
+### Follow-up landed (2026-08-06): `ElementChild` now carries its own `SourceLocation` for a literal-text child
+
+> **Status:** Resolved. Closes the smaller, explicitly-deferred gap the IR-serializer follow-up
+> above left open ("`ElementChild` itself carries no `SourceLocation` of its own for its `Text`
+> case today... out of scope for a serializer-only pass").
+
+#### What landed
+
+- `ElementChild` (`include/Iris/ElementNode.h`) gained a `SourceLocation Location` field,
+  meaningful only for `Kind == Text` (an `Element`/`EscapeHatch` child already carries its own
+  position via `Element->Location`/`EscapeHatch->Location`, so this would just duplicate it for
+  those two kinds). `ElementChild::MakeText` now takes a `SourceLocation` parameter alongside
+  its existing `std::string`.
+- `RenderBlockParser::ParseChildren`'s `FlushText` closure (the sole production call site)
+  tracks a new `TextStartLocation`, set to `Current_.Location` for the first token of each text
+  run — the same token whose `Text` starts the (pre-`Trim()`) buffer, so it's the run's real
+  start position, not an approximation.
+- `IrisIr.cpp`'s `SerializeElementChild` now passes `Child.Location` instead of falling back to
+  the parent element's own `Node.Location`. `LiteralValue` gained a `PadForQuotes` parameter
+  (default `true`, matching its existing quoted-`StringLiteral`-prop callers unchanged) so the
+  text-child call site (`PadForQuotes = false`) doesn't over-count a `length` by the two
+  quote-characters real source never had for this case.
+- Covered by a new `tests/IrisIrTests.cpp` case ("a literal text child's location is its own,
+  not the parent element's") asserting the emitted `location.{line,column,length}` matches
+  `"Hello"`'s own real position in `<Text>Hello</Text>`, not `<Text`'s. Full `test_iris` suite
+  (164/164, was 163) passes; `iris_lsp_tests` (51/51) unaffected (no LSP call site constructs
+  `ElementChild` directly).
+
+#### Explicitly not requested
+
+- `chaos-ir-spec.md`'s own schema gap (no dedicated IR node shape for a text child at all,
+  `LiteralValue`'s "literal" reuse being the closest fit available) — unchanged, still worth
+  raising with whoever owns that spec next, not something to resolve unilaterally in this repo.
+- Byte-exact `length` for a text child whose source had internal multi-space/newline runs —
+  `Trim()`/`AppendText`'s existing whitespace-collapsing behavior (a separate, deliberate,
+  documented normalization, not a bug) means `Text.size()` can still be shorter than the source
+  span it came from; only the *start* position was the gap this entry closed.
+
+### Follow-up landed (2026-08-06): the two `chaos-ir-spec.md` schema gaps closed — `ElementNode.key`/`ref` fields, and a dedicated `TextNode` kind
+
+> **Status:** Resolved. Closes the two schema gaps the IR-serializer follow-up's own "What's
+> still open" list flagged as belonging to `chaos-ir-spec.md` rather than this repo ("worth
+> raising with whoever owns `chaos-ir-spec.md` next rather than treated as settled by this
+> implementation choice alone"; "not something to resolve unilaterally in this repo"). Raised
+> and resolved in the same pass, since `chaos-ir-spec.md` (`fearless-hq`) and `iris-proto` are
+> both this project's own repos.
+
+#### What landed
+
+- `chaos-ir-spec.md` §3.5 (`ElementNode`) gained dedicated `key`/`ref` fields, each sharing
+  `PropNode`'s own `LiteralValue | NyxExpressionNode` value shape (§3.6) rather than a plain
+  string — `key`/`ref` can be a dynamic Nyx expression in source (`key={rowId}`) exactly like
+  an ordinary prop, so a plain-string field would have been narrower than what
+  `RenderBlockParser` already accepts for either. Omitted entirely (not written as `null`)
+  when the element has no `key`/`ref`.
+- `chaos-ir-spec.md` gained a new §3.5a `TextNode` (`kind: "text"`), and §3.5's `children`
+  union grew from `(ElementNode | NyxExpressionNode)[]` to
+  `(ElementNode | NyxExpressionNode | TextNode)[]` — a dedicated child-*position* node kind
+  for a literal-text child (`<Text>Hello</Text>`'s `Hello`), distinct from a `PropNode`'s own
+  `"literal"` value node, which is a prop's *value*, not a slot in `children`.
+- `IrisIr.cpp`'s two workarounds these fields replaced are both gone. `SerializeSyntheticProp`
+  (which pushed `key`/`ref` back into `props` as synthetic entries) is deleted —
+  `SerializeElement` now writes `Node.Key`/`Node.Ref` (when present) as their own `"key"`/
+  `"ref"` object fields via the existing `SerializePropValue`, and `props` no longer ever
+  contains them. The text-child reuse of `LiteralValue` (via a `PadForQuotes` flag that
+  existed solely to suppress quote-padding for that one reuse) is replaced by a new dedicated
+  `TextNodeValue` helper emitting `"kind": "text"`; `LiteralValue` itself lost the now-unused
+  `PadForQuotes` parameter, since its one remaining caller (a `StringLiteral` `PropValue`)
+  always wants the padding.
+- Verified end-to-end against the real `iris_cc`: a
+  `<Frame key="row-1" ref="trigger"><Text>Hello</Text></Frame>` probe now produces `key`/`ref`
+  as sibling fields of `tag`/`props`/`children` (with `props` itself empty), and the text
+  child as `{"kind": "text", "value": "Hello", ...}` rather than `{"kind": "literal", ...}`.
+- Covered by updated `tests/IrisIrTests.cpp` cases: the existing key/ref test now asserts they
+  land on the element's own `key`/`ref` fields (and that `props` stays empty) rather than as
+  synthetic prop entries; a new case asserts an unkeyed/unref'd element omits both fields
+  entirely rather than writing `null`; the two literal-text-child tests now assert
+  `"kind": "text"` instead of `"kind": "literal"`. Full `test_iris` suite (165/165, was 164)
+  and `iris_lsp_tests` (51/51) pass.
+
+#### Explicitly not requested
+
+- Any change to the `PropNode`/`NyxExpressionNode` shapes themselves (§3.6/§3.7) — `key`/`ref`
+  reuse them exactly as-is; no new value-node kind was needed for that half of this entry.
+- Updating `chaos-ir-spec.md` §4's own "Complete Example" walkthrough to include a `key`/
+  `ref`'d element or a text child — that worked example's source `.chaos` file has neither
+  today; left as-is rather than fabricating one, since §3.5/§3.5a's own inline JSON snippets
+  already document both new shapes on their own.
+- Building any part of the not-yet-scoped Chaos runtime (the IR *consumer*) — unchanged,
+  still out of scope, as every prior follow-up in this section already said.

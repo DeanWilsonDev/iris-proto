@@ -82,16 +82,27 @@ Amanuensis::Value LocationValue(const SourceLocation& Loc, std::size_t Length) {
     return Node;
 }
 
-// chaos-ir-spec.md §3.6's "literal" value node -- also reused (see SerializeElementChild
-// below) for a plain-text element child, which the spec's own ElementNode.children union
-// (§3.5: `(ElementNode | NyxExpressionNode)[]`) has no dedicated representation for.
+// chaos-ir-spec.md §3.6's "literal" value node, for a PropValue (including a `key`/`ref`
+// value, §3.5) whose Kind is StringLiteral. Its Text has its surrounding quotes already
+// stripped (ElementNode.h's own doc comment), so Length pads them back in as a documented
+// approximation, not a byte-exact scan.
 Amanuensis::Value LiteralValue(const std::string& Text, const SourceLocation& Location) {
     Amanuensis::Value Node = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Node, "kind", StringValue("literal"));
     Amanuensis::Json::Insert(Node, "value", StringValue(Text));
-    // +2: the surrounding quotes ElementNode.h's own PropValue::Text doc comment says are
-    // already stripped from Text -- an approximation, not a scan of the original source.
     Amanuensis::Json::Insert(Node, "location", LocationValue(Location, Text.size() + 2));
+    return Node;
+}
+
+// chaos-ir-spec.md §3.5a's "text" node, for a literal-text element child (`<Text>Hello
+// </Text>`'s `Hello`) -- a child *position*, distinct from a PropNode's own "literal" value
+// (LiteralValue above). `Location` is that text run's own real start position, with no
+// surrounding-quote padding (a text child has none in source).
+Amanuensis::Value TextNodeValue(const std::string& Text, const SourceLocation& Location) {
+    Amanuensis::Value Node = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(Node, "kind", StringValue("text"));
+    Amanuensis::Json::Insert(Node, "value", StringValue(Text));
+    Amanuensis::Json::Insert(Node, "location", LocationValue(Location, Text.size()));
     return Node;
 }
 
@@ -151,37 +162,12 @@ Amanuensis::Value SerializeProp(const Prop& P) {
     return Node;
 }
 
-// Same "prop" node shape as SerializeProp, for `key`/`ref` -- pulled out of ElementNode::Props
-// into their own dedicated fields by RenderBlockParser (ElementNode.h's own doc comment: `key`
-// is "stripped by the preprocessor before codegen and never reaches the backend"; `ref` the
-// same). chaos-ir-spec.md §3.5's ElementNode schema has no dedicated key/ref fields of its
-// own -- only `tag`/`props`/`children`/`location` -- so round-tripping them through the IR
-// (needed by the not-yet-built Chaos runtime's own reconciler, which needs `key` for list-diff
-// identity the same way this repo's own Reconciler.cpp does) means putting them back into
-// `props` as ordinary entries, the most spec-faithful place available rather than inventing a
-// new node field chaos-ir-spec.md doesn't define. No separate name-location exists for either
-// (only the value's own), so PropValue::Location doubles as the synthetic prop's own location.
-Amanuensis::Value SerializeSyntheticProp(const std::string& Name, const PropValue& Value) {
-    Amanuensis::Value Node = Amanuensis::Json::MakeObject();
-    Amanuensis::Json::Insert(Node, "kind", StringValue("prop"));
-    Amanuensis::Json::Insert(Node, "name", StringValue(Name));
-    Amanuensis::Json::Insert(Node, "value", SerializePropValue(Value));
-    Amanuensis::Json::Insert(Node, "location", LocationValue(Value.Location, Name.size()));
-    return Node;
-}
-
-// A child position inside an element. ElementChildKind::Element/EscapeHatch map directly
-// onto chaos-ir-spec.md §3.5's `(ElementNode | NyxExpressionNode)[]` children union.
-// ElementChildKind::Text (a literal-text child, `<Text>`/`<Inline>`'s own allowance --
-// docs/iris_core_spec.md) has no representation in that union at all -- a real gap in
-// chaos-ir-spec.md's own schema, not something to invent a new IR node kind for
-// unilaterally here. Reusing the already-specified "literal" value-node shape (LiteralValue
-// above) is the minimal, most spec-consistent way to plug it. `ElementChild` itself carries
-// no SourceLocation for a Text child (ElementNode.h), so `ParentLocation` (the owning
-// element's own Location) is the best available fallback, not this child's own real
-// position -- flagged in docs/next-steps.md as worth raising with whoever owns
-// chaos-ir-spec.md next, not resolved unilaterally here.
-Amanuensis::Value SerializeElementChild(const ElementChild& Child, const SourceLocation& ParentLocation) {
+// A child position inside an element -- chaos-ir-spec.md §3.5's
+// `(ElementNode | NyxExpressionNode | TextNode)[]` children union, one arm per
+// ElementChildKind. `Child.Location` is that text run's own real start position
+// (ElementNode.h's `ElementChild::Location`, threaded through by
+// `RenderBlockParser::ParseChildren`).
+Amanuensis::Value SerializeElementChild(const ElementChild& Child) {
     switch (Child.Kind) {
         case ElementChildKind::Element:
             return SerializeElement(*Child.Element);
@@ -189,34 +175,37 @@ Amanuensis::Value SerializeElementChild(const ElementChild& Child, const SourceL
             return SerializePropValue(*Child.EscapeHatch);
         case ElementChildKind::Text:
         default:
-            return LiteralValue(Child.Text, ParentLocation);
+            return TextNodeValue(Child.Text, Child.Location);
     }
 }
 
 // chaos-ir-spec.md §3.5's "element" node. `Node.Location` is where the opening tag starts
 // (RenderBlockParser's own convention); Length = Tag's own length matches the spec's own
 // worked example exactly (`"Frame"` -> `length: 5`). `ClosingTagLocation` carries no IR
-// meaning (not part of §3.5's schema) and is deliberately not serialized.
+// meaning (not part of §3.5's schema) and is deliberately not serialized. `key`/`ref`
+// (§3.5) are each a dedicated field sharing PropNode's own value shape (SerializePropValue,
+// since either can be a dynamic Nyx expression, not just a string literal) -- omitted
+// entirely, not written as `null`, when the element carries no key/ref.
 Amanuensis::Value SerializeElement(const ElementNode& Node) {
     Amanuensis::Value Obj = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Obj, "kind", StringValue("element"));
     Amanuensis::Json::Insert(Obj, "tag", StringValue(Node.Tag));
+    if (Node.Key.has_value()) {
+        Amanuensis::Json::Insert(Obj, "key", SerializePropValue(*Node.Key));
+    }
+    if (Node.Ref.has_value()) {
+        Amanuensis::Json::Insert(Obj, "ref", SerializePropValue(*Node.Ref));
+    }
 
     Amanuensis::Value Props = Amanuensis::Json::MakeArray();
     for (const Prop& P : Node.Props) {
         Amanuensis::Json::PushBack(Props, SerializeProp(P));
     }
-    if (Node.Key.has_value()) {
-        Amanuensis::Json::PushBack(Props, SerializeSyntheticProp("key", *Node.Key));
-    }
-    if (Node.Ref.has_value()) {
-        Amanuensis::Json::PushBack(Props, SerializeSyntheticProp("ref", *Node.Ref));
-    }
     Amanuensis::Json::Insert(Obj, "props", std::move(Props));
 
     Amanuensis::Value Children = Amanuensis::Json::MakeArray();
     for (const ElementChild& Child : Node.Children) {
-        Amanuensis::Json::PushBack(Children, SerializeElementChild(Child, Node.Location));
+        Amanuensis::Json::PushBack(Children, SerializeElementChild(Child));
     }
     Amanuensis::Json::Insert(Obj, "children", std::move(Children));
 

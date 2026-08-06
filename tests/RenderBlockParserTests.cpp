@@ -304,4 +304,25 @@ DESCRIBE("RenderBlockParser", {
         REQUIRE_EQUAL(NyxResult.Blocks.size(), static_cast<std::size_t>(1));
         ASSERT_TRUE(NyxResult.Blocks[0].Root.Tag == "Text");
     });
+
+    IT("a .irisx !{ } body preserves whitespace between adjacent identifiers", {
+        // NyxTokenizer's underlying nyx::Lexer silently consumes whitespace and never
+        // surfaces it as a token of its own (NyxTokenizer's own doc comment).
+        // ParseJsxEscapeHatch reconstructs raw text token-by-token via
+        // AppendText/PrecededByWhitespace, so two adjacent identifiers only keep their
+        // source-level gap if Advance()'s whitespace detection works for a tokenizer that
+        // never emits a whitespace token -- this is the exact `() -> { return count; }`
+        // repro from docs/next-steps.md's "Codegen has no Nyx-target emission" entry,
+        // which (at the time it was filed) came back as "returncount" with the gap lost.
+        constexpr std::string_view Source = R"(render { <Slot> !{ () -> { return count; } } </Slot> })";
+
+        const auto Result = ParseSourceAs(Source, "test.irisx");
+        ASSERT_TRUE(Result.Errors.empty());
+        REQUIRE_TRUE(!Result.Blocks.empty());
+
+        const Iris::PropValue& Value = *Result.Blocks[0].Root.Children[0].EscapeHatch;
+        REQUIRE_EQUAL(Value.JsxSegments.size(), static_cast<std::size_t>(1));
+        ASSERT_TRUE(Value.JsxSegments[0].Text.find("return count") != std::string::npos);
+        // adjacent identifiers keep their source-level space -- not "returncount"
+    });
 });

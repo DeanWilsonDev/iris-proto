@@ -73,10 +73,17 @@ struct ElementChild {
     std::unique_ptr<ElementNode>  Element;
     std::optional<PropValue>      EscapeHatch;
     std::string                   Text;
+    // Where the text run starts, meaningful only when Kind == Text — an Element/EscapeHatch
+    // child already carries its own position on Element->Location / EscapeHatch->Location, so
+    // this field would just duplicate it for those two kinds and is left default-constructed
+    // there. Added per docs/next-steps.md's "Codegen has no Nyx-target emission" entry, which
+    // flagged a Text child having no SourceLocation of its own as a real (if minor) IR-fidelity
+    // gap — IrisIr.cpp previously had to fall back to the *parent* element's own location.
+    SourceLocation                 Location;
 
     static ElementChild MakeElement(ElementNode&& Node);
     static ElementChild MakeEscapeHatch(PropValue Value);
-    static ElementChild MakeText(std::string Value);
+    static ElementChild MakeText(std::string Value, SourceLocation Location);
 };
 
 // The parsed form of one `<Tag ...>...</Tag>` element inside a `render { }`
@@ -123,10 +130,11 @@ inline ElementChild ElementChild::MakeEscapeHatch(PropValue Value) {
     return Child;
 }
 
-inline ElementChild ElementChild::MakeText(std::string Value) {
+inline ElementChild ElementChild::MakeText(std::string Value, SourceLocation Location) {
     ElementChild Child;
     Child.Kind = ElementChildKind::Text;
     Child.Text = std::move(Value);
+    Child.Location = std::move(Location);
     return Child;
 }
 

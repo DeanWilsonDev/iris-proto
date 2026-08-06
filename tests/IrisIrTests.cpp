@@ -99,15 +99,23 @@ DESCRIBE("IrisIr", {
         ASSERT_TRUE(Amanuensis::Json::Size(Field(Value, "children")) == 0);
     });
 
-    IT("key and ref are preserved as synthetic props, not dropped", {
+    IT("key and ref are preserved as their own ElementNode fields, not dropped", {
         const Amanuensis::Value Doc = Build(R"(render { <Frame key="row-1" ref="trigger" /> })");
         const Amanuensis::Value& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
-        const Amanuensis::Value& Props = Field(Root, "props");
-        REQUIRE_TRUE(Amanuensis::Json::Size(Props) == 2);
-        ASSERT_TRUE(Str(Field(Amanuensis::Json::At(Props, 0), "name")) == "key");
-        ASSERT_TRUE(Str(Field(Field(Amanuensis::Json::At(Props, 0), "value"), "value")) == "row-1");
-        ASSERT_TRUE(Str(Field(Amanuensis::Json::At(Props, 1), "name")) == "ref");
-        ASSERT_TRUE(Str(Field(Field(Amanuensis::Json::At(Props, 1), "value"), "value")) == "trigger");
+        // Neither key nor ref leaks into `props` -- chaos-ir-spec.md §3.5 gives each its own
+        // dedicated field alongside `tag`/`props`/`children`/`location`.
+        ASSERT_TRUE(Amanuensis::Json::Size(Field(Root, "props")) == 0);
+        ASSERT_TRUE(Str(Field(Field(Root, "key"), "kind")) == "literal");
+        ASSERT_TRUE(Str(Field(Field(Root, "key"), "value")) == "row-1");
+        ASSERT_TRUE(Str(Field(Field(Root, "ref"), "kind")) == "literal");
+        ASSERT_TRUE(Str(Field(Field(Root, "ref"), "value")) == "trigger");
+    });
+
+    IT("an element with no key/ref omits both fields entirely", {
+        const Amanuensis::Value Doc = Build("render { <Frame /> }");
+        const Amanuensis::Value& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
+        ASSERT_FALSE(Amanuensis::Json::Contains(Root, "key"));
+        ASSERT_FALSE(Amanuensis::Json::Contains(Root, "ref"));
     });
 
     IT("a !{ } JSX-transform escape hatch's nested element becomes a nyx_expression child", {
@@ -132,15 +140,37 @@ DESCRIBE("IrisIr", {
         ASSERT_TRUE(Contains(Str(Field(EscapeHatchNode, "source")), "settingsOpen"));
     });
 
-    IT("a literal text child is preserved as a literal node", {
+    IT("a literal text child is preserved as its own text node, not a prop-value literal", {
         const Amanuensis::Value Doc = Build(R"(render { <Text>Hello</Text> })");
         const Amanuensis::Value& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
         ASSERT_TRUE(Str(Field(Root, "tag")) == "Text");
         const Amanuensis::Value& Children = Field(Root, "children");
         REQUIRE_TRUE(Amanuensis::Json::Size(Children) == 1);
         const Amanuensis::Value& TextChild = Amanuensis::Json::At(Children, 0);
-        ASSERT_TRUE(Str(Field(TextChild, "kind")) == "literal");
+        // chaos-ir-spec.md §3.5a's dedicated "text" child-node kind -- distinct from a
+        // PropNode's own "literal" value node (§3.6), which is a prop's value, not a tree
+        // position.
+        ASSERT_TRUE(Str(Field(TextChild, "kind")) == "text");
         ASSERT_TRUE(Str(Field(TextChild, "value")) == "Hello");
+    });
+
+    IT("a literal text child's location is its own, not the parent element's", {
+        // "render { <Text>Hello</Text> }" -- <Text starts at column 10 (the '<'), but
+        // "Hello" itself starts at column 16, right after '>'. Before this was fixed
+        // (docs/next-steps.md's "Codegen has no Nyx-target emission" entry), a text
+        // child's location silently fell back to its *parent* element's own location
+        // (ElementChild had no SourceLocation of its own), so this would have come back
+        // as column 10, not 16.
+        const Amanuensis::Value Doc = Build(R"(render { <Text>Hello</Text> })");
+        const Amanuensis::Value& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
+        const Amanuensis::Value& RootLocation = Field(Root, "location");
+        REQUIRE_EQUAL(Int(Field(RootLocation, "column")), static_cast<long long>(10));
+
+        const Amanuensis::Value& TextChild = Amanuensis::Json::At(Field(Root, "children"), 0);
+        const Amanuensis::Value& TextLocation = Field(TextChild, "location");
+        ASSERT_TRUE(Int(Field(TextLocation, "line")) == 1);
+        ASSERT_TRUE(Int(Field(TextLocation, "column")) == 16); // where "Hello" itself starts
+        ASSERT_TRUE(Int(Field(TextLocation, "length")) == 5);  // "Hello".size(), no quote padding
     });
 
     IT("an import statement is reported in `imports`, not duplicated into a `body` nyx_source node", {

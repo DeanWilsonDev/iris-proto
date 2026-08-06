@@ -473,15 +473,17 @@ PropValue RenderBlockParser::ParseJsxEscapeHatch() {
 
 std::vector<ElementChild> RenderBlockParser::ParseChildren(const std::string& OpenTag,
                                                              std::optional<SourceLocation>& OutClosingTagLocation) {
-    std::vector<ElementChild> Children;
-    std::string                TextBuffer;
+    std::vector<ElementChild>      Children;
+    std::string                     TextBuffer;
+    std::optional<SourceLocation>   TextStartLocation; // set when TextBuffer's first token is appended below
 
     auto FlushText = [&]() {
         const std::string Trimmed = Trim(TextBuffer);
         if (!Trimmed.empty()) {
-            Children.push_back(ElementChild::MakeText(Trimmed));
+            Children.push_back(ElementChild::MakeText(Trimmed, *TextStartLocation));
         }
         TextBuffer.clear();
+        TextStartLocation.reset();
     };
 
     for (;;) {
@@ -549,7 +551,9 @@ std::vector<ElementChild> RenderBlockParser::ParseChildren(const std::string& Op
 
         // Literal text: an identifier, string/char literal, or a stray
         // punctuation character that isn't `<` or `{`.
-        if (!TextBuffer.empty() && Current_.PrecededByWhitespace) {
+        if (TextBuffer.empty()) {
+            TextStartLocation = Current_.Location;
+        } else if (Current_.PrecededByWhitespace) {
             TextBuffer += ' ';
         }
         TextBuffer += Current_.Text;
