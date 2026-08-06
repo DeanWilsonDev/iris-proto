@@ -69,23 +69,48 @@ both since removed) plus one gap identified directly against `docs/iris_core_spe
 
 ### What's still actually missing
 
-**A real `NyxEvaluator` implementation backed by nyx-proto.** Every callback above is
-implemented only by tests' mock evaluator today — nothing yet drives them from actual Nyx
-source text, so a `.irisx` component still can't run end-to-end. This is now *mostly* a
-nyx-proto blocker, not an iris-proto design gap: per `chaos-ir-spec.md` §6 / `decision-log.md`
-§7.2, nyx-proto has no "evaluate this source against a live scope, repeatable across a
-component's lifetime" embedding primitive yet (`NyxRuntime::Run`/`RunFile` only execute a whole
-script end-to-end) — "genuinely new Phase 6 work, not yet started" there. Note `nyx-proto`'s
-`nyx::interpreter::Interpreter::EvalExpr`/`MakeGlobalContext` (already linked into `iris` via
-this repo's `nyx-runtime` CMake target) evaluate a bare expression against a scope, but that
-alone doesn't close the gap: a `NyxSourceNode`/`NyxExpressionNode`'s raw text is a *fragment* of
-a larger Nyx program (the file's own `render { }` block already cut out of it) and, for a `!{ }`
-JSX-transform escape hatch, still contains literal embedded `<Tag>` runs that don't lex as
-ordinary Nyx at all — reassembling/re-lexing that correctly, and deciding how a `NyxEvaluator`
-implementation substitutes each embedded element's spot in the source for the already-converted
-`Iris::Component` `IrElementConverter` hands it, is real design work belonging to whoever
-implements the real evaluator (this repo, once nyx-proto's own primitive exists), not solved by
-this entry.
+**A real `NyxEvaluator` implementation backed by nyx-proto — done (2026-08-06).**
+`docs/iris_nyx_evaluator_scope_gap.md` sized two real gaps against `chaos-ir-spec.md` §4's
+own worked example (a `NyxSourceNode`'s raw text being an unparseable *fragment*; no
+primitive for a specific component invocation's own live scope) — nyx-proto closed both,
+first with `NyxRuntime::CreateScope`/`EvaluateInScope` (commit `5c45f71`) and then
+`Interpreter::CallFunctionCapturingEnvironment`/`NyxRuntime::InvokeComponent` (commit
+`bf81574`), recorded in nyx-scripting-language's own `decision-log.md` §7.3. On top of
+those, this repo found and fixed a third, unrelated defect while building the real
+evaluator: `IrisIr.cpp`'s `JsxSegment` serializer flushed a `!{ }` escape hatch's text and
+embedded-element runs into two separate JSON fields (`source`/`children`), silently
+discarding their relative order — broke exactly the conditional-rendering pattern
+(`cond ? <A/> : <B/>`) chaos-ir-spec.md's own example uses. Fixed by replacing that shape
+with one ordered `segments` array (`IrNyxExpressionNode::Segments`,
+`chaos-ir-spec.md` §3.7 updated to match) — see `docs/iris_nyx_evaluator_scope_gap.md`'s
+own added section for the full finding.
+
+`Iris::MakeNyxEvaluator`/`ReconstructNyxSource`/`ChaosSlotMarker`
+(`include/Iris/IrisNyxEvaluator.h`, `src/Iris/IrisNyxEvaluator.cpp`) are the real, non-mock
+implementation: `EvaluateProp`/`EvaluateText` evaluate directly against a component
+invocation's own `NyxScope`; `EvaluateSlot` resolves a JSX-transform conditional by
+substituting a `__chaos_slot_pick(N)` marker call for each embedded element (per the fixed,
+order-preserving `Segments`) and reading back which index(es) actually got invoked;
+event-handler props (`onPress`, etc.) re-evaluate their source as an immediately-invoked
+lambda on every C++-side firing, since nyx-proto exposes no public "call this
+already-evaluated Value" primitive. `EvaluateComponentInvocation` packs evaluated props into
+a `NyxObject` and forwards to a caller-supplied `ChildComponentInvoker` — cross-file
+import/component resolution is deliberately left to that callback, not attempted here (a
+driver's job, still not built — see below). Verified end to end against real nyx-proto
+execution (not a mock) in `tests/IrisNyxEvaluatorTests.cpp`, including chaos-ir-spec.md §4's
+own `Button`/`isHovered` ternary example, independent per-invocation `@signal` state across
+two mounts of the same component, and event-handler re-evaluation — full suite (212/212)
+clean under AddressSanitizer + UndefinedBehaviorSanitizer.
+
+**Still open:** the actual reload/mount driver that ties `WalkIrisIrDocument` +
+`MakeNyxEvaluator` + import resolution + `iris::MountComponentInstance`/
+`ReloadComponentInstance` into something that runs a whole `.irisx` application — not built,
+not this entry's scope. `<Slot>` support is also narrower than the full language: only a
+statically-bounded conditional (a fixed, finite set of embedded elements selected by
+evaluating a boolean/index expression) is handled — a genuine runtime loop producing a
+dynamic number of items from one embedded element, with per-iteration prop bindings, needs
+the marker call to carry per-iteration data into a correspondingly-scoped `Convert()` call,
+which `MakeNyxEvaluator` doesn't attempt.
 
 **`<Native>` is unsupported for `.irisx`.** `ConvertIrElement` reports an error for it — its
 `build` prop evaluates to an opaque `Umbra::IWidget` handle, which has no natural

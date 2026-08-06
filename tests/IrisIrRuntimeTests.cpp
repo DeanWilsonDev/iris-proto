@@ -25,11 +25,25 @@ IrPropNode MakeLiteralProp(std::string Name, std::string Value) {
     return P;
 }
 
+IrNyxExpressionSegment TextSegment(std::string Text) {
+    IrNyxExpressionSegment Seg;
+    Seg.Kind = IrNyxExpressionSegmentKind::Text;
+    Seg.Text = std::move(Text);
+    return Seg;
+}
+
+IrNyxExpressionSegment ElementSegment(IrElementNode Node) {
+    IrNyxExpressionSegment Seg;
+    Seg.Kind = IrNyxExpressionSegmentKind::Element;
+    Seg.Element = std::make_shared<IrElementNode>(std::move(Node));
+    return Seg;
+}
+
 IrPropNode MakeExprProp(std::string Name, std::string Source) {
     IrPropNode P;
     P.Name = std::move(Name);
     P.Value.IsLiteral = false;
-    P.Value.Expression.Source = std::move(Source);
+    P.Value.Expression.Segments = {TextSegment(std::move(Source))};
     return P;
 }
 
@@ -40,12 +54,18 @@ IrElementChild MakeElementChild(IrElementNode Node) {
     return Child;
 }
 
+// Builds a fixture whose Segments is a single text segment followed by every given element,
+// in that order -- sufficient for existing tests here, none of which depend on more complex
+// text/element interleaving (that's covered directly in IrisIrDocumentTests.cpp against the
+// real parser/serializer round-trip).
 IrElementChild MakeExprChild(std::string Source, std::vector<IrElementNode> NestedChildren = {}) {
     IrElementChild Child;
     Child.Kind = IrElementChildKind::NyxExpression;
     auto Expr = std::make_unique<IrNyxExpressionNode>();
-    Expr->Source = std::move(Source);
-    Expr->Children = std::move(NestedChildren);
+    Expr->Segments.push_back(TextSegment(std::move(Source)));
+    for (IrElementNode& Node : NestedChildren) {
+        Expr->Segments.push_back(ElementSegment(std::move(Node)));
+    }
     Child.Expression = std::move(Expr);
     return Child;
 }
@@ -78,12 +98,12 @@ NyxEvaluator MakeEvaluator() {
         if (ExpectedType == "std::function<void()>") {
             return Iris::IrisPropValue{std::function<void()>([]() {})};
         }
-        return Iris::IrisPropValue{Node.Source};
+        return Iris::IrisPropValue{Node.Source()};
     };
-    Eval.EvaluateText = [](const IrNyxExpressionNode& Node) { return "[" + Node.Source + "]"; };
+    Eval.EvaluateText = [](const IrNyxExpressionNode& Node) { return "[" + Node.Source() + "]"; };
     Eval.EvaluateSlot = [](const IrNyxExpressionNode& Node, const IrElementConverter& Convert) -> IrisSlotResult {
         std::vector<Iris::Component> Out;
-        for (const IrElementNode& Child : Node.Children) {
+        for (const IrElementNode& Child : Node.Elements()) {
             Out.push_back(Convert(Child));
         }
         return Out;
@@ -240,7 +260,7 @@ DESCRIBE("IrisIrRuntime", {
     IT("<Slot> normalizes a single-Component evaluator result into a one-element list", {
         NyxEvaluator Eval = MakeEvaluator();
         Eval.EvaluateSlot = [](const IrNyxExpressionNode& Node, const IrElementConverter& Convert) -> IrisSlotResult {
-            return Convert(Node.Children.front());
+            return Convert(Node.Elements().front());
         };
         IrElementNode SlotNode = MakeElement("Slot", {}, {MakeExprChild("cond", {MakeElement("Frame")})});
         std::vector<IrisIrRuntimeError> Errors;

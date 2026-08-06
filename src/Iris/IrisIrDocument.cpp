@@ -92,14 +92,26 @@ public:
 
     IrNyxExpressionNode ParseNyxExpression(const Amanuensis::Value& Obj) {
         IrNyxExpressionNode Result;
-        Result.Source = GetString(Obj, "source", "nyx_expression");
         Result.Location = ParseLocation(Obj);
-        const Amanuensis::Value* Children = GetArray(Obj, "children", "nyx_expression");
-        if (Children != nullptr) {
-            const std::size_t Count = Amanuensis::Json::Size(*Children);
-            Result.Children.reserve(Count);
+        const Amanuensis::Value* Segments = GetArray(Obj, "segments", "nyx_expression");
+        if (Segments != nullptr) {
+            const std::size_t Count = Amanuensis::Json::Size(*Segments);
+            Result.Segments.reserve(Count);
             for (std::size_t Index = 0; Index < Count; ++Index) {
-                Result.Children.push_back(ParseElement(Amanuensis::Json::At(*Children, Index)));
+                const Amanuensis::Value& SegObj = Amanuensis::Json::At(*Segments, Index);
+                const std::string        SegKind = GetKind(SegObj);
+                IrNyxExpressionSegment    Seg;
+                if (SegKind == "text") {
+                    Seg.Kind = IrNyxExpressionSegmentKind::Text;
+                    Seg.Text = GetString(SegObj, "value", "nyx_expression segment");
+                } else if (SegKind == "element") {
+                    Seg.Kind = IrNyxExpressionSegmentKind::Element;
+                    Seg.Element = std::make_shared<IrElementNode>(ParseElement(SegObj));
+                } else {
+                    AddError("expected a 'text' or 'element' nyx_expression segment, found kind '" + SegKind + "'");
+                    continue;
+                }
+                Result.Segments.push_back(std::move(Seg));
             }
         }
         return Result;
@@ -260,6 +272,16 @@ private:
 };
 
 } // namespace
+
+std::vector<IrElementNode> IrNyxExpressionNode::Elements() const {
+    std::vector<IrElementNode> Result;
+    for (const IrNyxExpressionSegment& Seg : Segments) {
+        if (Seg.Kind == IrNyxExpressionSegmentKind::Element) {
+            Result.push_back(*Seg.Element);
+        }
+    }
+    return Result;
+}
 
 IrisIrDocumentParseResult ParseIrisIrDocument(const Amanuensis::Value& Root) {
     IrisIrDocumentParseResult Result;

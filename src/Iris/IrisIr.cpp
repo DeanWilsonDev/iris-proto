@@ -108,43 +108,53 @@ Amanuensis::Value TextNodeValue(const std::string& Text, const SourceLocation& L
 
 Amanuensis::Value SerializeElement(const ElementNode& Node);
 
-// chaos-ir-spec.md §3.7's "nyx_expression" node, for a PropValue whose Kind is EscapeHatch
-// or JsxEscapeHatch. A plain EscapeHatch's Text is copied verbatim into `source` (already
-// opaque, unparsed Nyx text -- same treatment Codegen.cpp's EmitEscapeHatchExpression gives
-// it for `.iris`). A JsxEscapeHatch's JsxSegments (ElementNode.h) map directly onto the
-// spec's own source/children split: RawText segments concatenate into `source`, Element
-// segments become `children` -- the same reconstruction ComponentEmitter::
-// EmitEscapeHatchExpression already does when splicing C++ text, just building JSON instead
-// of a string. Interleaving order between text and element segments is lost either way,
-// matching the spec's own two-separate-fields shape (chaos-ir-spec.md §3.7's own worked
-// example: `source: "() -> isHovered"`, `children: [...]`, not one ordered stream).
+Amanuensis::Value TextSegmentValue(const std::string& Text) {
+    Amanuensis::Value Seg = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(Seg, "kind", StringValue("text"));
+    Amanuensis::Json::Insert(Seg, "value", StringValue(Text));
+    return Seg;
+}
+
+// chaos-ir-spec.md §3.7's "nyx_expression" node, for a PropValue whose Kind is EscapeHatch or
+// JsxEscapeHatch. A plain EscapeHatch's Text is copied verbatim into a single text segment
+// (already opaque, unparsed Nyx text -- same treatment Codegen.cpp's
+// EmitEscapeHatchExpression gives it for `.iris`). A JsxEscapeHatch's JsxSegments
+// (ElementNode.h) already preserve the original interleaved text/element order (`RenderBlock
+// Parser::ParseJsxEscapeHatch` builds them into one ordered vector directly) -- `segments`
+// mirrors that order 1:1 into JSON, rather than flushing text and element runs into two
+// separate fields the way an earlier version of this schema did. That earlier shape silently
+// discarded which text ran before/between/after which element (e.g. a ternary's `cond ?` /
+// element / `:` / element), breaking real `<Slot>` evaluation for exactly the
+// conditional-rendering pattern chaos-ir-spec.md's own worked example uses -- see
+// docs/iris_nyx_evaluator_scope_gap.md.
 Amanuensis::Value SerializePropValue(const PropValue& Value) {
     if (Value.Kind == PropValueKind::StringLiteral) {
         return LiteralValue(Value.Text, Value.Location);
     }
 
-    std::string        Source;
-    Amanuensis::Value Children = Amanuensis::Json::MakeArray();
+    Amanuensis::Value Segments = Amanuensis::Json::MakeArray();
+    std::size_t         TextLength = 0; // for the location-length approximation below
     if (Value.Kind == PropValueKind::JsxEscapeHatch) {
         for (const JsxSegment& Segment : Value.JsxSegments) {
             if (Segment.Kind == JsxSegmentKind::RawText) {
-                Source += Segment.Text;
+                TextLength += Segment.Text.size();
+                Amanuensis::Json::PushBack(Segments, TextSegmentValue(Segment.Text));
             } else {
-                Amanuensis::Json::PushBack(Children, SerializeElement(*Segment.Element));
+                Amanuensis::Json::PushBack(Segments, SerializeElement(*Segment.Element));
             }
         }
     } else {
-        Source = Value.Text;
+        TextLength = Value.Text.size();
+        Amanuensis::Json::PushBack(Segments, TextSegmentValue(Value.Text));
     }
 
     Amanuensis::Value Node = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Node, "kind", StringValue("nyx_expression"));
-    Amanuensis::Json::Insert(Node, "source", StringValue(Source));
-    Amanuensis::Json::Insert(Node, "children", std::move(Children));
+    Amanuensis::Json::Insert(Node, "segments", std::move(Segments));
     // +2: the surrounding `{ }` (or `!{ }`, undercounted by one for the JSX-transform
     // marker) ElementNode.h's own doc comment says are already stripped from Text/
     // JsxSegments -- an approximation, not a scan of the original source.
-    Amanuensis::Json::Insert(Node, "location", LocationValue(Value.Location, Source.size() + 2));
+    Amanuensis::Json::Insert(Node, "location", LocationValue(Value.Location, TextLength + 2));
     return Node;
 }
 

@@ -36,13 +36,52 @@ struct IrSourceLocation {
 
 struct IrElementNode;
 
+// One ordered piece of a nyx_expression's body (chaos-ir-spec.md §3.7) -- either a raw text
+// run or a nested element, in original interleaved order. A `!{ }` JSX-transform escape
+// hatch's text and embedded `<Tag>` runs can alternate arbitrarily (e.g. a ternary's
+// `cond ?` / element / `:` / element) -- an earlier version of this schema flushed text and
+// element segments into two separate fields (`source`/`children`), silently discarding which
+// text ran before/between/after which element. That broke real `<Slot>` evaluation for
+// exactly the conditional-rendering pattern chaos-ir-spec.md's own worked example uses (see
+// docs/iris_nyx_evaluator_scope_gap.md's finding). `Segments` preserves the original order
+// directly instead.
+enum class IrNyxExpressionSegmentKind { Text, Element };
+
+struct IrNyxExpressionSegment {
+    IrNyxExpressionSegmentKind     Kind{IrNyxExpressionSegmentKind::Text};
+    std::string                    Text;    // meaningful when Kind == Text
+    std::shared_ptr<IrElementNode> Element; // meaningful when Kind == Element
+};
+
 // chaos-ir-spec.md §3.7's "nyx_expression" node -- an escape hatch's raw, unparsed Nyx source
 // text, plus (only when a `!{ }` JSX-transform escape hatch's body contained embedded `<Tag>`
-// runs) the element tree nodes recursively parsed out of it.
+// runs) the element tree nodes recursively parsed out of it, in original interleaved order.
 struct IrNyxExpressionNode {
-    std::string                     Source;
-    std::vector<IrElementNode>      Children;
-    IrSourceLocation                Location;
+    std::vector<IrNyxExpressionSegment> Segments;
+    IrSourceLocation                     Location;
+
+    // The concatenated text-only view: every Text segment's own text, in order, Element
+    // segments contributing nothing. Exact for the common case -- a plain `{ }` escape hatch
+    // (never containing embedded JSX) always produces exactly one Text segment, so this
+    // equals that segment's own text precisely. `EvaluateProp`/`EvaluateText`
+    // (`IrisIrRuntime.h`) only ever need this view. For a JsxEscapeHatch with embedded
+    // elements, this is a lossy approximation (real branch-selection logic needs `Segments`
+    // directly, not this) -- the same shape the old `Source` field always was, kept only for
+    // convenience/debugging.
+    std::string Source() const {
+        std::string Result;
+        for (const IrNyxExpressionSegment& Seg : Segments) {
+            if (Seg.Kind == IrNyxExpressionSegmentKind::Text) {
+                Result += Seg.Text;
+            }
+        }
+        return Result;
+    }
+
+    // The element-only view, in order -- what every pre-fix caller (`ConvertSlot`'s mock
+    // `Convert` callback, tests) used before `Segments` existed. Order among elements
+    // themselves is preserved even though the interleaved text positions are dropped here.
+    std::vector<IrElementNode> Elements() const;
 };
 
 // chaos-ir-spec.md §3.6's "literal" value node.

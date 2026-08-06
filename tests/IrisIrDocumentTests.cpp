@@ -77,8 +77,8 @@ DESCRIBE("IrisIrDocument", {
         const auto& Root = std::get<IrRenderBlockNode>(Result.Document->Body[0]).Root;
         REQUIRE_EQUAL(Root.Props.size(), static_cast<std::size_t>(1));
         ASSERT_FALSE(Root.Props[0].Value.IsLiteral);
-        ASSERT_TRUE(Root.Props[0].Value.Expression.Source == "doIt()");
-        ASSERT_TRUE(Root.Props[0].Value.Expression.Children.empty());
+        ASSERT_TRUE(Root.Props[0].Value.Expression.Source() == "doIt()");
+        ASSERT_TRUE(Root.Props[0].Value.Expression.Elements().empty());
     });
 
     IT("key and ref round-trip as their own optional fields", {
@@ -100,7 +100,7 @@ DESCRIBE("IrisIrDocument", {
         ASSERT_FALSE(Root.Ref.has_value());
     });
 
-    IT("a !{ } JSX-transform escape hatch's nested elements round-trip as NyxExpression children", {
+    IT("a !{ } JSX-transform escape hatch's nested elements round-trip as NyxExpression elements", {
         const IrisIrDocumentParseResult Result = Roundtrip(R"(render {
             <Slot>
                 !{settingsOpen ? <SettingsPage active="true" /> : <SettingsPage active="false" />}
@@ -111,9 +111,34 @@ DESCRIBE("IrisIrDocument", {
         REQUIRE_EQUAL(SlotRoot.Children.size(), static_cast<std::size_t>(1));
         const IrElementChild& Child = SlotRoot.Children[0];
         REQUIRE_TRUE(Child.Kind == IrElementChildKind::NyxExpression);
-        REQUIRE_EQUAL(Child.Expression->Children.size(), static_cast<std::size_t>(2));
-        ASSERT_TRUE(Child.Expression->Children[0].Tag == "SettingsPage");
-        ASSERT_TRUE(Child.Expression->Children[1].Tag == "SettingsPage");
+        const std::vector<IrElementNode> Elements = Child.Expression->Elements();
+        REQUIRE_EQUAL(Elements.size(), static_cast<std::size_t>(2));
+        ASSERT_TRUE(Elements[0].Tag == "SettingsPage");
+        ASSERT_TRUE(Elements[1].Tag == "SettingsPage");
+    });
+
+    // docs/iris_nyx_evaluator_scope_gap.md: an earlier schema flushed a JsxEscapeHatch's text
+    // and element runs into two separate fields, discarding which text ran before/between/
+    // after which element -- this is the fix, verified against the real parser/serializer,
+    // not just a hand-built fixture.
+    IT("a !{ } JSX-transform escape hatch preserves text/element interleaving order in Segments", {
+        const IrisIrDocumentParseResult Result = Roundtrip(R"(render {
+            <Slot>
+                !{settingsOpen ? <SettingsPage active="true" /> : <SettingsPage active="false" />}
+            </Slot>
+        })");
+        REQUIRE_TRUE(Result.Document.has_value());
+        const auto& SlotRoot = std::get<IrRenderBlockNode>(Result.Document->Body[0]).Root;
+        const IrNyxExpressionNode& Expr = *SlotRoot.Children[0].Expression;
+        REQUIRE_EQUAL(Expr.Segments.size(), static_cast<std::size_t>(4));
+        ASSERT_TRUE(Expr.Segments[0].Kind == IrNyxExpressionSegmentKind::Text);
+        ASSERT_TRUE(Expr.Segments[0].Text.find("settingsOpen") != std::string::npos);
+        ASSERT_TRUE(Expr.Segments[1].Kind == IrNyxExpressionSegmentKind::Element);
+        ASSERT_TRUE(Expr.Segments[1].Element->Tag == "SettingsPage");
+        ASSERT_TRUE(Expr.Segments[1].Element->Props[0].Value.Literal.Value == "true");
+        ASSERT_TRUE(Expr.Segments[2].Kind == IrNyxExpressionSegmentKind::Text);
+        ASSERT_TRUE(Expr.Segments[3].Kind == IrNyxExpressionSegmentKind::Element);
+        ASSERT_TRUE(Expr.Segments[3].Element->Props[0].Value.Literal.Value == "false");
     });
 
     IT("a literal text child round-trips as its own Text-kind child, not folded into a prop", {

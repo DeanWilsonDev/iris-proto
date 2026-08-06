@@ -89,14 +89,16 @@ DESCRIBE("IrisIr", {
         ASSERT_TRUE(Str(Field(Value, "value")) == "a");
     });
 
-    IT("an escape-hatch prop becomes a nyx_expression node with the raw text as source", {
+    IT("an escape-hatch prop becomes a nyx_expression node with a single text segment", {
         const Amanuensis::Value Doc = Build(R"(render { <Frame onPress={doIt()} /> })");
         const Amanuensis::Value& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
         const Amanuensis::Value& Prop = Amanuensis::Json::At(Field(Root, "props"), 0);
         const Amanuensis::Value& Value = Field(Prop, "value");
         ASSERT_TRUE(Str(Field(Value, "kind")) == "nyx_expression");
-        ASSERT_TRUE(Str(Field(Value, "source")) == "doIt()");
-        ASSERT_TRUE(Amanuensis::Json::Size(Field(Value, "children")) == 0);
+        REQUIRE_TRUE(Amanuensis::Json::Size(Field(Value, "segments")) == 1);
+        const Amanuensis::Value& Seg = Amanuensis::Json::At(Field(Value, "segments"), 0);
+        ASSERT_TRUE(Str(Field(Seg, "kind")) == "text");
+        ASSERT_TRUE(Str(Field(Seg, "value")) == "doIt()");
     });
 
     IT("key and ref are preserved as their own ElementNode fields, not dropped", {
@@ -118,10 +120,13 @@ DESCRIBE("IrisIr", {
         ASSERT_FALSE(Amanuensis::Json::Contains(Root, "ref"));
     });
 
-    IT("a !{ } JSX-transform escape hatch's nested element becomes a nyx_expression child", {
+    IT("a !{ } JSX-transform escape hatch preserves text/element interleaving order in segments", {
         // Real Nyx expression syntax (a ternary, no C++-only lambda-capture-list `&`/`[&]`
         // tokens Nyx's own lexer has no grammar for -- chaos-ir-spec.md §4's own worked
         // example uses exactly this shape: `!{() -> isHovered ? <Frame .../> : <Frame .../>}`).
+        // docs/iris_nyx_evaluator_scope_gap.md: an earlier schema flushed text/element runs
+        // into two separate fields (source/children), discarding their relative order --
+        // `segments` is the fix, one ordered array mirroring JsxSegments directly.
         const Amanuensis::Value Doc = Build(R"(render {
             <Slot>
                 !{settingsOpen ? <SettingsPage active="true" /> : <SettingsPage active="false" />}
@@ -131,13 +136,23 @@ DESCRIBE("IrisIr", {
         REQUIRE_TRUE(Amanuensis::Json::Size(Field(SlotRoot, "children")) == 1);
         const Amanuensis::Value& EscapeHatchNode = Amanuensis::Json::At(Field(SlotRoot, "children"), 0);
         ASSERT_TRUE(Str(Field(EscapeHatchNode, "kind")) == "nyx_expression");
-        const Amanuensis::Value& Children = Field(EscapeHatchNode, "children");
-        REQUIRE_TRUE(Amanuensis::Json::Size(Children) == 2); // both ternary branches are nested elements
-        ASSERT_TRUE(Str(Field(Amanuensis::Json::At(Children, 0), "tag")) == "SettingsPage");
-        ASSERT_TRUE(Str(Field(Amanuensis::Json::At(Children, 1), "tag")) == "SettingsPage");
-        // both nested elements are extracted into `children`, not left inline in `source`
-        ASSERT_FALSE(Contains(Str(Field(EscapeHatchNode, "source")), "<SettingsPage"));
-        ASSERT_TRUE(Contains(Str(Field(EscapeHatchNode, "source")), "settingsOpen"));
+        const Amanuensis::Value& Segments = Field(EscapeHatchNode, "segments");
+        REQUIRE_EQUAL(Amanuensis::Json::Size(Segments), static_cast<std::size_t>(4));
+
+        const Amanuensis::Value& Seg0 = Amanuensis::Json::At(Segments, 0);
+        ASSERT_TRUE(Str(Field(Seg0, "kind")) == "text");
+        ASSERT_TRUE(Contains(Str(Field(Seg0, "value")), "settingsOpen"));
+
+        const Amanuensis::Value& Seg1 = Amanuensis::Json::At(Segments, 1);
+        ASSERT_TRUE(Str(Field(Seg1, "kind")) == "element");
+        ASSERT_TRUE(Str(Field(Seg1, "tag")) == "SettingsPage");
+
+        const Amanuensis::Value& Seg2 = Amanuensis::Json::At(Segments, 2);
+        ASSERT_TRUE(Str(Field(Seg2, "kind")) == "text");
+
+        const Amanuensis::Value& Seg3 = Amanuensis::Json::At(Segments, 3);
+        ASSERT_TRUE(Str(Field(Seg3, "kind")) == "element");
+        ASSERT_TRUE(Str(Field(Seg3, "tag")) == "SettingsPage");
     });
 
     IT("a literal text child is preserved as its own text node, not a prop-value literal", {
