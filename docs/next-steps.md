@@ -750,3 +750,106 @@ that repo's own follow-up, not this one's, per the scoping note at the top of th
 - A general-purpose flexbox/grid layout engine — the three concrete shapes above are the
   ask; a full CSS-flexbox-equivalent implementation would be a much larger project than
   what any current consumer actually needs.
+
+## `Codegen` has no Nyx-target emission — a `.irisx` file with `@signal`/`<Slot>` preprocesses cleanly but its emitted header isn't valid C++ (2026-08-06)
+
+> **Status:** Open, real blocker. Not a small wiring gap — an execution-model question.
+> **Trigger:** `pharos-proto`'s Phase 8 (`docs/next_steps.md`'s "Nyx integration" entry,
+> nyx-proto's `decision-log.md` §8.1) wants to rewrite `explorer_panel.cpp`/
+> `inspector_panel.cpp`/`atlas_panel.cpp` into real `.irisx` components. With `NyxTokenizer`/
+> `TokenizerFactory` dispatch (`bddaee0`) and `@signal` reactivity (`Iris::RegisterSignalDecorator`,
+> `da72ba5`) both landed, this session tried the natural next step — actually compiling a minimal
+> authored `.irisx` file with `@signal`/`<Slot>` through the real `iris_cc` — before attempting any
+> panel rewrite, and it doesn't produce anything runnable.
+
+### What was found
+
+`Codegen.cpp` has exactly one emission target: C++. `EmitEscapeHatchExpression`
+(`Codegen.cpp:75-93`) copies the escape hatch's token text back out verbatim, and every non-render
+preamble token (everything before/after `render { }`, per `docs/iris_core_spec.md` §1.1's "every
+other token is passed through to the emitted output unchanged") is passed through unchanged too —
+this has always been fine for `.iris` because the host language genuinely is C++. `NyxTokenizer`'s
+own job (per its `next-steps.md` entry above) is only to correctly find `render { }`/escape-hatch
+boundaries in Nyx source — it was never meant to, and doesn't, translate Nyx syntax into C++
+syntax. So a `.irisx` file's Nyx-flavored preamble and escape hatches end up byte-for-byte inside a
+file `#include`d by a C++ compiler.
+
+Verified against the currently-built `iris_cc` (this repo's own `da72ba5`, built from
+`pharos-proto`'s `build/_deps/iris-build`). Input (`SignalProbe.irisx`):
+
+```
+Component SignalProbe() {
+    @signal int count = 0;
+
+    render {
+        <Slot>
+            !{ () -> { return count; } }
+        </Slot>
+    }
+}
+```
+
+`iris_cc SignalProbe.irisx -o SignalProbe.iris.h` exits 0, no diagnostics — `RenderBlockParser`
+correctly finds the `render { }` block and balances the `!{ }` escape hatch via `NyxTokenizer`.
+The emitted header:
+
+```cpp
+#pragma once
+#line 1 "SignalProbe.irisx"
+Component SignalProbe() {
+    @signal int count = 0;
+
+    return Iris::Component{Iris::IrisElementTag::Slot, Iris::IrisProps{}, {}, Iris::MakeSlotCallable(()->{returncount;})};
+#line 8 "SignalProbe.irisx"
+
+}
+```
+
+`clang++ -std=c++23` on this fails with 3 errors: `@signal int count = 0;` → "unknown type name
+'Component'" / "expected expression" (`@` isn't C++ grammar at all — `Component` here is being
+misparsed as a statement continuing from the truly-broken line, not actually about the return
+type); `Iris::MakeSlotCallable(()->{returncount;})` → not a valid C++ callable expression at all
+(`functions-and-control-flow.md` §10.2's Nyx lambda syntax, `() -> { return count; }`, uses `->`
+to separate params from body — nothing like a C++ `[]() {}` lambda). Note also `returncount` with
+no space: `NyxTokenizer`'s coarse `Identifier`-collapsing (mirroring `CppTokenizer`'s uniform
+keyword treatment, per its own doc entry above) loses the source gap between adjacent identifier
+tokens when `EmitEscapeHatchExpression` concatenates `Lexeme`s back together — a real secondary
+defect in `NyxTokenizer`'s reconstruction, distinct from (and much smaller than) the main issue
+here, not the thing this entry is asking for.
+
+This means the "What's still open" note on the `NyxTokenizer` entry above ("even with the dispatch
+now wired, a real `.irisx` component with reactive state still can't compile end-to-end today") is
+still true after `@signal` landed, but for a different and deeper reason than that note assumed —
+it isn't that `@signal` didn't exist; it's that `Codegen` has nowhere to put Nyx syntax that
+produces something a C++ compiler (or anything else) can actually run. Landing `@signal` was
+necessary but not sufficient.
+
+### Proposed shape (speculative — a starting point, not a firm design)
+
+Two different things are both called "compiling a `.irisx` file" today and probably need to
+diverge: `RenderBlockParser`/`ImportResolver` finding structure (tokenizer-only, already correct
+for Nyx) versus `Codegen` producing something runnable (host-specific, currently C++-only). The
+open question this doc is handing over, not prescribing an answer to: does a `.irisx` file's
+`render { }` block get *compiled* to something at all (a Nyx-target `Codegen` backend emitting
+whatever `nyx::host::NyxRuntime`/`RegisterDecorator`/`MakeSlotCallable`'s Nyx-side counterpart
+needs), or is it *interpreted* at runtime by `NyxRuntime` directly, with `iris_cc`/`Codegen` never
+in the loop for `.irisx` at all (in which case `.irisx` files wouldn't go through `iris_cc` the way
+`.iris` files do, and whatever loads a `.irisx` panel at app startup would hand its source straight
+to `NyxRuntime::Run` instead)? The interpreted route would also be the natural place for the Phase
+9 hot-reload stretch goal (`iris_interpreted_host_hot_reload_gap.md`) to eventually land, if that's
+relevant to how this gets designed.
+
+### Required changes elsewhere
+
+None yet — this is squarely `Codegen`'s (this repo's) own architecture question. If a Nyx-target
+`Codegen` backend needs new `nyx-proto`-side host API beyond `RegisterDecorator`/`NyxRuntime::Run`
+already exposed, that comes back as its own dated entry in `nyx-proto`'s `decision-log.md`, not
+assumed here.
+
+### Explicitly not requested
+
+- A fix for `NyxTokenizer`'s whitespace-collapse in reconstructed `Lexeme` text — noted above as a
+  real, separate, much smaller defect found during this probe, not the ask this entry is making.
+- An implementation from the `pharos-proto` side — this is this repo's own file/architecture
+  decision (`CLAUDE.md`'s "record the ask... then stop" rule), not something to hack around in an
+  application repo.
