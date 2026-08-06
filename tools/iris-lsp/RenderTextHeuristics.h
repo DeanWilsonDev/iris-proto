@@ -50,8 +50,9 @@ std::optional<std::pair<std::uint32_t, std::uint32_t>> FindComponentDeclaration(
 
 // A best-effort search for a `.ClassName { }` (or `.ClassName:pseudo { }`) selector's own
 // declaration in some `.lustre` file's source text -- the same "text scan, not a real parse"
-// spirit FindComponentDeclaration already uses, per docs/next-steps.md's own recorded choice
-// (lustre_core_spec.md §1: three selector kinds, never combined, so `.ClassName` is always
+// spirit FindComponentDeclaration already uses, per docs/archive/iris_next_steps_resolved.md's
+// own recorded choice (lustre_core_spec.md §1: three selector kinds, never combined, so
+// `.ClassName` is always
 // immediately followed by optional whitespace, then either `{` or a `:pseudo` block before
 // `{`). Returns the (1-based line, column) of ClassName's own first character, or nullopt if
 // no matching selector block is found (a plain text search would also be confused by a

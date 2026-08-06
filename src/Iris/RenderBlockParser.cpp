@@ -297,8 +297,8 @@ PropValue RenderBlockParser::ParsePropValue() {
         // CppTokenizer's Text still has its surrounding quotes (a raw source substring);
         // NyxTokenizer's Text for a string literal is already the *resolved* value, quotes
         // and escapes already stripped (its own documented difference from CppTokenizer,
-        // docs/next-steps.md's NyxTokenizer entry) -- stripping again here would corrupt it
-        // (e.g. `"a"` -> "" instead of "a").
+        // docs/archive/iris_next_steps_resolved.md's NyxTokenizer entry) -- stripping again
+        // here would corrupt it (e.g. `"a"` -> "" instead of "a").
         const std::string Inner = IsNyxHost_ ? Raw : (Raw.size() >= 2 ? Raw.substr(1, Raw.size() - 2) : "");
         Advance();
         PropValue Value;

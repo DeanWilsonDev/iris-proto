@@ -76,9 +76,10 @@ struct ElementChild {
     // Where the text run starts, meaningful only when Kind == Text — an Element/EscapeHatch
     // child already carries its own position on Element->Location / EscapeHatch->Location, so
     // this field would just duplicate it for those two kinds and is left default-constructed
-    // there. Added per docs/next-steps.md's "Codegen has no Nyx-target emission" entry, which
-    // flagged a Text child having no SourceLocation of its own as a real (if minor) IR-fidelity
-    // gap — IrisIr.cpp previously had to fall back to the *parent* element's own location.
+    // there. Added per docs/archive/iris_next_steps_resolved.md's "Codegen has no Nyx-target
+    // emission" entry, which flagged a Text child having no SourceLocation of its own as a
+    // real (if minor) IR-fidelity gap — IrisIr.cpp previously had to fall back to the
+    // *parent* element's own location.
     SourceLocation                 Location;
 
     static ElementChild MakeElement(ElementNode&& Node);
@@ -93,7 +94,7 @@ struct ElementChild {
 // of it. `key` is pulled out of `Props` into its own field, since per §2.3 it
 // is stripped by the preprocessor before codegen and never reaches the
 // backend; `class` has no special structural treatment and stays an ordinary
-// entry in `Props`. `ref` (docs/next-steps.md, "Named-child-handle (`ref`)
+// entry in `Props`. `ref` (docs/archive/iris_next_steps_resolved.md, "Named-child-handle (`ref`)
 // prop") is pulled out the same way `key` is -- a plain identifying string a
 // mount call surfaces back to host code, not a reconciler input, so it must
 // never be confused with `Key` downstream (Reconciler.cpp's identity

@@ -48,15 +48,17 @@ struct IrisNativeBuilder;
 // it default-initialized to `std::nullopt` — no key — same as any other data member not
 // named in an initializer list.
 //
-// `Ref` (docs/next-steps.md, "Named-child-handle (`ref`) prop") is set the same way `Key` is
-// -- by a small IIFE wrapper `Codegen.h` emits around the base construction expression, so it
+// `Ref` (docs/archive/iris_next_steps_resolved.md, "Named-child-handle (`ref`) prop") is set
+// the same way `Key` is -- by a small IIFE wrapper `Codegen.h` emits around the base
+// construction expression, so it
 // picks up ref-setting uniformly across every element kind too. Unlike `Key`, it carries no
 // reconciler meaning at all (see `Reconciler.cpp`'s `Key`-only identity matching): it exists
 // purely so a mount call can hand host code back a live-widget lookup keyed by this string,
 // once a backend's own tree walk (out of scope in this repo) collects `Ref`-tagged nodes.
 //
-// `NativeBuilder` (docs/next-steps.md, "No way to declare a custom widget/imperative-draw
-// node as an Iris element") is set only for `Tag == IrisElementTag::Native` -- the same
+// `NativeBuilder` (docs/archive/iris_next_steps_resolved.md, "No way to declare a custom
+// widget/imperative-draw node as an Iris element") is set only for `Tag ==
+// IrisElementTag::Native` -- the same
 // "can't be a Props entry, can't be embedded directly" reasoning as `SlotCallable` above
 // (its callable's return type, an already-built `Umbra::IWidget`, has no room in the closed
 // `IrisPropValue` variant, and deliberately shouldn't: routing it through `IrisProps` would
@@ -127,7 +129,7 @@ std::shared_ptr<IrisSlotCallable> MakeSlotCallable(Callable&& Fn) {
 }
 
 // Wraps a `<Native>` element's `build` prop for storage on `Component::NativeBuilder`
-// (docs/next-steps.md, "No way to declare a custom widget/imperative-draw node as an Iris
+// (docs/archive/iris_next_steps_resolved.md, "No way to declare a custom widget/imperative-draw node as an Iris
 // element"). `Umbra::IWidget` is already a complete type by this point (`Component.h`
 // includes it directly, unlike `IrisSlotCallable` above which only needs `Component`
 // itself), so this doesn't need `IrisSlotCallable`'s `if constexpr` return-type dispatch --

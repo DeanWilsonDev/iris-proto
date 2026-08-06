@@ -157,8 +157,9 @@ DESCRIBE("IrisIr", {
     IT("a literal text child's location is its own, not the parent element's", {
         // "render { <Text>Hello</Text> }" -- <Text starts at column 10 (the '<'), but
         // "Hello" itself starts at column 16, right after '>'. Before this was fixed
-        // (docs/next-steps.md's "Codegen has no Nyx-target emission" entry), a text
-        // child's location silently fell back to its *parent* element's own location
+        // (docs/archive/iris_next_steps_resolved.md's "Codegen has no Nyx-target emission"
+        // entry), a text child's location silently fell back to its *parent* element's own
+        // location
         // (ElementChild had no SourceLocation of its own), so this would have come back
         // as column 10, not 16.
         const Amanuensis::Value Doc = Build(R"(render { <Text>Hello</Text> })");

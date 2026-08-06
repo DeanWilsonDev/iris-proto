@@ -1,7 +1,8 @@
 # Iris — `.irisx` Emission Target Decision
 
 > **Status:** Decided — design only, not yet implemented. Answers the execution-model fork
-> `docs/next-steps.md`'s "`Codegen` has no Nyx-target emission" entry (2026-08-06) left open.
+> `docs/archive/iris_next_steps_resolved.md`'s "`Codegen` has no Nyx-target emission" entry
+> (2026-08-06) left open.
 > **Revision note (1):** this document originally (same day) proposed a "`NyxCodegen` emits
 > Nyx source text, calling a new Iris host-bindings module registered on `NyxRuntime`" design.
 > That was wrong — written without having read the actual Nyx/Chaos design docs, which turned
@@ -172,4 +173,6 @@ serializer this document actually decides on.
   IR *production*, which is all this decision covers.
 - Implementing any of the above in this repo yet — this document records the chosen shape only.
   Building the IR serializer and `Driver::CompileFile`'s per-language fork is tracked as
-  follow-up work in `docs/next-steps.md`, not done as part of this decision.
+  follow-up work in `docs/next-steps.md` (now landed — see
+  `docs/archive/iris_next_steps_resolved.md`'s "`Codegen` has no Nyx-target emission" entry),
+  not done as part of this decision.

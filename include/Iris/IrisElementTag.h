@@ -46,7 +46,7 @@ enum class IrisElementTag {
     // opinion about.
     Input,
     Slot,
-    // An opaque escape-hatch node (docs/next-steps.md, "No way to declare a custom
+    // An opaque escape-hatch node (docs/archive/iris_next_steps_resolved.md, "No way to declare a custom
     // widget/imperative-draw node as an Iris element") — its single `build` prop is a
     // `{ }` escape hatch evaluating to an already-built widget handle
     // (`Component::NativeBuilder`, not an ordinary `IrisProps` entry — see Component.h),
@@ -56,7 +56,7 @@ enum class IrisElementTag {
     // hand-rolled-`Box`-subclass composition pattern every backend already has, not a
     // general imperative-draw sublanguage.
     Native,
-    // A draggable-handle resizable split (docs/next-steps.md, "No layout-container
+    // A draggable-handle resizable split (docs/archive/iris_next_steps_resolved.md, "No layout-container
     // primitive beyond Frame's three stack modes") — exactly two element children
     // (leading/trailing panes, matching `Penumbra::Widgets::SplitPanel::SetFirst`/
     // `SetSecond`'s own two-slot shape, not a generic `Children` vector). `axis`

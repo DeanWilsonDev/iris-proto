@@ -13,7 +13,8 @@ handoffs, kept for the reasoning trail").
 
 | File | Superseded by |
 | --- | --- |
-| `iris_next_steps.md` | `docs/next-steps.md` (the active tracker) |
+| `iris_next_steps.md` | `docs/next-steps.md` (the active tracker) — Stage 0–3 snapshot, predates the entries in `iris_next_steps_resolved.md` below |
+| `iris_next_steps_resolved.md` | `docs/next-steps.md` (the active tracker) — resolved post-Stage-3 feature-request entries, moved out wholesale as each one closed |
 | `iris_stage1_open_questions.md` | Closed by `docs/iris_stage1_decision_doc.md` / `_pt2.md`; current reference is `docs/iris_core_spec.md` |
 | `iris_stage2_open_questions.md` | Closed by `docs/iris_stage2_decision_doc.md`; current reference is `docs/iris_core_spec.md` |
 | `iris_stage3_open_questions.md` | Closed by `docs/iris_stage3_decision_doc.md`; current reference is `docs/iris_core_spec.md` |

@@ -219,8 +219,9 @@ public:
     void               PopComponentInstance();
     ComponentInstance* CurrentComponentInstance() const;
 
-    // The whole-application live-widget registry (docs/next-steps.md, "Live-widget root
-    // registry, for Lustre's hot-reload") — holds whatever `Umbra::IWidget*` the consuming
+    // The whole-application live-widget registry
+    // (docs/archive/iris_next_steps_resolved.md, "Live-widget root registry, for Lustre's
+    // hot-reload") — holds whatever `Umbra::IWidget*` the consuming
     // app last registered as its mounted tree's root, with zero backend-specific content
     // (`Umbra::IWidget` is already the backend-agnostic interface the reconciler itself
     // walks/mutates through). A later `RegisterRoot` call simply replaces the previous
@@ -263,8 +264,9 @@ void Tick();
 // concern needing "the whole mounted tree" (a debugger, an inspector) gets this for free.
 void RegisterRoot(Umbra::IWidget* Root);
 
-// The most recently registered root, or nullptr if none has been (docs/next-steps.md,
-// "Live-widget root registry, for Lustre's hot-reload").
+// The most recently registered root, or nullptr if none has been
+// (docs/archive/iris_next_steps_resolved.md, "Live-widget root registry, for Lustre's
+// hot-reload").
 Umbra::IWidget* GetRoot();
 
 } // namespace iris

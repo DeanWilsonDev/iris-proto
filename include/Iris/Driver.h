@@ -20,8 +20,8 @@ struct DriverResult {
     // "Chaos"/"Cosmos" terminology rule) for what docs/iris_nyx_emission_decision.md and
     // chaos-ir-spec.md §3 both specify the schema for -- not C++ -- `.irisx` bypasses
     // Codegen.cpp entirely rather than producing text a C++ compiler could ever accept
-    // (docs/next-steps.md, "`Codegen` has no Nyx-target emission"). Empty whenever
-    // Diagnostics is non-empty, same convention as CodegenResult, in both cases.
+    // (docs/archive/iris_next_steps_resolved.md, "`Codegen` has no Nyx-target emission").
+    // Empty whenever Diagnostics is non-empty, same convention as CodegenResult, in both cases.
     std::string                    Output;
     std::vector<DriverDiagnostic>  Diagnostics;
 };

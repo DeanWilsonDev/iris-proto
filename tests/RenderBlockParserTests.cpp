@@ -286,7 +286,7 @@ DESCRIBE("RenderBlockParser", {
         // the stray '}' as a bare CloseBrace token, which closes the `content={ }` escape
         // hatch prematurely and desyncs the rest of the parse. Same source, only the
         // FilePath extension differs — this is the one place TokenizerFactory's dispatch
-        // (docs/next-steps.md's "NyxTokenizer... PARTIALLY RESOLVED" entry) is actually
+        // (docs/archive/iris_next_steps_resolved.md's "NyxTokenizer" entry) is actually
         // observable from RenderBlockParser's output rather than just from a unit test
         // against NyxTokenizer in isolation.
         constexpr std::string_view Source = R"(render { <Text content={`hi}there`} /> })";
@@ -312,7 +312,8 @@ DESCRIBE("RenderBlockParser", {
         // AppendText/PrecededByWhitespace, so two adjacent identifiers only keep their
         // source-level gap if Advance()'s whitespace detection works for a tokenizer that
         // never emits a whitespace token -- this is the exact `() -> { return count; }`
-        // repro from docs/next-steps.md's "Codegen has no Nyx-target emission" entry,
+        // repro from docs/archive/iris_next_steps_resolved.md's "Codegen has no Nyx-target
+        // emission" entry,
         // which (at the time it was filed) came back as "returncount" with the gap lost.
         constexpr std::string_view Source = R"(render { <Slot> !{ () -> { return count; } } </Slot> })";
 

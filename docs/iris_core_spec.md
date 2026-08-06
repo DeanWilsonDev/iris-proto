@@ -409,8 +409,8 @@ struct Component {
 
 (Illustrative only — the real, current shape in `include/Iris/Component.h` also carries
 `SlotCallable` per §1.5/`docs/iris_stage1_codegen_decision.md`, `NativeBuilder` per §3.1's
-`<Native>` entry (`docs/next-steps.md`, "No way to declare a custom widget/imperative-draw
-node as an Iris element"), and an `IrisElementTag::None` sentinel plus `nullptr_t` converting
+`<Native>` entry (`docs/archive/iris_next_steps_resolved.md`, "No way to declare a custom
+widget/imperative-draw node as an Iris element"), and an `IrisElementTag::None` sentinel plus `nullptr_t` converting
 constructor per §8's resolved `nullptr`-conversion gap.)
 
 `NativeBuilder` is the one place this IR's backend-agnostic guarantee is deliberately,
@@ -529,7 +529,7 @@ the one exception to the shared method set — see its entry below.
   a renderer/backend to load through.
 
 **`<Icon>`** — Renders a single vector glyph resolved by name from a backend/app-supplied icon
-catalog (`docs/next-steps.md`, "`<Icon>` size prop and vector-glyph tag" — resolved).
+catalog (`docs/archive/iris_next_steps_resolved.md`, "`<Icon>` size prop and vector-glyph tag").
 - Props: `icon` (string, required — the catalog key, e.g. `icon="chevron-down"`), `size` (float,
   optional — the glyph's logical-pixel square side; omitted means the backend's own default,
   `Penumbra::Widgets::IconWidget::SizeLogical`'s `16.0f`), `class`, `key`. No event props, no
@@ -545,8 +545,8 @@ catalog (`docs/next-steps.md`, "`<Icon>` size prop and vector-glyph tag" — res
   catalog wired up may leave the glyph undrawn, the same "build succeeds, nothing loaded"
   tolerance `<Image>` already has when `ImageBackend`/`SdlRenderer` are null.
 
-**`<Scroll>`** — A scrolling clip container (`docs/next-steps.md`, "`<Scroll>` / `<Input>` Core
-primitive tags" — resolved).
+**`<Scroll>`** — A scrolling clip container (`docs/archive/iris_next_steps_resolved.md`,
+"`<Scroll>` / `<Input>` Core primitive tags").
 - Props: `wheelStep` (float, optional — logical pixels scrolled per wheel notch; omitted
   means the backend's own default, `0.0f`, "no opinion"), `class`, `key`, any event prop.
 - Children: element children only, same as `<Frame>` — no literal text or interpolated
@@ -559,14 +559,15 @@ primitive tags" — resolved).
   inherited `Box::AddChild` directly. `WheelStepLogical` is likewise a plain public
   field.
 
-**`<Input>`** — Single-line text entry (`docs/next-steps.md`, "`<Scroll>` / `<Input>` Core
-primitive tags" — resolved).
+**`<Input>`** — Single-line text entry (`docs/archive/iris_next_steps_resolved.md`,
+"`<Scroll>` / `<Input>` Core primitive tags").
 - Props: `text` (string, optional — the initial value; not live-bound, changing it after
   mount doesn't reach an already-built widget any more than any other prop here does),
   `preferredWidth` (float, optional — a field-width hint, `Penumbra::Widgets::
   TextInput::PreferredWidthLogical`), `onTextChange` (`function<void(std::string)>`,
   optional — fires with the field's new text, wired to `TextInput::OnTextChanged`;
-  `docs/next-steps.md`, "`<Input>`'s `onChange` can't carry the new text" — resolved), `class`,
+  `docs/archive/iris_next_steps_resolved.md`, "`<Input>`'s `onChange` can't carry the new
+  text"), `class`,
   `key`. Distinct from the shared zero-argument `onChange` prop (still present on every
   primitive's prop type table but not meaningfully usable on `<Input>`, since it can't carry
   *what* changed) — `IrisPropValue` (`include/Iris/IrisProps.h`) now has a
@@ -605,8 +606,9 @@ primitive tags" — resolved).
   also why `class` isn't meaningful on it: there's nothing for Lustre to select against on a node
   that never reaches a widget tree.
 
-**`<Native>`** — An opaque escape-hatch node wrapping an already-built widget (`docs/
-next-steps.md`, "No way to declare a custom widget/imperative-draw node as an Iris element").
+**`<Native>`** — An opaque escape-hatch node wrapping an already-built widget
+(`docs/archive/iris_next_steps_resolved.md`, "No way to declare a custom widget/imperative-draw
+node as an Iris element").
 Not a widget type of its own — a documented, sanctioned way to splice a hand-rolled `Box`
 subclass (the composition pattern every backend already uses for custom
 draw/hit-testing/hover-state widgets — `TreeRow`, `DropdownTrigger`, a treemap's
@@ -630,8 +632,8 @@ panel it lives in to stay hand-built.
   tree instead of requiring the whole panel to be hand-built. This doesn't generalize to
   ordinary primitives or components; every other tag's reconciliation is unchanged.
 
-**`<Split>`** — A draggable-handle resizable split (`docs/next-steps.md`, "No
-layout-container primitive beyond Frame's three stack modes"). Distinct from `<Frame>`'s
+**`<Split>`** — A draggable-handle resizable split (`docs/archive/iris_next_steps_resolved.md`,
+"No layout-container primitive beyond Frame's three stack modes"). Distinct from `<Frame>`'s
 stack modes (a Lustre `display`/`flex-direction` styling concern, not an Iris grammar one —
 see that entry's own scope note): `SplitPanel` is a genuinely different widget shape with
 exactly two structurally-distinct slots and its own drag-interaction state, the same kind of

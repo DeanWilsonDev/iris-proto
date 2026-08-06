@@ -9,8 +9,9 @@
 > interpreted (not compiled) host language, with Penumbra updating the on-screen drawing
 > live as that language's source changes — surfaced that this repo's own docs had already
 > flagged the underlying need, twice, without ever sizing it against the real code:
-> `next-steps.md`'s "Live-widget root registry, for Lustre's hot-reload" entry (its
-> "Explicitly not requested" section) and `../../lustre/docs/lustre_handoff.md` (§3,
+> `docs/archive/iris_next_steps_resolved.md`'s "Live-widget root registry, for Lustre's
+> hot-reload" entry (its "Explicitly not requested" section) and
+> `../../lustre/docs/lustre_handoff.md` (§3,
 > "Runtime-loaded, not compiled ahead of time"). This doc is that sizing pass.
 
 ---
@@ -64,7 +65,7 @@ nothing outside a `SlotState` currently has:
 So the mechanically obvious approach — re-run the component's `render{}`, get a fresh
 `Component` tree, hand it to `Reconcile()` alongside `iris::GetRoot()` — doesn't work as
 written today. There is no whole-app "the tree currently mounted, and the IR it came from"
-record for a hot-reload driver to hand to the reconciler; `next-steps.md`'s own framing of
+record for a hot-reload driver to hand to the reconciler; `docs/archive/iris_next_steps_resolved.md`'s own framing of
 the original gap ("no whole-application live-widget registry or tree-walk entry point... 
 `SlotState` tracks only its own slot's live widget(s)") undersold how much of this piece
 specifically blocks logic hot-reload, since it was written to justify the read-only

@@ -22,8 +22,8 @@ const std::unordered_map<std::string, std::string>& PrimitivePropTypeNames() {
         {"icon", "std::string"},
         {"size", "float"},
         {"wheelStep", "float"},
-        // <Split>'s own dedicated props (docs/next-steps.md, "No layout-container primitive
-        // beyond Frame's three stack modes" -- resolved), mirroring
+        // <Split>'s own dedicated props (docs/archive/iris_next_steps_resolved.md, "No
+        // layout-container primitive beyond Frame's three stack modes"), mirroring
         // Penumbra::Widgets::SplitPanel's real fields (Axis/SplitRatio/
         // HandleThicknessLogical/MinPaneSizeLogical). `axis` is a plain string
         // ("horizontal"|"vertical") rather than a new bool/enum IrisPropValue kind --
@@ -46,9 +46,10 @@ const std::unordered_map<std::string, std::string>& PrimitivePropTypeNames() {
         {"onHover", "std::function<void()>"},
         {"onFocus", "std::function<void()>"},
         {"onChange", "std::function<void()>"},
-        // <Input>'s own value-carrying event prop (docs/next-steps.md, "<Input>'s onChange
-        // can't carry the new text" -- resolved) -- distinct from the shared zero-argument
-        // `onChange` above so every other primitive's event-prop shape stays unchanged.
+        // <Input>'s own value-carrying event prop (docs/archive/iris_next_steps_resolved.md,
+        // "<Input>'s onChange can't carry the new text") -- distinct from the shared
+        // zero-argument `onChange` above so every other primitive's event-prop shape stays
+        // unchanged.
         {"onTextChange", "std::function<void(std::string)>"},
     };
     return Types;

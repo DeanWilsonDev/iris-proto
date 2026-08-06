@@ -53,8 +53,9 @@ void WalkElement(const Iris::ElementNode& Node, std::vector<SemanticToken>& Out)
         WalkPropValue(*Node.Key, Out);
     }
     if (Node.Ref) {
-        // Same treatment as `key` above -- `ref` (docs/next-steps.md) is a reserved prop
-        // name stripped before codegen, but its value can still nest elements worth walking.
+        // Same treatment as `key` above -- `ref` (docs/archive/iris_next_steps_resolved.md)
+        // is a reserved prop name stripped before codegen, but its value can still nest
+        // elements worth walking.
         WalkPropValue(*Node.Ref, Out);
     }
 

@@ -24,7 +24,7 @@ enum class HostLanguage {
 HostLanguage DetermineHostLanguage(std::string_view FilePath);
 
 // The one dispatch point IHostLanguageTokenizer.h's own doc comment promised but that didn't
-// exist anywhere in code until now (docs/next-steps.md, "NyxTokenizer... PARTIALLY RESOLVED"):
+// exist anywhere in code until now (docs/archive/iris_next_steps_resolved.md, "NyxTokenizer"):
 // selects CppTokenizer or NyxTokenizer by FilePath's extension, per docs/iris_core_spec.md §0's
 // File model ("the file extension is the sole source of truth for which host language a file
 // uses"). `.irisx` -> NyxTokenizer; every other extension (`.iris`, and anything unrecognized)

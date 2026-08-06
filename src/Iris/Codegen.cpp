@@ -114,8 +114,9 @@ private:
                EmitPropValueExpression(KeyValue) + "); return Node; }()";
     }
 
-    // `ref` (docs/next-steps.md, "Named-child-handle (`ref`) prop") — same IIFE mechanism as
-    // `EmitWithKey` above, setting `Component::Ref` instead of `Component::Key`. Composes with
+    // `ref` (docs/archive/iris_next_steps_resolved.md, "Named-child-handle (`ref`) prop") —
+    // same IIFE mechanism as `EmitWithKey` above, setting `Component::Ref` instead of
+    // `Component::Key`. Composes with
     // an already-present key wrap (`Emit()` applies this second, around whatever `EmitWithKey`
     // already produced), since each wrap only touches its own field before returning `Node`.
     std::string EmitWithRef(const std::string& BaseExpression, const PropValue& RefValue) {
@@ -257,10 +258,11 @@ private:
                Lambda + ")}";
     }
 
-    // `<Native>`'s single `build` prop becomes a `Component::NativeBuilder` (docs/
-    // next-steps.md, "No way to declare a custom widget/imperative-draw node as an Iris
-    // element") -- deliberately not routed through `EmitPrimitiveProps`/`IrisProps` like an
-    // ordinary prop, the same "own dedicated field, not a Props entry" treatment `EmitSlot`
+    // `<Native>`'s single `build` prop becomes a `Component::NativeBuilder`
+    // (docs/archive/iris_next_steps_resolved.md, "No way to declare a custom
+    // widget/imperative-draw node as an Iris element") -- deliberately not routed through
+    // `EmitPrimitiveProps`/`IrisProps` like an ordinary prop, the same "own dedicated field,
+    // not a Props entry" treatment `EmitSlot`
     // above already gives `<Slot>`'s callable child, and for the same reason: nothing about
     // `build`'s value (an already-built widget handle) belongs in the reconciler's
     // content-diffed prop map.
