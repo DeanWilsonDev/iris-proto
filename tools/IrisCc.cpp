@@ -1,7 +1,15 @@
-// The Iris preprocessor CLI: `.iris`/`.irisx` -> compilable `.cpp`, wrapping
-// Iris::CompileFile (include/Iris/Driver.h). Usage:
+// The Iris preprocessor CLI: `.iris` -> compilable C++ header, `.irisx` -> Iris IR JSON
+// document, wrapping Iris::CompileFile (include/Iris/Driver.h). Usage:
 //
-//   iris_cc <input.iris|input.irisx> [-o <output.cpp>] [--project-root <dir>]
+//   iris_cc <input.iris|input.irisx> [-o <output-path>] [--project-root <dir>]
+//
+// `-o`'s expected extension follows the input file's own: `Name.iris` conventionally goes
+// to `Name.iris.h` (an `#include`-able header — docs/iris_import_header_decision.md);
+// `Name.irisx` conventionally goes to `Name.iris.ir` (an Iris IR JSON document, *not* a
+// header -- docs/iris_nyx_emission_decision.md; the "Iris IR" name, not "Chaos IR", per
+// CLAUDE.md's "Chaos"/"Cosmos" terminology rule for this repo's own concrete artifacts).
+// `iris_cc` itself doesn't enforce either convention -- it writes `Result.Output` to
+// whatever `-o` path is given -- but `cmake/IrisCompileDirectory.cmake` follows it.
 //
 // `--project-root` defaults to the nearest ancestor directory (starting from the input
 // file's own directory) containing a `.iris.json` — the same "nearest ancestor config"
@@ -9,7 +17,7 @@
 // doesn't specify one itself (the project root is simply "the directory `.iris.json`
 // lives in", with searchPaths relative to it).
 //
-// Without `-o`, generated source goes to stdout; diagnostics always go to stderr, one per
+// Without `-o`, generated output goes to stdout; diagnostics always go to stderr, one per
 // line as `<file>:<line>:<col>: error: <message>`. Exit code is 0 on success, 1 on any
 // diagnostic (including a missing/malformed `.iris.json`) or usage/I/O error.
 
@@ -76,7 +84,7 @@ int main(int Argc, char** Argv) {
     }
 
     if (InputPath.empty()) {
-        std::cerr << "usage: iris_cc <input.iris|input.irisx> [-o <output.cpp>] [--project-root <dir>]\n";
+        std::cerr << "usage: iris_cc <input.iris|input.irisx> [-o <output-path>] [--project-root <dir>]\n";
         return 1;
     }
 

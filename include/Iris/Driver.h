@@ -16,11 +16,12 @@ struct DriverDiagnostic {
 
 struct DriverResult {
     // For `.iris` (host language cpp): valid host-language (C++23) source. For `.irisx`
-    // (host language nyx): a Chaos IR JSON document (docs/iris_nyx_emission_decision.md;
-    // chaos-ir-spec.md §3), not C++ -- `.irisx` bypasses Codegen.cpp entirely rather than
-    // producing text a C++ compiler could ever accept (docs/next-steps.md, "`Codegen` has
-    // no Nyx-target emission"). Empty whenever Diagnostics is non-empty, same convention as
-    // CodegenResult, in both cases.
+    // (host language nyx): an Iris IR JSON document -- this repo's own name (CLAUDE.md's
+    // "Chaos"/"Cosmos" terminology rule) for what docs/iris_nyx_emission_decision.md and
+    // chaos-ir-spec.md §3 both specify the schema for -- not C++ -- `.irisx` bypasses
+    // Codegen.cpp entirely rather than producing text a C++ compiler could ever accept
+    // (docs/next-steps.md, "`Codegen` has no Nyx-target emission"). Empty whenever
+    // Diagnostics is non-empty, same convention as CodegenResult, in both cases.
     std::string                    Output;
     std::vector<DriverDiagnostic>  Diagnostics;
 };
@@ -38,14 +39,14 @@ struct DriverResult {
 //   resync line numbers after every splice (docs/iris_core_spec.md §6), since collapsing a
 //   (usually multi-line) `render { }` block into a single-line `return` statement shifts
 //   every line after it.
-// - `.irisx` (nyx): `Codegen.cpp` is never invoked. `BuildChaosIr` (`ChaosIr.h`) walks the
-//   same `ScanImports`/`RenderBlockParser` output directly into a Chaos IR JSON document,
+// - `.irisx` (nyx): `Codegen.cpp` is never invoked. `BuildIrisIr` (`IrisIr.h`) walks the
+//   same `ScanImports`/`RenderBlockParser` output directly into an Iris IR JSON document,
 //   serialized via `Amanuensis::Writer::WriteToString`. No C++ text is ever produced or
 //   spliced for this path.
 //
-// Per docs/iris_import_header_decision.md: every `.iris`/`.irisx` file compiles to one
-// self-contained header (conventionally `<original-path>.h`, e.g. `Button.iris.h`) rather
-// than a declaration/definition pair — Iris never parses struct or function signatures
+// Per docs/iris_import_header_decision.md: every `.iris` file compiles to one self-contained
+// header (conventionally `<original-path>.h`, e.g. `Button.iris.h`) rather than a
+// declaration/definition pair — Iris never parses struct or function signatures
 // (docs/iris_core_spec.md §2.1), so it has no way to synthesize a real forward declaration
 // for either `<Name>Props` or `<Name>` itself; only a full, header-only definition is
 // achievable without crossing that boundary. `Output` therefore always starts with
@@ -58,6 +59,13 @@ struct DriverResult {
 // signature it's committed not to touch); it's a convention the component's author
 // applies themselves, same as any other host-language detail Iris passes through
 // untouched.
+//
+// `.irisx` doesn't go through any of the above -- its output is Iris IR JSON data, not a
+// header, so nothing about the `#pragma once`/`#include`-splicing/`inline` conventions
+// applies to it. Its own naming convention (`<original-path>.iris.ir`, e.g.
+// `Button.irisx` -> `Button.iris.ir`) is established at the `iris_cc` CLI/
+// `cmake/IrisCompileDirectory.cmake` layer, not here -- `Driver::CompileFile` itself is
+// agnostic to what path `Output` eventually gets written to.
 //
 // `ImportResolver`'s own unresolved-import errors, `RenderBlockParser`'s parse errors,
 // `ValidateElementTree`'s semantic errors, and `GenerateComponentExpression`'s codegen

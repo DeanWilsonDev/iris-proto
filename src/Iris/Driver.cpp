@@ -1,5 +1,5 @@
 #include "Iris/Driver.h"
-#include "Iris/ChaosIr.h"
+#include "Iris/IrisIr.h"
 #include "Iris/Codegen.h"
 #include "Iris/ImportResolver.h"
 #include "Iris/RenderBlockParser.h"
@@ -139,9 +139,9 @@ DriverResult CompileFile(std::string_view Source, std::string FilePath, const Ir
     // Every import resolved successfully by this point — an unresolved one is a
     // Diagnostics entry above, which already returned early.
     if (IsNyx) {
-        const Amanuensis::Value ChaosIrDoc =
-            BuildChaosIr(Source, FilePath, Imports, ResolvedImports.Resolved, ParseResult);
-        Result.Output = Amanuensis::Writer::WriteToString(ChaosIrDoc);
+        const Amanuensis::Value IrisIrDoc =
+            BuildIrisIr(Source, FilePath, Imports, ResolvedImports.Resolved, ParseResult);
+        Result.Output = Amanuensis::Writer::WriteToString(IrisIrDoc);
         return Result;
     }
 

@@ -1,6 +1,6 @@
 #include "cimmerian/test.hpp"
 
-#include "Iris/ChaosIr.h"
+#include "Iris/IrisIr.h"
 #include "Iris/ImportResolver.h"
 #include "Iris/RenderBlockParser.h"
 
@@ -18,11 +18,11 @@ RenderBlockParser::Result Parse(std::string_view Source, const std::string& File
     return Parser.Parse();
 }
 
-// Builds the Chaos IR for a source string with no imports — the common case most of these
-// tests exercise. Tests that care about imports call BuildChaosIr directly instead.
+// Builds the Iris IR for a source string with no imports — the common case most of these
+// tests exercise. Tests that care about imports call BuildIrisIr directly instead.
 Amanuensis::Value Build(std::string_view Source, const std::string& FilePath = "test.irisx") {
     const RenderBlockParser::Result ParseResult = Parse(Source, FilePath);
-    return BuildChaosIr(Source, FilePath, {}, {}, ParseResult);
+    return BuildIrisIr(Source, FilePath, {}, {}, ParseResult);
 }
 
 const Amanuensis::Value& Field(const Amanuensis::Value& V, const std::string& Key) {
@@ -39,7 +39,7 @@ bool Contains(const std::string& Haystack, std::string_view Needle) {
 
 } // namespace
 
-DESCRIBE("ChaosIr", {
+DESCRIBE("IrisIr", {
     IT("the top-level document carries version/sourceFile/hostLanguage", {
         const Amanuensis::Value Doc = Build("render { <Frame /> }");
         ASSERT_TRUE(Str(Field(Doc, "version")) == "1.0");
@@ -151,7 +151,7 @@ DESCRIBE("ChaosIr", {
         const std::vector<ResolvedImport> Resolved({ResolvedImport{"Button", "components/Button.irisx"}});
         const RenderBlockParser::Result   ParseResult = Parse(Source, FilePath);
 
-        const Amanuensis::Value Doc = BuildChaosIr(Source, FilePath, Imports, Resolved, ParseResult);
+        const Amanuensis::Value Doc = BuildIrisIr(Source, FilePath, Imports, Resolved, ParseResult);
 
         const Amanuensis::Value& ImportNodes = Field(Doc, "imports");
         REQUIRE_TRUE(Amanuensis::Json::Size(ImportNodes) == 1);

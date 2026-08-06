@@ -1,4 +1,4 @@
-#include "Iris/ChaosIr.h"
+#include "Iris/IrisIr.h"
 
 #include <amanuensis/json.hpp>
 
@@ -256,7 +256,7 @@ Amanuensis::Value SerializeImport(const ImportStatement& Import, const std::stri
 // from `body` entirely -- it's reported separately in the top-level `imports` array, per
 // chaos-ir-spec.md §3.1/§4's own worked example, where the import line never reappears
 // inside `body`'s nyx_source text) or a `render { }` block. Sorted by start offset so
-// `BuildChaosIr` can walk the file once, left to right, alternating "gap of nyx_source" with
+// `BuildIrisIr` can walk the file once, left to right, alternating "gap of nyx_source" with
 // "cut" the same way Driver.cpp's own Edit-sorting does for its splice-based `.iris` output.
 struct Cut {
     std::size_t    StartOffset;
@@ -268,7 +268,7 @@ struct Cut {
 
 } // namespace
 
-Amanuensis::Value BuildChaosIr(std::string_view Source, const std::string& FilePath,
+Amanuensis::Value BuildIrisIr(std::string_view Source, const std::string& FilePath,
                                 const std::vector<ImportStatement>& Imports,
                                 const std::vector<ResolvedImport>& ResolvedImportsList,
                                 const RenderBlockParser::Result& ParseResult) {

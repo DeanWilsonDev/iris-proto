@@ -33,6 +33,21 @@ Lustre's own prototype code in this repo (or its sibling `lustre` repo) — don'
 `chaos-proto`/`cosmos-proto` repo that doesn't exist, and don't rename this repo or its `Iris::`
 namespace preemptively.
 
+**Concrete artifacts this repo itself produces or names — file extensions, type/function
+names, output-file naming conventions — use "Iris" branding, not "Chaos"/"Cosmos", even where
+a design doc being implemented uses the future name.** E.g. `.irisx`'s IR output is
+`<Name>.iris.ir` (an "Iris IR" document, `include/Iris/IrisIr.h`'s `BuildIrisIr`), not
+`.chaos.ir`/`BuildChaosIr`, even though `chaos-ir-spec.md` and this repo's own
+`docs/iris_nyx_emission_decision.md` call the same schema "Chaos IR" — that name is correct
+*in those design docs* (citing `chaos-ir-spec.md`'s own vocabulary/filename is fine and
+expected) but not for a symbol, file, or generated-file naming convention this repo owns.
+Reserve "Chaos"/"Cosmos" in this repo's own code/comments for two cases only: naming an
+external doc that already has that name in its own filename (`chaos-ir-spec.md`), and
+describing a not-yet-built future thing a design doc itself names that way (e.g. "the Chaos
+runtime" as the not-yet-built `.chaos.ir`/`.iris.ir` consumer, per
+`docs/iris_nyx_emission_decision.md`) — never for something this repo actually builds or ships
+under its current, not-yet-renamed identity.
+
 ## Build and test
 
 ```sh

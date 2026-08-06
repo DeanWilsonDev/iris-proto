@@ -10,7 +10,7 @@ namespace Iris {
 
 // Which host language a `.iris`/`.irisx` file's non-`render{}` content is written in --
 // the same fact CreateHostLanguageTokenizer below uses to pick a tokenizer, but also needed
-// by Driver::CompileFile to pick an *output* format (spliced C++23 text for Cpp, a Chaos IR
+// by Driver::CompileFile to pick an *output* format (spliced C++23 text for Cpp, an Iris IR
 // JSON document for Nyx -- docs/iris_nyx_emission_decision.md). Exposed separately from
 // CreateHostLanguageTokenizer so callers that only need the language fact, not a tokenizer
 // instance, don't have to construct one just to inspect it.

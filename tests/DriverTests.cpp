@@ -172,7 +172,7 @@ Component PartyScreen(PartyScreenProps props) {
         // both import lines become #includes of their resolved generated headers
     });
 
-    IT("a .irisx file compiles to a Chaos IR JSON document, not C++", {
+    IT("a .irisx file compiles to an Iris IR JSON document, not C++", {
         Iris::IrisConfig Config;
         Config.Target = Iris::IrisBuildTarget::UmbraEngine;
 

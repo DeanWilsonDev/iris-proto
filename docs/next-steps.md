@@ -1013,3 +1013,74 @@ already-documented `returncount` whitespace-collapse defect was found. All three
   flagged it as.
 - Building any part of the Chaos runtime (the IR consumer) — out of scope for this pass, as
   above.
+
+### Follow-up landed (2026-08-06): `iris_cc`/CMake naming convention for `.irisx` output, and a terminology correction (`.iris.ir`, not `.chaos.ir`)
+
+> **Status:** The open sub-decision the previous follow-up left unresolved ("Whether `.irisx`
+> compiling to `.chaos.ir` instead of a `.h` header changes `iris_cc`'s CLI contract... and
+> `cmake/IrisCompileDirectory.cmake`") is now resolved. Also corrects that follow-up's own
+> naming, per Dean's explicit steer (2026-08-06): this repo's own concrete artifacts use "Iris"
+> branding, not "Chaos"/"Cosmos" — codified as a new CLAUDE.md rule in the same pass.
+
+#### What landed
+
+- **Terminology correction.** `.chaos.ir` (never actually wired into any file-naming
+  convention in code — only ever a prose naming choice in `docs/iris_nyx_emission_decision.md`
+  and this file's own previous entry) is now `.iris.ir` wherever it's implemented. The
+  serializer that previously landed under the "Chaos IR" name is renamed to match:
+  `include/Iris/ChaosIr.h`/`src/Iris/ChaosIr.cpp` → `IrisIr.h`/`IrisIr.cpp`,
+  `Iris::BuildChaosIr` → `Iris::BuildIrisIr`, `tests/ChaosIrTests.cpp` →
+  `tests/IrisIrTests.cpp` (`DESCRIBE("ChaosIr", ...)` → `DESCRIBE("IrisIr", ...)`), and every
+  doc comment describing "the Chaos IR" as *this repo's own* output now says "Iris IR" instead
+  — comments citing `chaos-ir-spec.md`'s own filename/vocabulary, or naming the not-yet-built
+  "Chaos runtime" (the future IR *consumer*, per `docs/iris_nyx_emission_decision.md`), are
+  unchanged, since those correctly refer to the external spec and a future rename respectively,
+  not something this repo currently ships under the Chaos name. Codified as a new rule in
+  `CLAUDE.md`'s "Chaos"/"Cosmos" terminology section: concrete artifacts this repo produces or
+  names (file extensions, symbol names, output-naming conventions) use Iris branding even when
+  the design doc being implemented uses the future name.
+- **`cmake/IrisCompileDirectory.cmake`.** `iris_compile_directory` now also globs
+  `<source-dir>/*.irisx` (previously `.irisx` files were silently ignored by this helper
+  entirely — not just mis-named, not handled at all) and emits one `add_custom_command` per
+  file compiling `Name.irisx` → `<generated-header-dir>/Name.iris.ir` via `iris_cc`, added to
+  the same `<target>_generate_iris` dependency target as `.iris`'s own generated headers.
+  `target_include_directories` is still applied to the shared output directory (harmless for a
+  non-`#include`-able JSON file sitting alongside real headers, not a claim that `.iris.ir` is
+  meant to be included) — documented explicitly in the function's own doc comment rather than
+  left implicit.
+- **`tools/IrisCc.cpp`.** Doc comment and `-o`'s usage text updated to describe both output
+  shapes (`Name.iris.h` header for `.iris`, `Name.iris.ir` Iris IR JSON for `.irisx`) and note
+  that `iris_cc` itself doesn't enforce either naming convention — it writes `Result.Output` to
+  whatever path `-o` is given, same as before this pass; only `cmake/IrisCompileDirectory.cmake`
+  actually follows the convention. No behavioral change to the CLI itself.
+- **`include/Iris/Driver.h`.** `DriverResult::Output`'s doc comment, and `CompileFile`'s own,
+  corrected a pre-existing inaccuracy this pass surfaced: the `docs/iris_import_header_decision.md`
+  self-contained-header/`#pragma once`/`import`-becomes-`#include` paragraph was written before
+  the Chaos IR decision landed and, until now, still claimed to apply to `.irisx` as well as
+  `.iris` — it doesn't (`.irisx` output is IR JSON data, not a header, and none of those
+  conventions apply to it). Now scoped to `.iris` only, with a new paragraph stating `.irisx`'s
+  own naming convention lives at the `iris_cc`/CMake layer, not in `Driver::CompileFile` itself.
+- Verified end-to-end with a throwaway smoke-test directory (a `.iris.json` + one `.irisx` file
+  + one `.iris` file + a standalone `CMakeLists.txt` importing the real built `iris_cc` binary
+  and calling `iris_compile_directory`), confirming both `Name.iris.h` and `Name.iris.ir` are
+  produced side by side in the same generated-output directory with correct content — then
+  removed, same "verify via a throwaway subdirectory, don't leave it behind" convention the
+  original CMake-helper entry above used. Full `test_iris` suite (162/162) passes; no test
+  behavior changed by the rename itself (only identifiers/file names), confirmed by an
+  unchanged pass count before and after.
+
+#### What's still open
+
+- **The Chaos runtime itself (the `.iris.ir`/`.chaos.ir` consumer)** — unchanged, still
+  separate, not-yet-scoped follow-up work, as every prior entry in this section already said.
+- **IR generation trigger** (on save, on demand, or a build step) — `iris_compile_directory`
+  answers "as a build step, via CMake," but `chaos-ir-spec.md` §7's own broader open question
+  (e.g. an editor/LSP-triggered regeneration for a real hot-reload workflow) remains open,
+  unchanged from `iris_nyx_emission_decision.md`'s own framing.
+
+#### Explicitly not requested
+
+- Renaming `chaos-ir-spec.md` itself, or anything in `fearless-hq`/`nyx-proto` — those are
+  external repos/docs this repo doesn't own; the terminology rule is scoped to this repo's own
+  code and comments only, per the new CLAUDE.md wording itself.
+- Building the Chaos runtime — out of scope for this pass, as every prior entry already said.
