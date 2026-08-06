@@ -853,3 +853,38 @@ assumed here.
 - An implementation from the `pharos-proto` side — this is this repo's own file/architecture
   decision (`CLAUDE.md`'s "record the ask... then stop" rule), not something to hack around in an
   application repo.
+
+### Follow-up (2026-08-06): execution-model resolved — `.irisx` targets the Chaos IR, not Nyx source text
+
+> **Status:** Still open — a design decision, not yet implemented. Supersedes this entry's own
+> earlier "Proposed shape" fork (compiled vs. interpreted `.irisx`) — the real answer turned out
+> to already be specified in nyx-proto's own design docs, not something to invent here.
+
+Dean's explicit steer, on reviewing the fork above: Nyx stays interpreted end to end — `.irisx`
+render output is never translated into C++. Reading `chaos-ir-spec.md`/`chaos-ui-authoring.md`
+directly (`fearless-hq/projects/nyx-scripting-language/`, symlinked into `nyx-proto` — missing
+from this repo's own `libs/nyx-proto` submodule checkout, hence not consulted on the first pass)
+showed the target isn't Nyx source text either: `.irisx`/`.chaos` compile to a **Chaos IR** — a
+JSON document (`<file>.chaos.ir`) already fully schema'd in `chaos-ir-spec.md`, explicitly
+naming `iris_cc` as its prototype producer. The schema maps almost 1:1 onto types this repo
+already has (`ElementNode`, `RenderBlockParser::ParsedBlock`, `ImportStatement`,
+`SourceLocation`), so no Nyx-side host-bindings module is needed to *produce* it (an earlier
+draft of the linked decision doc proposed one — corrected).
+
+**Follow-up correction (2026-08-06, same day):** the design docs' own prose put *consuming*
+that IR — walking `<Slot>`, reconciling, building widgets — inside "the Nyx interpreter," which
+would have made nyx-proto Chaos-aware (the same wrong-direction coupling as a JS engine needing
+to know about React). Corrected across both repos as nyx-proto's `decision-log.md` §7.2: the
+**Chaos runtime — the `.chaos.ir` consumer — is iris-proto's own responsibility**, not
+nyx-proto's, calling into Nyx only through a generic embedding primitive nyx-proto doesn't
+expose yet (`Run`/`RunFile` only execute a whole script end-to-end today; §7.2 names the
+missing "evaluate this source against a live scope" primitive as needed follow-up there). Also
+confirmed explicitly: Iris never constructs a `NyxRuntime` itself, that's always the consuming
+application's job; if the eventual Chaos runtime needs something from Iris's own C++ runtime
+(`SlotRuntime`/`Reconciler`) exposed back to it, that gets scoped as its own `useIris`-shaped
+registration entry point when that need is concrete, not guessed at now.
+
+Full design in `docs/iris_nyx_emission_decision.md`. Picking this up means implementing that
+document's IR serializer and `Driver::CompileFile`'s per-language output fork — the Chaos
+runtime itself (the IR *consumer*) is separate, larger, not-yet-scoped follow-up work, not part
+of what "picking this up" means here.
