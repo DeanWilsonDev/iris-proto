@@ -15,22 +15,33 @@ struct DriverDiagnostic {
 };
 
 struct DriverResult {
-    // Valid host-language (C++23) source — empty whenever Diagnostics is non-empty, same
-    // convention as CodegenResult.
+    // For `.iris` (host language cpp): valid host-language (C++23) source. For `.irisx`
+    // (host language nyx): a Chaos IR JSON document (docs/iris_nyx_emission_decision.md;
+    // chaos-ir-spec.md §3), not C++ -- `.irisx` bypasses Codegen.cpp entirely rather than
+    // producing text a C++ compiler could ever accept (docs/next-steps.md, "`Codegen` has
+    // no Nyx-target emission"). Empty whenever Diagnostics is non-empty, same convention as
+    // CodegenResult, in both cases.
     std::string                    Output;
     std::vector<DriverDiagnostic>  Diagnostics;
 };
 
-// The full `.iris`/`.irisx` -> generated-header pipeline for one source file:
-// `ScanImports`, `RenderBlockParser`, `ValidateElementTree` (against `Config.Target` and
-// the scanned import names), and `GenerateComponentExpression` for every `render { }`
-// block found. On success, each block's generated `Iris::Component`-constructing
-// expression is spliced back into the original source as `return <expr>;` in place of the
-// `render { ... }` block it replaces (docs/iris_core_spec.md §0's "rewrites the file into
-// valid host-language source"; Codegen.h's own doc comment specifies this exact wrapping).
-// `#line` directives resync line numbers after every splice (docs/iris_core_spec.md §6),
-// since collapsing a (usually multi-line) `render { }` block into a single-line `return`
-// statement shifts every line after it.
+// The full `.iris`/`.irisx` -> generated-output pipeline for one source file: `ScanImports`,
+// `RenderBlockParser`, `ValidateElementTree` (against `Config.Target` and the scanned import
+// names), then a fork by host language (`TokenizerFactory.h`'s `DetermineHostLanguage`, the
+// same dispatch fact `CreateHostLanguageTokenizer` already uses):
+//
+// - `.iris` (cpp): `GenerateComponentExpression` for every `render { }` block found, then
+//   each block's generated `Iris::Component`-constructing expression is spliced back into
+//   the original source as `return <expr>;` in place of the `render { ... }` block it
+//   replaces (docs/iris_core_spec.md §0's "rewrites the file into valid host-language
+//   source"; Codegen.h's own doc comment specifies this exact wrapping). `#line` directives
+//   resync line numbers after every splice (docs/iris_core_spec.md §6), since collapsing a
+//   (usually multi-line) `render { }` block into a single-line `return` statement shifts
+//   every line after it.
+// - `.irisx` (nyx): `Codegen.cpp` is never invoked. `BuildChaosIr` (`ChaosIr.h`) walks the
+//   same `ScanImports`/`RenderBlockParser` output directly into a Chaos IR JSON document,
+//   serialized via `Amanuensis::Writer::WriteToString`. No C++ text is ever produced or
+//   spliced for this path.
 //
 // Per docs/iris_import_header_decision.md: every `.iris`/`.irisx` file compiles to one
 // self-contained header (conventionally `<original-path>.h`, e.g. `Button.iris.h`) rather

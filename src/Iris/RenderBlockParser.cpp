@@ -8,6 +8,27 @@ namespace Iris {
 
 namespace {
 
+// Converts a 1-based (Line, Column) into a byte offset into Source -- both tokenizers report
+// real source positions here regardless of whether a token's own Text/Lexeme is a raw
+// substring (CppTokenizer) or a resolved value (NyxTokenizer's StringLiteral), so this is a
+// safe, host-language-agnostic way for ParseEscapeHatch below to find a token's exact byte
+// span without depending on Lexeme lengths at all.
+std::size_t LocationToOffset(std::string_view Source, const SourceLocation& Loc) {
+    std::size_t   Offset = 0;
+    std::uint32_t Line = 1;
+    std::uint32_t Column = 1;
+    while (Offset < Source.size() && (Line < Loc.Line || (Line == Loc.Line && Column < Loc.Column))) {
+        if (Source[Offset] == '\n') {
+            ++Line;
+            Column = 1;
+        } else {
+            ++Column;
+        }
+        ++Offset;
+    }
+    return Offset;
+}
+
 std::string Trim(std::string_view Text) {
     std::size_t Start = 0;
     while (Start < Text.size() && std::isspace(static_cast<unsigned char>(Text[Start]))) {
@@ -23,13 +44,10 @@ std::string Trim(std::string_view Text) {
 } // namespace
 
 RenderBlockParser::RenderBlockParser(std::string_view Source, std::string FilePath)
-    : Source_(Source), FilePath_(std::move(FilePath)), Tokenizer_(CreateHostLanguageTokenizer(Source_, FilePath_)) {}
+    : Source_(Source), FilePath_(std::move(FilePath)), Tokenizer_(CreateHostLanguageTokenizer(Source_, FilePath_)),
+      IsNyxHost_(DetermineHostLanguage(FilePath_) == HostLanguage::Nyx) {}
 
-Token RenderBlockParser::PullRawToken() {
-    Token Tok = Tokenizer_->NextToken();
-    RawOffset_ += Tok.Lexeme.size();
-    return Tok;
-}
+Token RenderBlockParser::PullRawToken() { return Tokenizer_->NextToken(); }
 
 bool RenderBlockParser::IsPunct(char C) const {
     return Current_.Kind == GKind::Punct && Current_.Text.size() == 1 && Current_.Text[0] == C;
@@ -76,6 +94,26 @@ void RenderBlockParser::Advance() {
             // like whitespace for literal-text word-spacing purposes.
             PendingWhitespace_ = true;
             continue;
+        }
+
+        // CppTokenizer surfaces a run of whitespace between two real tokens as (part of)
+        // its own Other lexeme (LexOther() falls through to it for any character that
+        // isn't otherwise recognized, whitespace included), which is how the Other-splitting
+        // block below and the plain-token path further down normally learn "this token was
+        // preceded by whitespace." NyxTokenizer's underlying nyx::Lexer instead silently
+        // consumes whitespace in SkipWhitespaceAndComments() and never emits it as (or
+        // inside) any token at all -- so without this fallback, PendingWhitespace_ can never
+        // become true for `.irisx` source except right after a comment, which silently
+        // breaks ParseJsxEscapeHatch's "'<' preceded by whitespace" JSX-start heuristic for
+        // every `.irisx` file (a `<Tag>` run inside a `!{ }` body would never be recognized
+        // as JSX, only as opaque raw text). Checking the raw source byte immediately before
+        // this token's own start is tokenizer-agnostic and can only ever turn a wrongly-false
+        // PendingWhitespace_ into a correctly-true one -- never the reverse -- so it's safe
+        // to apply unconditionally, including for CppTokenizer, where it's simply redundant
+        // with the Other-lexeme path already handling this correctly.
+        if (!PendingWhitespace_) {
+            const std::size_t Offset = LocationToOffset(Source_, Tok.Location);
+            PendingWhitespace_ = Offset > 0 && std::isspace(static_cast<unsigned char>(Source_[Offset - 1]));
         }
 
         if (Tok.Kind == TokenKind::Other) {
@@ -255,8 +293,13 @@ ElementNode RenderBlockParser::ParseElementAfterLAngle(SourceLocation LAngleLoca
 PropValue RenderBlockParser::ParsePropValue() {
     if (Current_.Kind == GKind::StringLiteral) {
         const SourceLocation Location = Current_.Location;
-        const std::string&   Raw = Current_.Text; // includes surrounding quotes
-        const std::string    Inner = Raw.size() >= 2 ? Raw.substr(1, Raw.size() - 2) : "";
+        const std::string&   Raw = Current_.Text;
+        // CppTokenizer's Text still has its surrounding quotes (a raw source substring);
+        // NyxTokenizer's Text for a string literal is already the *resolved* value, quotes
+        // and escapes already stripped (its own documented difference from CppTokenizer,
+        // docs/next-steps.md's NyxTokenizer entry) -- stripping again here would corrupt it
+        // (e.g. `"a"` -> "" instead of "a").
+        const std::string Inner = IsNyxHost_ ? Raw : (Raw.size() >= 2 ? Raw.substr(1, Raw.size() - 2) : "");
         Advance();
         PropValue Value;
         Value.Kind = PropValueKind::StringLiteral;
@@ -280,15 +323,23 @@ PropValue RenderBlockParser::ParsePropValue() {
 
 PropValue RenderBlockParser::ParseEscapeHatch() {
     const SourceLocation Location = Current_.Location;
-    const std::size_t    BodyStart = RawOffset_; // Current_ == '{', already consumed by PullRawToken
-    int                  Depth = 1;
-    std::size_t          BodyEndExclusive = BodyStart;
+    // Current_ == '{', already consumed by PullRawToken. Body positions are derived from
+    // each token's own SourceLocation, not accumulated Lexeme lengths (the accumulator this
+    // replaced assumed Lexeme.size() always equals the raw bytes a token consumed from
+    // Source_ -- true for CppTokenizer, false for NyxTokenizer's StringLiteral tokens, whose
+    // Lexeme is a *resolved* value shorter than its raw quoted-and-escaped source span; that
+    // mismatch silently desynced every escape-hatch body slice following any string literal
+    // earlier in the same file). '{' is a single character, so one column past its own
+    // start needs no lookup.
+    const std::size_t BodyStart = LocationToOffset(Source_, Location) + 1;
+    int                Depth = 1;
+    std::size_t        BodyEndExclusive = BodyStart;
 
     for (;;) {
         const Token Tok = PullRawToken();
         if (Tok.Kind == TokenKind::EndOfFile) {
             Errors_.push_back({"unterminated '{' escape hatch", Location});
-            BodyEndExclusive = RawOffset_;
+            BodyEndExclusive = LocationToOffset(Source_, Tok.Location);
             break;
         }
         if (Tok.Kind == TokenKind::OpenBrace) {
@@ -298,7 +349,7 @@ PropValue RenderBlockParser::ParseEscapeHatch() {
         if (Tok.Kind == TokenKind::CloseBrace) {
             --Depth;
             if (Depth == 0) {
-                BodyEndExclusive = RawOffset_ - Tok.Lexeme.size();
+                BodyEndExclusive = LocationToOffset(Source_, Tok.Location);
                 break;
             }
         }
@@ -393,7 +444,18 @@ PropValue RenderBlockParser::ParseJsxEscapeHatch() {
         }
 
         if (Current_.Kind == GKind::StringLiteral || Current_.Kind == GKind::CharLiteral) {
-            AppendText(Current_.Text, Current_.PrecededByWhitespace); // already includes quotes
+            // CppTokenizer's Text already includes surrounding quotes (a raw substring);
+            // NyxTokenizer's StringLiteral Text is the resolved value with quotes already
+            // stripped (same difference ParsePropValue's own StringLiteral branch accounts
+            // for above) -- re-add them here so the reconstructed raw-text segment still
+            // looks like real source instead of silently losing its quoting for Nyx. Never
+            // NyxTokenizer for CharLiteral: nyx::TokenKind has no char-literal kind at all
+            // (NyxTokenizer.cpp's own TranslateKind), so this GKind only ever comes from
+            // CppTokenizer, whose Text is already quoted.
+            const std::string Literal = (IsNyxHost_ && Current_.Kind == GKind::StringLiteral)
+                                             ? "\"" + Current_.Text + "\""
+                                             : Current_.Text;
+            AppendText(Literal, Current_.PrecededByWhitespace);
             Advance();
             continue;
         }

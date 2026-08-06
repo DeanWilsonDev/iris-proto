@@ -888,3 +888,128 @@ Full design in `docs/iris_nyx_emission_decision.md`. Picking this up means imple
 document's IR serializer and `Driver::CompileFile`'s per-language output fork — the Chaos
 runtime itself (the IR *consumer*) is separate, larger, not-yet-scoped follow-up work, not part
 of what "picking this up" means here.
+
+### Follow-up landed (2026-08-06): the IR serializer and `Driver::CompileFile`'s per-language fork
+
+> **Status:** The IR-production half of this entry (everything `docs/iris_nyx_emission_decision.md`
+> scoped as "picking this up") is done. The Chaos runtime — the `.chaos.ir` *consumer* — remains
+> separate, not-yet-scoped follow-up work, unchanged from that document's own framing.
+
+#### What landed
+
+- `Iris::BuildChaosIr` (`include/Iris/ChaosIr.h`, `src/Iris/ChaosIr.cpp`) — the serializer
+  `iris_nyx_emission_decision.md` called for, walking `RenderBlockParser::Result`/`ElementNode`/
+  `PropValue`/`JsxSegment`/`ImportStatement` (all pre-existing types) into the `chaos-ir-spec.md`
+  §3 JSON shape (`Amanuensis::Value`, written via the already-vendored `amanuensis` writer — no
+  new dependency). `Driver::CompileFile` (`src/Iris/Driver.cpp`) now forks on
+  `TokenizerFactory.h`'s `DetermineHostLanguage` (new: previously only
+  `CreateHostLanguageTokenizer` made this decision; now exposed separately so `Driver.cpp` can
+  ask the same question without constructing a tokenizer): `.iris` keeps its existing
+  `Codegen.cpp` + textual-splice pipeline verbatim; `.irisx` bypasses `Codegen.cpp` entirely and
+  returns `Amanuensis::Writer::WriteToString(BuildChaosIr(...))` as `DriverResult::Output`
+  instead — exactly the "Codegen.cpp never invoked for .irisx" split the decision doc specified.
+  Verified end-to-end against the real `iris_cc` reproducing `chaos-ir-spec.md` §4's own worked
+  example (a `<Slot>` containing `!{settingsOpen ? <Frame class="hovered" /> : <Frame
+  class="normal" />}`) and getting back correct, fully-populated IR — props, nested elements,
+  and locations all round-trip correctly.
+- Covered by 9 new `tests/ChaosIrTests.cpp` cases (top-level document fields, render_block
+  location/endLocation, nyx_source region slicing around a render block, literal and
+  nyx_expression prop values, key/ref preservation, JSX-transform nested-element extraction, a
+  literal text child, and import-statement handling) plus 2 new `tests/DriverTests.cpp` cases
+  (a `.irisx` file produces parseable Chaos IR JSON with no C++ text anywhere in it; a semantic
+  error still blocks output the same way it does for `.iris`). Full `test_iris` suite (162/162)
+  passes.
+
+#### Three real, pre-existing `RenderBlockParser`/`NyxTokenizer` bugs found and fixed along the way
+
+None of these are new code paths this entry added — they're defects in the existing `.irisx`
+parsing pipeline (`bddaee0`/`5418e01`) that had never been exercised by a source file combining
+string-literal props with an escape hatch, or a `!{ }` body containing a nested `<Tag>`, because
+no prior `.irisx` test or the `SignalProbe.irisx` repro in this file's own entry above did either.
+Serializing real IR data (rather than just checking that parsing didn't error) surfaced them
+immediately as corrupted/missing values, not just as opaque-text-formatting quirks the way the
+already-documented `returncount` whitespace-collapse defect was found. All three are fixed in
+`src/Iris/RenderBlockParser.cpp`/`.h`, not just worked around in the new serializer:
+
+1. **Double quote-stripping.** `ParsePropValue`'s string-literal branch assumed
+   `CppTokenizer`'s raw-substring `Text` convention (quotes still present, stripped once here)
+   — but `NyxTokenizer`'s `StringLiteral` `Text` is already the *resolved* value (its own
+   documented difference, this file's `NyxTokenizer` entry above). Stripping a second time
+   corrupted every string prop/`key`/`ref` value on `.irisx` (`"a"` → `""`, `"row-1"` → `"ow-"`).
+   Fixed by checking a new `IsNyxHost_` member (set once in the constructor from
+   `TokenizerFactory.h`'s `DetermineHostLanguage`) and skipping the strip for Nyx.
+2. **`RawOffset_` desync.** Escape-hatch body text (`ParseEscapeHatch`) was sliced out of the
+   original source using a running byte-offset counter incremented by `Tok.Lexeme.size()` per
+   token — correct only when a token's `Lexeme` length always equals the raw source bytes it
+   consumed, true for `CppTokenizer` but false for `NyxTokenizer`'s (shorter, resolved)
+   `StringLiteral` `Lexeme`. Any string literal earlier in the file silently desynced every
+   subsequent escape-hatch slice, pulling text from the wrong byte range entirely (observed:
+   an `onPress={doIt()}` escape hatch two props after a `class="a"` literal came back as
+   `"ress={"`, sliced from partway through the *previous* prop's own name). Fixed by deriving
+   both ends of an escape hatch's body from each boundary token's own `SourceLocation`
+   (converted to a byte offset the same way `Driver.cpp`/`ChaosIr.cpp` already do) instead of
+   an accumulated length counter — simpler and strictly more robust than what it replaced, not
+   just a Nyx-specific patch.
+3. **`PrecededByWhitespace` never true for Nyx.** `CppTokenizer` surfaces a whitespace run
+   between two real tokens as (part of) its own `Other` lexeme, which is how
+   `ParseJsxEscapeHatch`'s `<Tag>`-inside-`!{ }` detection (`Current_.PrecededByWhitespace`)
+   normally learns a `<` was preceded by whitespace. `NyxTokenizer`'s underlying `nyx::Lexer`
+   silently consumes whitespace in `SkipWhitespaceAndComments()` and never emits it as any
+   token at all — so for `.irisx`, that flag could never become true except right after a
+   comment, meaning **no `<Tag>` inside a `.irisx` `!{ }` body was ever recognized as JSX**; it
+   always fell through to opaque raw text instead (the exact mechanism `chaos-ir-spec.md` §4's
+   own worked example — and this repo's Stage 3 `<Slot>` reactivity story generally — depends
+   on for Nyx). Fixed with a tokenizer-agnostic fallback in `Advance()`: when
+   `PendingWhitespace_` is otherwise false, check the raw source byte immediately before the
+   token's own position directly, rather than trusting the tokenizer to have surfaced it. Safe
+   for `.iris` too (can only turn a wrongly-false flag correctly-true, never the reverse) —
+   confirmed via a full suite re-run, no regressions.
+
+#### What's still open
+
+- **`chaos-ir-spec.md`'s `ElementNode` schema (§3.5) has no `key`/`ref` fields**, only
+  `tag`/`props`/`children`/`location` — yet the not-yet-built Chaos runtime will need `key` for
+  its own list-diff reconciliation (the same role `Reconciler.cpp`'s `Key`-based identity
+  matching already plays for `.iris`). `BuildChaosIr` round-trips both by re-inserting them as
+  ordinary synthetic `"key"`/`"ref"` prop entries — the most spec-faithful place available
+  without inventing a new IR field unilaterally — but this is worth raising with whoever owns
+  `chaos-ir-spec.md` next rather than treated as settled by this implementation choice alone.
+- **No IR representation for a literal-text element child.** §3.5's own `children` union is
+  `(ElementNode | NyxExpressionNode)[]` — no case for the plain-text children `<Text>`/`<Inline>`
+  accept directly. `BuildChaosIr` reuses §3.6's `"literal"` value-node shape as a child too (the
+  minimal, most spec-consistent fill for an apparent gap in the schema itself), and falls back to
+  the *parent* element's own location for such a child's `location` field, since
+  `Iris::ElementChild` carries no `SourceLocation` of its own for its `Text` case today — a
+  second, smaller, pre-existing gap this surfaced, not fixed here (would mean adding a location
+  field to `ElementChild` and threading it through every `ParseChildren` call site, out of scope
+  for a serializer-only pass).
+- **Several IR `location.length` fields are documented approximations, not byte-exact scans.**
+  `Iris::SourceLocation` has no `Length` field at all (it only ever needed to resync `#line`
+  directives, which don't need one) — where `RenderBlockParser` only tracks a *start* position
+  for a span `chaos-ir-spec.md` measures as a whole (a `PropNode`'s full `name=value`, a
+  literal's surrounding quotes, an escape hatch's surrounding braces), `ChaosIr.cpp` approximates
+  rather than adding new span-tracking to the parser itself. Every approximation is called out at
+  its own call site in `ChaosIr.cpp`. Exact lengths (imports, `render`/`}` keywords, element tags,
+  `nyx_source` gaps) are unaffected — those were already fully determinable from existing data.
+- **`iris_cc`'s CLI contract and `cmake/IrisCompileDirectory.cmake` still assume every output is
+  an `#include`-able header** (`.iris.h`) — `iris_nyx_emission_decision.md`'s own "open
+  sub-decision," untouched here. A `.irisx` file today only produces Chaos IR JSON when run
+  through `Driver::CompileFile` directly (as the new tests do); `iris_cc -o <path>` will happily
+  write that JSON to whatever path is given, but nothing yet establishes a `<source>.chaos.ir`
+  naming convention or wires it into the CMake helper.
+- **The Chaos runtime itself — the `.chaos.ir` consumer** (`<Slot>` resolution, reconciliation,
+  widget construction, and the nyx-proto-side `EvaluateInScope`-shaped primitive it'll need,
+  named but unbuilt per nyx-proto's `decision-log.md` §7.2) — remains separate, larger,
+  not-yet-scoped follow-up work, exactly as `iris_nyx_emission_decision.md` already said. Nothing
+  in this pass builds any part of it.
+
+#### Explicitly not requested
+
+- Fixing the already-documented `returncount`-style whitespace-collapse defect in reconstructed
+  escape-hatch `Lexeme` text (`NyxTokenizer` entry above) — still real, still separate, still not
+  this pass's ask.
+- Any change to `iris_cc`'s CLI contract, `cmake/IrisCompileDirectory.cmake`, or a `.chaos.ir`
+  file-naming convention — left as the open sub-decision `iris_nyx_emission_decision.md` already
+  flagged it as.
+- Building any part of the Chaos runtime (the IR consumer) — out of scope for this pass, as
+  above.

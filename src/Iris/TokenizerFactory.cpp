@@ -17,8 +17,12 @@ bool HasIrisxExtension(std::string_view FilePath) {
 
 } // namespace
 
+HostLanguage DetermineHostLanguage(std::string_view FilePath) {
+    return HasIrisxExtension(FilePath) ? HostLanguage::Nyx : HostLanguage::Cpp;
+}
+
 std::unique_ptr<IHostLanguageTokenizer> CreateHostLanguageTokenizer(std::string_view Source, std::string FilePath) {
-    if (HasIrisxExtension(FilePath)) {
+    if (DetermineHostLanguage(FilePath) == HostLanguage::Nyx) {
         return std::make_unique<NyxTokenizer>(Source, std::move(FilePath));
     }
     return std::make_unique<CppTokenizer>(Source, std::move(FilePath));

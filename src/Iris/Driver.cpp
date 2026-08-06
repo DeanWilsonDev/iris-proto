@@ -1,8 +1,12 @@
 #include "Iris/Driver.h"
+#include "Iris/ChaosIr.h"
 #include "Iris/Codegen.h"
 #include "Iris/ImportResolver.h"
 #include "Iris/RenderBlockParser.h"
 #include "Iris/SemanticValidator.h"
+#include "Iris/TokenizerFactory.h"
+
+#include <amanuensis/io/writer.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -104,11 +108,22 @@ DriverResult CompileFile(std::string_view Source, std::string FilePath, const Ir
         Result.Diagnostics.push_back(DriverDiagnostic{Err.Message, Err.Location});
     }
 
+    // `.irisx` (nyx) bypasses Codegen.cpp entirely — there is nothing to compile a `render
+    // { }` block's escape-hatch content *to* in Nyx, only IR to serialize it as (see
+    // Driver.h's own doc comment, docs/iris_nyx_emission_decision.md). `.iris` (cpp) keeps
+    // its existing GenerateComponentExpression + textual-splice pipeline, unchanged below.
+    const bool IsNyx = DetermineHostLanguage(FilePath) == HostLanguage::Nyx;
+
     std::vector<std::string> GeneratedPerBlock;
-    GeneratedPerBlock.reserve(ParseResult.Blocks.size());
+    if (!IsNyx) {
+        GeneratedPerBlock.reserve(ParseResult.Blocks.size());
+    }
     for (const RenderBlockParser::ParsedBlock& Block : ParseResult.Blocks) {
         for (const SemanticError& Err : ValidateElementTree(Block.Root, Config.Target, ImportedNames)) {
             Result.Diagnostics.push_back(DriverDiagnostic{Err.Message, Err.Location});
+        }
+        if (IsNyx) {
+            continue;
         }
         const CodegenResult Codegen = GenerateComponentExpression(Block.Root);
         for (const CodegenError& Err : Codegen.Errors) {
@@ -121,10 +136,17 @@ DriverResult CompileFile(std::string_view Source, std::string FilePath, const Ir
         return Result; // Output stays empty — nothing partially-generated is ever returned.
     }
 
-    const std::string EscapedFilePath = EscapePathForLineDirective(FilePath);
-
     // Every import resolved successfully by this point — an unresolved one is a
     // Diagnostics entry above, which already returned early.
+    if (IsNyx) {
+        const Amanuensis::Value ChaosIrDoc =
+            BuildChaosIr(Source, FilePath, Imports, ResolvedImports.Resolved, ParseResult);
+        Result.Output = Amanuensis::Writer::WriteToString(ChaosIrDoc);
+        return Result;
+    }
+
+    const std::string EscapedFilePath = EscapePathForLineDirective(FilePath);
+
     std::unordered_map<std::string, std::string> ResolvedPathByName;
     for (const ResolvedImport& R : ResolvedImports.Resolved) {
         ResolvedPathByName[R.Name] = R.ResolvedPath;

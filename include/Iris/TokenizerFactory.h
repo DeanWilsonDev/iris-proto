@@ -8,6 +8,21 @@
 
 namespace Iris {
 
+// Which host language a `.iris`/`.irisx` file's non-`render{}` content is written in --
+// the same fact CreateHostLanguageTokenizer below uses to pick a tokenizer, but also needed
+// by Driver::CompileFile to pick an *output* format (spliced C++23 text for Cpp, a Chaos IR
+// JSON document for Nyx -- docs/iris_nyx_emission_decision.md). Exposed separately from
+// CreateHostLanguageTokenizer so callers that only need the language fact, not a tokenizer
+// instance, don't have to construct one just to inspect it.
+enum class HostLanguage {
+    Cpp,
+    Nyx,
+};
+
+// `.irisx` -> Nyx; every other extension (`.iris`, and anything unrecognized) -> Cpp, matching
+// the default every caller already assumed before this factory existed.
+HostLanguage DetermineHostLanguage(std::string_view FilePath);
+
 // The one dispatch point IHostLanguageTokenizer.h's own doc comment promised but that didn't
 // exist anywhere in code until now (docs/next-steps.md, "NyxTokenizer... PARTIALLY RESOLVED"):
 // selects CppTokenizer or NyxTokenizer by FilePath's extension, per docs/iris_core_spec.md §0's

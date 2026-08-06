@@ -140,6 +140,7 @@ add_library(iris STATIC
     src/Iris/ImportResolver.cpp
     src/Iris/CorePrimitives.cpp
     src/Iris/Codegen.cpp
+    src/Iris/ChaosIr.cpp
     src/Iris/SemanticValidator.cpp
     src/Iris/Driver.cpp
     src/Iris/SlotRuntime.cpp
@@ -223,6 +224,7 @@ add_executable(test_iris
     tests/IrisConfigTests.cpp
     tests/ImportResolverTests.cpp
     tests/CodegenTests.cpp
+    tests/ChaosIrTests.cpp
     tests/ComponentTests.cpp
     tests/SemanticValidatorTests.cpp
     tests/DriverTests.cpp

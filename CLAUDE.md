@@ -17,6 +17,22 @@ other doc disagrees with it, the spec wins. The other `docs/iris_stage*` files a
 chronological decision records/handoffs, kept for the reasoning trail, not current truth;
 read the spec first.
 
+### "Chaos"/"Cosmos" terminology — a future rename, not a different project
+
+Nyx-side design docs (`chaos-ir-spec.md`, `chaos-ui-authoring.md`,
+`fearless-hq/projects/nyx-scripting-language/decision-log.md`, and this repo's own
+`docs/iris_nyx_emission_decision.md`) refer to `.chaos`/`.cosmos` as the *canonical* names this
+project (Iris) and its styling layer (Lustre) are eventually renamed to — "Chaos" is Iris's own
+future name, "Cosmos" is Lustre's. `.iris`/`.irisx` are this prototype's current names for the
+exact same file kinds `.chaos` describes; per `chaos-ir-spec.md`'s own framing note, "`.iris`,
+`.irisx`, `.chaos` files are functionally identical — the file extension determines the host
+language, not the IR shape." Likewise "the Chaos runtime" in those docs means the runtime this
+repo (iris-proto) builds — not a separate project to go find or depend on. Until that rename
+actually happens, treat every "Chaos"/"Cosmos" reference in a design doc as referring to Iris/
+Lustre's own prototype code in this repo (or its sibling `lustre` repo) — don't go looking for a
+`chaos-proto`/`cosmos-proto` repo that doesn't exist, and don't rename this repo or its `Iris::`
+namespace preemptively.
+
 ## Build and test
 
 ```sh

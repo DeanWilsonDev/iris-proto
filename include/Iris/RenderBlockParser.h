@@ -96,7 +96,12 @@ private:
     std::string                               FilePath_;
     std::unique_ptr<IHostLanguageTokenizer>   Tokenizer_; // CppTokenizer for `.iris`, NyxTokenizer
                                                             // for `.irisx` — see TokenizerFactory.h.
-    std::size_t                               RawOffset_{0};
+    // Whether Tokenizer_ is a NyxTokenizer -- needed because NyxTokenizer's StringLiteral
+    // GToken::Text is already the *resolved* value (quotes/escapes stripped, per its own
+    // documented difference from CppTokenizer's raw-substring Text), so string-literal and
+    // JSX-raw-text handling below needs to treat the two host languages differently rather
+    // than uniformly assuming CppTokenizer's raw-substring convention.
+    bool                                       IsNyxHost_;
 
     GToken                 Current_;
     std::deque<GToken>     Pending_;

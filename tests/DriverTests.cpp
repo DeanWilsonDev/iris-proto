@@ -2,6 +2,9 @@
 
 #include "Iris/Driver.h"
 
+#include <amanuensis/io/reader.hpp>
+#include <amanuensis/json.hpp>
+
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -167,5 +170,47 @@ Component PartyScreen(PartyScreenProps props) {
         ASSERT_TRUE(Contains(Result.Output, "#include \"components/HealthBar.iris.h\"") &&
                     Contains(Result.Output, "#include \"components/Button.iris.h\""));
         // both import lines become #includes of their resolved generated headers
+    });
+
+    IT("a .irisx file compiles to a Chaos IR JSON document, not C++", {
+        Iris::IrisConfig Config;
+        Config.Target = Iris::IrisBuildTarget::UmbraEngine;
+
+        const Iris::DriverResult Result = Iris::CompileFile(
+            "Component Foo() {\n    render { <Frame class=\"a\" /> }\n}\n", "test.irisx", Config, "/nonexistent");
+
+        ASSERT_TRUE(Result.Diagnostics.empty()); // a plain Core-primitive render block compiles with no diagnostics
+        ASSERT_FALSE(Contains(Result.Output, "return Iris::Component"));
+        // Codegen.cpp is never invoked for .irisx -- no spliced C++ expression appears anywhere
+        ASSERT_FALSE(Contains(Result.Output, "#pragma once"));
+        // .irisx output isn't a self-contained header the way .iris output is
+
+        const Amanuensis::ParseResult Parsed = Amanuensis::Reader::ParseString(Result.Output);
+        ASSERT_TRUE(Parsed.succeeded); // Output is valid JSON
+        ASSERT_TRUE(Amanuensis::Json::AsString(Amanuensis::Json::Get(Parsed.value, "hostLanguage")) == "nyx");
+        ASSERT_TRUE(Amanuensis::Json::AsString(Amanuensis::Json::Get(Parsed.value, "sourceFile")) == "test.irisx");
+        const Amanuensis::Value& Body = Amanuensis::Json::Get(Parsed.value, "body");
+        REQUIRE_TRUE(Amanuensis::Json::Size(Body) >= 1);
+        bool FoundRenderBlock = false;
+        for (std::size_t Index = 0; Index < Amanuensis::Json::Size(Body); ++Index) {
+            const Amanuensis::Value& Node = Amanuensis::Json::At(Body, Index);
+            if (Amanuensis::Json::AsString(Amanuensis::Json::Get(Node, "kind")) == "render_block") {
+                FoundRenderBlock = true;
+                ASSERT_TRUE(Amanuensis::Json::AsString(Amanuensis::Json::Get(
+                                Amanuensis::Json::Get(Node, "root"), "tag")) == "Frame");
+            }
+        }
+        ASSERT_TRUE(FoundRenderBlock); // the render{ } block round-trips through the parsed JSON as a render_block node
+    });
+
+    IT("a .irisx parse/semantic error is still a diagnostic that blocks output", {
+        Iris::IrisConfig Config;
+        Config.Target = Iris::IrisBuildTarget::UmbraEngine;
+
+        const Iris::DriverResult Result = Iris::CompileFile(
+            "Component Foo() { render { <HealthBar current={1} max={2} /> } }\n", "test.irisx", Config,
+            "/nonexistent");
+        ASSERT_FALSE(Result.Diagnostics.empty()); // an unimported, non-Core-primitive tag is still a diagnostic
+        ASSERT_TRUE(Result.Output.empty());       // no IR is produced when there are diagnostics, same as the .iris path
     });
 });
