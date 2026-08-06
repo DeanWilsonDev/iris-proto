@@ -16,11 +16,16 @@ both since removed) plus one gap identified directly against `docs/iris_core_spe
 
 ---
 
-## Chaos runtime — the `.iris.ir` consumer — is not yet built
+## Chaos runtime — the `.iris.ir` consumer — IR-to-Component walk is built; real Nyx evaluation is not (2026-08-06)
 
-> **Status:** Open, real blocker, unscoped. This is the one substantial remaining piece of the
-> whole `.irisx`/Nyx story; everything upstream of it (tokenizing, `@signal` authoring, IR
-> production) is done.
+> **Status:** Open, narrower than before. `IrisIrRuntime.h`/`.cpp` now does everything the
+> *iris-proto side* of the Chaos runtime can do without a working Nyx embedding primitive: read
+> a `.iris.ir` document, walk `render_block`/`ElementNode`/`<Slot>` nodes, and produce a live
+> `Iris::Component` tree — the exact same backend-agnostic IR `Codegen.h` produces for the
+> compiled `.iris` path, so `iris::MountComponentInstance`/`iris::ResolveSlots`/
+> `Reconciler.h`/`iris::Tick()` (Stage 3, already built and tested) consume it unchanged. What
+> remains is entirely on the "make Nyx actually evaluate real script text" side, most of which
+> is a nyx-proto blocker, not an iris-proto one — see below.
 > **History:** This entry consolidates the still-open tail of two now-archived entries —
 > `` `NyxTokenizer` (IHostLanguageTokenizer for `.irisx`) `` and `` `Codegen` has no Nyx-target
 > emission `` — both moved to `docs/archive/iris_next_steps_resolved.md` once their own scope
@@ -39,18 +44,61 @@ both since removed) plus one gap identified directly against `docs/iris_core_spe
   own `key`/`ref`/`TextNode` schema additions), not C++. `iris_cc`/`cmake/IrisCompileDirectory.cmake`
   both know the `.irisx` → `.iris.ir` naming convention.
 
-### What's actually missing
+### What's now done (this entry)
 
-Nothing reads a `.iris.ir` file back and does anything with it. The Chaos runtime — walking
-`render_block`/`ElementNode` nodes, resolving every `<Slot>`, reconciling against the previous
-render, constructing/updating widgets, and handing `nyx_source`/`nyx_expression` node text to
-the embedded Nyx interpreter via nyx-proto's generic evaluation entry point — is entirely
-unbuilt. A `.irisx` component with reactive state still can't actually run end-to-end today,
-even though every earlier stage of the pipeline now works.
+- `Iris::ParseIrisIrDocument` (`include/Iris/IrisIrDocument.h`, `src/Iris/IrisIrDocument.cpp`)
+  — deserializes a `.iris.ir` JSON document (`Amanuensis::Value`) back into a typed C++ tree,
+  the read-side counterpart of `BuildIrisIr`. Reports malformed/missing fields rather than
+  asserting, matching `RenderBlockParser::Result`'s own "partial result plus errors" shape.
+- `Iris::ConvertIrElement`/`Iris::WalkIrisIrDocument` (`include/Iris/IrisIrRuntime.h`,
+  `src/Iris/IrisIrRuntime.cpp`) — walks that tree and produces live `Iris::Component` values,
+  mirroring `Codegen.cpp`'s `ComponentEmitter` node-for-node (same `CorePrimitives.h` tag/prop/
+  child rules, same `<Text>`/`<Inline>` text-child handling, same `key`/`ref` IIFE-equivalent
+  wrapping) but *evaluating* to a value instead of emitting C++ source text. `<Slot>` becomes a
+  real `Iris::IrisSlotCallable` (always the list-returning shape — a 0-or-1-length list behaves
+  identically to the single-`Component` shape through the existing `SlotState`/
+  `ReconcileChildrenAt` machinery, so there's no need for `MakeSlotCallable`'s compile-time
+  `if constexpr` dispatch here), so it plugs directly into `iris::ResolveSlots`/`SlotState`/
+  `Reconciler.h`/`iris::Tick()` completely unchanged from the compiled `.iris` path.
+- The seam where real Nyx evaluation would plug in is a `NyxEvaluator` struct of injected
+  callbacks (`EvaluateProp`/`EvaluateText`/`EvaluateSlot`/`EvaluateComponentInvocation`/
+  `EvaluateSource`) — the same "runtime supplies a callback, this code never knows what's on
+  the other side of it" pattern `SlotRuntime.h`'s `MountFn` already uses for widget
+  construction. Covered by `tests/IrisIrRuntimeTests.cpp` against a mock evaluator (31 new
+  tests total, alongside `tests/IrisIrDocumentTests.cpp`'s deserializer round-trip coverage).
 
-Also still needed on the nyx-proto side (per `chaos-ir-spec.md` §6 / `decision-log.md` §7.2):
-an "evaluate this source against a live scope" embedding primitive — `Run`/`RunFile` today only
-execute a whole script end-to-end, not a fragment against a scope the Chaos runtime supplies.
+### What's still actually missing
+
+**A real `NyxEvaluator` implementation backed by nyx-proto.** Every callback above is
+implemented only by tests' mock evaluator today — nothing yet drives them from actual Nyx
+source text, so a `.irisx` component still can't run end-to-end. This is now *mostly* a
+nyx-proto blocker, not an iris-proto design gap: per `chaos-ir-spec.md` §6 / `decision-log.md`
+§7.2, nyx-proto has no "evaluate this source against a live scope, repeatable across a
+component's lifetime" embedding primitive yet (`NyxRuntime::Run`/`RunFile` only execute a whole
+script end-to-end) — "genuinely new Phase 6 work, not yet started" there. Note `nyx-proto`'s
+`nyx::interpreter::Interpreter::EvalExpr`/`MakeGlobalContext` (already linked into `iris` via
+this repo's `nyx-runtime` CMake target) evaluate a bare expression against a scope, but that
+alone doesn't close the gap: a `NyxSourceNode`/`NyxExpressionNode`'s raw text is a *fragment* of
+a larger Nyx program (the file's own `render { }` block already cut out of it) and, for a `!{ }`
+JSX-transform escape hatch, still contains literal embedded `<Tag>` runs that don't lex as
+ordinary Nyx at all — reassembling/re-lexing that correctly, and deciding how a `NyxEvaluator`
+implementation substitutes each embedded element's spot in the source for the already-converted
+`Iris::Component` `IrElementConverter` hands it, is real design work belonging to whoever
+implements the real evaluator (this repo, once nyx-proto's own primitive exists), not solved by
+this entry.
+
+**`<Native>` is unsupported for `.irisx`.** `ConvertIrElement` reports an error for it — its
+`build` prop evaluates to an opaque `Umbra::IWidget` handle, which has no natural
+`NyxEvaluator` callback shape (unlike every other escape hatch here, its result isn't
+representable as a prop, text, or `Component`). Only the compiled `.iris`/`Codegen` path
+supports `<Native>` today.
+
+**A `<Slot>` re-invocation's own conversion errors have no durable sink.** `ConvertIrElement`
+takes an `IrisIrRuntimeError*` that may be `nullptr`; the `IrElementConverter` closure a
+`<Slot>`'s `EvaluateSlot` callback receives passes `nullptr`, since a re-invocation (driven by
+`iris::Tick()`, long after the original `WalkIrisIrDocument` call that produced the `<Slot>`
+already returned its own one-shot, by-value error list) has nowhere to report into yet. Minor
+compared to the above, but real — a diagnostics story for this is future work.
 
 ### Also open, smaller
 
@@ -60,8 +108,11 @@ execute a whole script end-to-end, not a fragment against a scope the Chaos runt
 - **Real hot-reload of component logic itself** (state, structure, handlers, not just Lustre's
   narrower style-only reload) is a separate, larger, deliberately-deferred design question —
   sized against the real code (not designed) in `docs/iris_interpreted_host_hot_reload_gap.md`.
-  Revisit once the Chaos runtime above is scoped, since that's what would actually need to
-  support it.
+  nyx-proto's `decision-log.md` §9.1 (2026-08-06) has since settled the target shape on its
+  side (a three-tier model, not unconditional full remount) — `docs/
+  iris_hot_reload_alignment_decision.md` works out what that implies here. Still blocked on
+  the Chaos runtime above (no real `NyxEvaluator` yet), and on the whole-app reconcile-target
+  registry §2 of that new doc names as a concrete prerequisite, not just a someday item.
 
 ### Explicitly not requested
 
