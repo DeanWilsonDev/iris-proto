@@ -190,6 +190,19 @@ public:
         return Changed ? ComponentReloadTier::SignalLayoutChanged : ComponentReloadTier::Unchanged;
     }
 
+    // Opaque per-invocation state an interpreted-Nyx driver (`IrisNyxDriver.h`) needs kept
+    // alive for exactly as long as this instance is -- concretely, the `nyx::host::
+    // NyxRuntime::NyxScope` `InvokeComponent` captured for this one call, which every
+    // `NyxEvaluator` closure this instance's render produced (including a `<Slot>`
+    // callable that may be re-invoked long after the mounting call returns, via
+    // `iris::Tick()`) holds a raw reference into. `ComponentInstance` doesn't know or care
+    // what's actually stored here -- `shared_ptr<void>` rather than a concrete
+    // `host/nyx-runtime.hpp` type so this header (already included by the compiled `.iris`
+    // codegen path, which has nothing to do with Nyx interpretation) doesn't gain a
+    // dependency on it. Untouched (`nullptr`) for every ordinary compiled-`.iris`
+    // `IRIS_SIGNAL`-only component.
+    std::shared_ptr<void> DriverState;
+
 private:
     std::vector<std::unique_ptr<Detail::SignalStorageBase>> Signals_;
     std::vector<std::unique_ptr<nyx::runtime::Value>>       NyxSignals_;

@@ -246,4 +246,119 @@ DESCRIBE("IrisNyxEvaluator", {
         // (re-invoking EvaluateSlot against the same persistent scope) sees it.
         ASSERT_TRUE(std::get<std::string>(SlotOutput()[0].Props.at("class")) == "hovered");
     });
+
+    // nyx-scripting-language/decision-log.md §7.4 / docs/archive/iris_nyx_slot_loop_and_reload_gap_resolved.md
+    // §1: Array<T>.Map()/.Reduce() are the sanctioned way to write a dynamic list of components
+    // inside a <Slot> -- exercised end to end against real nyx-proto Array evaluation, not a mock.
+    IT("a <Slot> .Map() with a single-parameter lambda renders one Card per element", {
+        const std::string_view Source =
+            "void CardList() {\n"
+            "    render {\n"
+            "        <Slot>\n"
+            "            !{() -> {\n"
+            "                Array<string> names = [\"Ann\", \"Bo\", \"Cy\"];\n"
+            "                return names.Map((string item) -> <Frame class={item} />);\n"
+            "            }}\n"
+            "        </Slot>\n"
+            "    }\n"
+            "}\n";
+        const IrisIrDocument Document = BuildRealDocument(Source);
+
+        nyx::host::NyxRuntime Runtime;
+        iris::RegisterSignalDecorator(Runtime);
+        ChaosSlotMarker Marker;
+        Marker.RegisterOn(Runtime);
+        auto FileScope = Runtime.CreateScope(ReconstructNyxSource(Document), "test.irisx");
+        auto Invocation = Runtime.InvokeComponent(FileScope, "CardList", {});
+
+        std::vector<IrisIrRuntimeError> Errors;
+        NyxEvaluator Eval = MakeNyxEvaluator(Runtime, Invocation, Marker, nullptr, &Errors);
+        const Component Result = ConvertIrElement(OnlyRenderBlock(Document).Root, Eval, &Errors);
+        REQUIRE_TRUE(Errors.empty());
+        REQUIRE_TRUE(Result.SlotCallable != nullptr);
+
+        const std::vector<Component> Output =
+            std::get<std::function<std::vector<Component>()>>(Result.SlotCallable->Callable)();
+        REQUIRE_EQUAL(Output.size(), static_cast<std::size_t>(3));
+        ASSERT_TRUE(std::get<std::string>(Output[0].Props.at("class")) == "Ann");
+        ASSERT_TRUE(std::get<std::string>(Output[1].Props.at("class")) == "Bo");
+        ASSERT_TRUE(std::get<std::string>(Output[2].Props.at("class")) == "Cy");
+    });
+
+    IT("a <Slot> .Map() with a two-parameter lambda also binds the iteration index", {
+        const std::string_view Source =
+            "void CardList() {\n"
+            "    render {\n"
+            "        <Slot>\n"
+            "            !{() -> {\n"
+            "                Array<string> names = [\"Ann\", \"Bo\"];\n"
+            "                return names.Map((string item, int index) -> <Frame class={item} key={index} />);\n"
+            "            }}\n"
+            "        </Slot>\n"
+            "    }\n"
+            "}\n";
+        const IrisIrDocument Document = BuildRealDocument(Source);
+
+        nyx::host::NyxRuntime Runtime;
+        iris::RegisterSignalDecorator(Runtime);
+        ChaosSlotMarker Marker;
+        Marker.RegisterOn(Runtime);
+        auto FileScope = Runtime.CreateScope(ReconstructNyxSource(Document), "test.irisx");
+        auto Invocation = Runtime.InvokeComponent(FileScope, "CardList", {});
+
+        std::vector<IrisIrRuntimeError> Errors;
+        NyxEvaluator Eval = MakeNyxEvaluator(Runtime, Invocation, Marker, nullptr, &Errors);
+        const Component Result = ConvertIrElement(OnlyRenderBlock(Document).Root, Eval, &Errors);
+        REQUIRE_TRUE(Errors.empty());
+        REQUIRE_TRUE(Result.SlotCallable != nullptr);
+
+        const std::vector<Component> Output =
+            std::get<std::function<std::vector<Component>()>>(Result.SlotCallable->Callable)();
+        REQUIRE_EQUAL(Output.size(), static_cast<std::size_t>(2));
+        ASSERT_TRUE(std::get<std::string>(Output[0].Props.at("class")) == "Ann");
+        REQUIRE_TRUE(Output[0].Key.has_value());
+        ASSERT_TRUE(std::get<int>(*Output[0].Key) == 0);
+        ASSERT_TRUE(std::get<std::string>(Output[1].Props.at("class")) == "Bo");
+        REQUIRE_TRUE(Output[1].Key.has_value());
+        ASSERT_TRUE(std::get<int>(*Output[1].Key) == 1);
+    });
+
+    IT("a <Slot> .Reduce() binds only the element (second) lambda parameter", {
+        // Reduce's own accumulated value has no bearing on which Components iris-proto
+        // produces (EvaluateSlot reads that back from ChaosSlotMarker's own recorded picks,
+        // never from Nyx's own Reduce return value) -- the accumulator here is a plain int
+        // solely so the lambda body stays trivially well-typed; `<Frame .../>` is a bare
+        // expression-statement purely for its __chaos_slot_pick(N, item) side effect.
+        const std::string_view Source =
+            "void CardList() {\n"
+            "    render {\n"
+            "        <Slot>\n"
+            "            !{() -> {\n"
+            "                Array<string> names = [\"Ann\", \"Bo\"];\n"
+            "                return names.Reduce((int acc, string item) -> { <Frame class={item} />; return acc; }, 0);\n"
+            "            }}\n"
+            "        </Slot>\n"
+            "    }\n"
+            "}\n";
+        const IrisIrDocument Document = BuildRealDocument(Source);
+
+        nyx::host::NyxRuntime Runtime;
+        iris::RegisterSignalDecorator(Runtime);
+        ChaosSlotMarker Marker;
+        Marker.RegisterOn(Runtime);
+        auto FileScope = Runtime.CreateScope(ReconstructNyxSource(Document), "test.irisx");
+        auto Invocation = Runtime.InvokeComponent(FileScope, "CardList", {});
+
+        std::vector<IrisIrRuntimeError> Errors;
+        NyxEvaluator Eval = MakeNyxEvaluator(Runtime, Invocation, Marker, nullptr, &Errors);
+        const Component Result = ConvertIrElement(OnlyRenderBlock(Document).Root, Eval, &Errors);
+        REQUIRE_TRUE(Errors.empty());
+        REQUIRE_TRUE(Result.SlotCallable != nullptr);
+
+        const std::vector<Component> Output =
+            std::get<std::function<std::vector<Component>()>>(Result.SlotCallable->Callable)();
+        REQUIRE_EQUAL(Output.size(), static_cast<std::size_t>(2));
+        ASSERT_TRUE(std::get<std::string>(Output[0].Props.at("class")) == "Ann");
+        ASSERT_TRUE(std::get<std::string>(Output[1].Props.at("class")) == "Bo");
+    });
 });

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -45,8 +46,14 @@ std::string ReconstructNyxSource(const IrisIrDocument& Document);
 // `IrisIrRuntime.h`). Finding which file/document a tag name refers to is an
 // import-resolution question (`ImportResolver`'s job) this file deliberately doesn't
 // attempt -- left to whoever drives a whole application.
+//
+// `Node` is the same `IrElementNode` `EvaluateComponentInvocation` was itself handed --
+// exposed here purely so a reload-aware invoker (`IrisNyxDriver::InvokeChildComponent`) can
+// read this invocation's own `Key`/position to find a matching previous invocation to reload
+// against; an ordinary mount-only invoker (`MountRoot`'s own) is free to ignore it.
 using ChildComponentInvoker =
-    std::function<Iris::Component(const std::string& TagName, const nyx::runtime::Value& Props)>;
+    std::function<Iris::Component(const std::string& TagName, const nyx::runtime::Value& Props,
+                                    const IrElementNode& Node)>;
 
 // Registers the host function a real `EvaluateSlot` implementation (`MakeNyxEvaluator`
 // below) needs to resolve a JSX-transform escape hatch's conditional content --
@@ -68,6 +75,20 @@ using ChildComponentInvoker =
 // to this marker function records its own index into a buffer `EvaluateSlot` reads back
 // afterward -- exactly the element(s) the escape hatch's own Nyx-side conditional logic
 // selected, in call order.
+// A single `__chaos_slot_pick` call's own recorded data -- which element index was picked,
+// plus (only when the picked element came from a `.Map()`/`.Reduce()` callback -- see
+// `MakeNyxEvaluator`'s own `EvaluateSlot` doc comment and
+// docs/archive/iris_nyx_slot_loop_and_reload_gap_resolved.md §1) the current element/iteration-index
+// `Value` that callback's lambda parameter(s) were bound to for this call, carried out here so
+// a later `Convert` call can bind them into a fresh per-pick scope -- `item`/`index` only ever
+// existed inside the `.Map()`/`.Reduce()` callback's own call-frame `Environment`, gone by the
+// time this marker call returns.
+struct ChaosSlotPick {
+    std::size_t                          ElementIndex{0};
+    std::optional<nyx::runtime::Value>   Item;
+    std::optional<nyx::runtime::Value>   IterationIndex;
+};
+
 class ChaosSlotMarker {
 public:
     void RegisterOn(nyx::host::NyxRuntime& Runtime);
@@ -76,7 +97,7 @@ private:
     friend NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime&, nyx::host::NyxRuntime::NyxScope&, ChaosSlotMarker&,
                                             ChildComponentInvoker, std::vector<IrisIrRuntimeError>*);
 
-    std::shared_ptr<std::vector<std::size_t>> Selected_ = std::make_shared<std::vector<std::size_t>>();
+    std::shared_ptr<std::vector<ChaosSlotPick>> Selected_ = std::make_shared<std::vector<ChaosSlotPick>>();
 };
 
 // Builds a real, non-mock `NyxEvaluator` (`IrisIrRuntime.h`) whose `EvaluateProp`/
@@ -101,6 +122,15 @@ private:
 // re-evaluation is the only mechanism available. This is exactly the eventual-consistency
 // cost that pattern implies (each firing re-parses), acceptable for a UI event handler
 // (rare compared to a render pass), not attempted for a hot path.
+//
+// `EvaluateSlot` also resolves `list.Map((item[, index]) -> <Card .../>)` and
+// `list.Reduce((acc, item) -> ..., initial)` -- the sanctioned way to write a dynamic list of
+// components inside a `<Slot>` (`nyx-scripting-language/decision-log.md` §7.4,
+// docs/archive/iris_nyx_slot_loop_and_reload_gap_resolved.md §1). Each picked element carried a
+// `.Map()`/`.Reduce()` callback's own bound parameter(s), extracted at reconstruction time
+// (`ChaosSlotMarker`'s own doc comment) and bound into a fresh per-pick `NyxScope` before that
+// element's own prop expressions (`item.name`) are converted -- two picks from the same
+// `.Map()` call never see each other's bound item.
 NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRuntime::NyxScope& Scope,
                                  ChaosSlotMarker& Marker, ChildComponentInvoker InvokeChild,
                                  std::vector<IrisIrRuntimeError>* Errors);

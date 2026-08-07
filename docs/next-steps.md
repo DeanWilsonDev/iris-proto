@@ -18,20 +18,26 @@ both since removed) plus one gap identified directly against `docs/iris_core_spe
 
 ## Chaos runtime — the `.iris.ir` consumer — IR-to-Component walk is built; real Nyx evaluation is not (2026-08-06)
 
-> **Status:** Open, narrower than before. `IrisIrRuntime.h`/`.cpp` now does everything the
-> *iris-proto side* of the Chaos runtime can do without a working Nyx embedding primitive: read
-> a `.iris.ir` document, walk `render_block`/`ElementNode`/`<Slot>` nodes, and produce a live
-> `Iris::Component` tree — the exact same backend-agnostic IR `Codegen.h` produces for the
-> compiled `.iris` path, so `iris::MountComponentInstance`/`iris::ResolveSlots`/
-> `Reconciler.h`/`iris::Tick()` (Stage 3, already built and tested) consume it unchanged. What
-> remains is entirely on the "make Nyx actually evaluate real script text" side, most of which
-> is a nyx-proto blocker, not an iris-proto one — see below.
+> **Status:** Open, narrower still. A real `NyxEvaluator` (`IrisNyxEvaluator.h`) and a real mount
+> driver tying it together with import resolution (`IrisNyxDriver.h`) both exist — a `.irisx`
+> file on disk can genuinely be loaded, compiled, and mounted into a live `Iris::Component` tree
+> end to end, including a `<Tag .../>` invocation that names a component declared in a
+> *different* `.irisx` file. As of 2026-08-07, three more items are done too, consuming
+> nyx-proto's same-day decision-log batch (§7.4, §9.2) per
+> `docs/archive/iris_nyx_slot_loop_and_reload_gap_resolved.md`: a genuine runtime `<Slot>` loop via
+> `Array<T>.Map()`/`.Reduce()`, a real hot-reload driver (`IrisNyxDriver::ReloadRoot`) for
+> free-function components, and a second, class-based component authoring model (Model 2). What's
+> left is narrower still: `<Native>` for `.irisx`, and a couple of smaller open items below.
 > **History:** This entry consolidates the still-open tail of two now-archived entries —
 > `` `NyxTokenizer` (IHostLanguageTokenizer for `.irisx`) `` and `` `Codegen` has no Nyx-target
 > emission `` — both moved to `docs/archive/iris_next_steps_resolved.md` once their own scope
 > closed. Read those archived entries for the full decision trail (why `.irisx` targets an IR
 > rather than transpiling to C++ or Nyx text, the IR schema itself, the three real parser bugs
-> found producing it) if picking this up.
+> found producing it) if picking this up. `docs/archive/iris_nyx_slot_loop_and_reload_gap.md` and
+> its `_resolved.md` companion (also archived) have the full trail for the three 2026-08-07 items
+> above — sized against real nyx-proto code first (the gap doc), then checked against nyx-proto's
+> actual resolution (the resolved doc), including the concrete iris-proto-side changes each one
+> needed.
 
 ### What's already done, upstream of this
 
@@ -102,15 +108,96 @@ own `Button`/`isHovered` ternary example, independent per-invocation `@signal` s
 two mounts of the same component, and event-handler re-evaluation — full suite (212/212)
 clean under AddressSanitizer + UndefinedBehaviorSanitizer.
 
-**Still open:** the actual reload/mount driver that ties `WalkIrisIrDocument` +
-`MakeNyxEvaluator` + import resolution + `iris::MountComponentInstance`/
-`ReloadComponentInstance` into something that runs a whole `.irisx` application — not built,
-not this entry's scope. `<Slot>` support is also narrower than the full language: only a
-statically-bounded conditional (a fixed, finite set of embedded elements selected by
-evaluating a boolean/index expression) is handled — a genuine runtime loop producing a
-dynamic number of items from one embedded element, with per-iteration prop bindings, needs
-the marker call to carry per-iteration data into a correspondingly-scoped `Convert()` call,
-which `MakeNyxEvaluator` doesn't attempt.
+**The mount driver — done (2026-08-06).** `Iris::IrisNyxDriver` (`include/Iris/IrisNyxDriver.h`,
+`src/Iris/IrisNyxDriver.cpp`) is the piece nothing above ever tied together: given an
+`IrisConfig`/`ProjectRoot` (the same two `Driver.h::CompileFile` already takes) and an entry
+file path + function name, `MountRoot` reads the `.irisx` file from disk, compiles it via the
+existing `CompileFile` pipeline, parses the resulting IR (`ParseIrisIrDocument`), builds a
+whole-file `NyxScope` (`ReconstructNyxSource` + `CreateScope`, cached per resolved path so a
+module's own top-level declarations are only ever parsed once), and mounts the named function
+via `Runtime.InvokeComponent` + `MakeNyxEvaluator` + `ConvertIrElement`, wrapped in
+`iris::MountComponentInstance` so `@signal` locals register against a real, heap-owned
+`ComponentInstance` (`NyxSignalDecorator.h`'s own documented precondition — a `@signal` with no
+ambient `ComponentInstance` is a silent no-op, the mistake this driver exists specifically to
+avoid making). The per-invocation `NyxScope` `InvokeComponent` returns is heap-allocated and
+kept alive via a new `ComponentInstance::DriverState` (`ComponentInstance.h`, a narrow
+`shared_ptr<void>` extension slot) — every `NyxEvaluator` closure a `<Slot>` callable captured
+holds a raw reference into it, and may be re-invoked by `iris::Tick()` long after the mounting
+call returns, so it has to outlive that call.
+
+**Cross-file component invocation — done (2026-08-06), the other bundled item.**
+`IrisNyxDriver`'s `ChildComponentInvoker` (built once per invocation, passed to
+`MakeNyxEvaluator`) resolves a `<Tag .../>` invocation purely against the *caller's own*
+already-resolved `Document.Imports` (`IrImportNode::Name`/`ResolvedPath` — populated at IR-build
+time by `Driver.h`'s existing `ResolveImports` call, nothing new needed there), then recurses
+into the same load/compile/invoke path for the target file — exactly the seam
+`IrisNyxEvaluator.h`'s own `ChildComponentInvoker` doc comment named as "an import-resolution
+question... left to whoever drives a whole application." An unimported tag is reported as an
+authoring error rather than guessed at (falling back to a same-file function of that name),
+matching chaos-ui-authoring.md §27.1's "each component lives in its own file" convention.
+Verified end to end in `tests/IrisNyxDriverTests.cpp` against real files written to a temp
+directory (not hand-built fixtures) — a single-file mount, a cross-file invocation, and two
+sibling invocations of the same imported component keeping independent `@signal` state (proof
+each got its own `ComponentInstance`/`NyxScope`, not a shared one) — full suite (217/217)
+passing, plumbed for AddressSanitizer/UndefinedBehaviorSanitizer the same way the rest of this
+suite already is.
+
+**A genuine runtime `<Slot>` loop — done (2026-08-07).** `list.Map((item[, index]) -> <Card
+.../>)`/`list.Reduce((acc, item) -> ..., initial)` are now the sanctioned way to write a dynamic
+list of components inside a `<Slot>` (nyx-proto's own `decision-log.md` §7.4).
+`MakeNyxEvaluator::EvaluateSlot` (`IrisNyxEvaluator.cpp`) now recognises a `.Map()`/`.Reduce()`
+lambda wrapping an embedded element (scanned with nyx-proto's real `nyx::Lexer` at
+reconstruction time, since the parameter name has to come from the real AST, not be guessed —
+`for`/typed lambda param syntax like `(int item) -> ...` genuinely requires this, not just
+`(item) -> ...`), injects the callback's bound parameter(s) into the `__chaos_slot_pick(N, item[,
+index])` marker call, and binds them into a fresh per-pick `Environment`/`NyxScope` before
+converting that pick — the same `EvalContext`-substitution shape `InvokeComponent` already uses,
+per pick instead of per invocation. `for item in list { <Card .../> }` itself remains
+unsupported, by design — `.Map()`/`.Reduce()` cover every case a `for` loop would, per
+nyx-proto's own decision. Verified end to end in `tests/IrisNyxEvaluatorTests.cpp` against real
+`Array` evaluation (single-param `.Map()`, two-param with iteration index, `.Reduce()`), not a
+mock.
+
+**A real hot-reload driver — done (2026-08-07), for the entry component's own state.**
+`IrisNyxDriver::ReloadRoot` re-renders a free-function component via the new
+`NyxRuntime::ReInvokeComponent` (patches the live `FunctionDecl` in place, re-invokes fresh,
+reconciles `@signal` bindings by name into the result) and reuses the *same*
+`ComponentInstance`/live `Interpreter`, reporting `ComponentReloadTier::Unchanged`/
+`SignalLayoutChanged` derived independently (not via `ComponentInstance::EndReloadReplay`'s
+`IRIS_SIGNAL`-counting, which doesn't apply to `Environment`-backed interpreted state at all —
+`nyx-scripting-language/decision-log.md` §9.2's own item 4 guidance). **Named scope boundary:**
+only the named entry component's own state survives a reload this way — a nested cross-file
+child invocation reached while converting its tree always mounts fresh, since a mounted
+invocation's own `Component` result carries no trace of which tag name produced it (only the
+Core-primitive tree it rendered into), so matching a previous nested invocation isn't answerable
+from the previous `Component` tree alone without a separate position-to-instance trace this pass
+doesn't build — real, sizeable follow-up work, not attempted here (see
+`IrisNyxDriver.h`'s own `ReloadRoot` doc comment). Verified in `tests/IrisNyxDriverTests.cpp`
+against a file genuinely rewritten on disk between two driver calls (tier `Unchanged` with a
+value preserved across a render-body-only change; tier `SignalLayoutChanged` when a `@signal` is
+added; falls back to an ordinary fresh mount with no prior `Instance` to reload against).
+
+**A second component authoring model — done (2026-08-07): Model 2, class-based components.**
+`class Tooltip : Component { ... }` is now a supported alternative to the existing free-function
+style, per nyx-scripting-language's own §9.2 "two supported authoring models" decision (built on
+top of §5.16 constructors and the pre-existing §6.4 `RegisterInheritableType`/`NyxBridge<T>`
+pattern). `Iris::NyxComponentBase`/`nyx::host::NyxBridge<NyxComponentBase>`
+(`NyxComponentBridge.h`) is the one marker type + registration block this repo writes (no
+`.Override(...)` calls needed — nothing here ever drives a component through a C++ vtable call,
+`IrisNyxDriver::InvokeClassComponent` calls `Instantiate`/reads fields directly); model detection
+(`IrisNyxDriver::InvokeComponent`, checking `Interpreter::Registry()`'s `classes`/`functions`
+maps for whichever name a given invocation names) picks the free-function or class path per
+invocation, so both models can coexist across a project's `.irisx` files. Mount runs
+`Interpreter::Instantiate(ClassName, Args)` (field defaults, then the constructor); reload reuses
+the pre-existing `PatchClass`+`ReconcileInstanceFields` machinery against the same live
+`NyxObject`, unchanged from §9.1 — genuinely no new nyx-proto work for that half, as that
+decision predicted. **Named simplification:** the render scope's own construction (a fresh
+`Environment` binding `Render`'s own declared parameter, `EvalContext::thisObject` set to the
+instance) does not execute any plain Nyx statement written before `render{}` inside `Render`'s
+body — `Interpreter` exposes no public "call this instance method, capture its environment"
+primitive to run them through, and every documented Model 2 example has nothing there beyond the
+parameter itself. Verified in `tests/IrisNyxDriverTests.cpp`: a mount running a real constructor
+and binding `Render`'s own parameter, and both reload tiers.
 
 **`<Native>` is unsupported for `.irisx`.** `ConvertIrElement` reports an error for it — its
 `build` prop evaluates to an opaque `Umbra::IWidget` handle, which has no natural
@@ -144,10 +231,19 @@ compared to the above, but real — a diagnostics story for this is future work.
   RegisterReloadTarget`/`GetReloadTarget`, alongside not instead of `RegisterRoot`/`GetRoot`)
   is the owning root-widget-plus-prior-tree registry `ReconcileWidget` needs but nothing held
   before. Tier 3 needed no new code — `ReconcileWidget`'s existing tag/key-mismatch fallback
-  already is it. **Still not built:** the actual reload driver — blocked on the Chaos runtime
-  above (no real `NyxEvaluator` yet) — and the component-invocation lockstep matching a driver
-  would use to find which `ComponentInstance` to replay at each position (`docs/
-  iris_hot_reload_reconciliation_decision.md` §4, deliberately left external, single caller).
+  already is it. This describes the **compiled `.iris`/C++** path specifically — the
+  **interpreted `.irisx`** path's own reload driver (`IrisNyxDriver::ReloadRoot`, both
+  authoring models) is done, see the "Chaos runtime" entry above; the two paths don't share a
+  mechanism (`iris::ReloadComponentInstance`/`BeginReloadReplay`/`EndReloadReplay` reconcile
+  `IRIS_SIGNAL` storage by declaration order, which has nothing to do with interpreted
+  `Environment`/`NyxObject`-backed state). **Still not built for the compiled path:** an actual
+  driver calling `ReloadComponentInstance` at all — nothing in this repo currently produces the
+  "recompiled `.iris` source, please reload" trigger a driver would react to, unlike the
+  interpreted path where "the file changed on disk" is `ReloadRoot`'s own explicit precondition
+  — and the component-invocation lockstep matching such a driver would use to find which
+  `ComponentInstance` to replay at each position (`docs/iris_hot_reload_reconciliation_decision.md`
+  §4, deliberately left external, single caller) — the same open problem the interpreted path's
+  own `ReloadRoot` scoped down to "the entry component only," not solved generally there either.
 
 ### Explicitly not requested
 

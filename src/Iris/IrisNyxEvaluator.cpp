@@ -1,8 +1,11 @@
 #include "Iris/IrisNyxEvaluator.h"
 
 #include "host/marshal.hpp"
+#include "lexer/lexer.hpp"
+#include "runtime/environment.hpp"
 
 #include <sstream>
+#include <unordered_map>
 #include <variant>
 
 namespace Iris {
@@ -103,6 +106,158 @@ Value InvokeAsLambda(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRuntime::NyxS
     return Runtime.EvaluateInScope(Scope, Call);
 }
 
+// Which identifier(s) a `.Map()`/`.Reduce()` callback's own lambda parameters bind an embedded
+// element's current item/iteration-index to -- extracted once at reconstruction time so
+// `EvaluateSlot` can inject them into the `__chaos_slot_pick` marker call, and again to know
+// what to `Define` in a per-pick scope afterward.
+struct MapReduceBinding {
+    std::string                Item;
+    std::optional<std::string> Index; // Map's optional 2nd lambda param only; never set for Reduce
+};
+
+// Scans one `Text` segment for a `.Map((param[, indexParam]) -> ` or
+// `.Reduce((acc, param) -> ` lambda that is still *open* at the end of the segment -- i.e. the
+// segment immediately following it (an embedded element) sits inside that lambda's own body.
+// docs/archive/iris_nyx_slot_loop_and_reload_gap_resolved.md §1: this can't be pure text substitution,
+// and `Iris::NyxTokenizer` is the wrong tool (it coarsens keywords/strings, losing exact
+// identifier boundaries) -- this tokenizes `Text` directly with nyx-proto's own real
+// `nyx::Lexer`, the same tool `NyxTokenizer.cpp` itself wraps, and walks its token stream the
+// same way `Parser::ParseParenOrLambda`'s own lambda-param scan does on nyx-proto's own side.
+std::optional<MapReduceBinding> DetectOpenMapReduceLambda(const std::string& Text) {
+    nyx::Lexer               Lexer{Text};
+    std::vector<nyx::Token> Tokens;
+    try {
+        Tokens = Lexer.Tokenize();
+    } catch (const nyx::LexError&) {
+        // `Text` is one interleaved fragment of a larger expression, not necessarily
+        // self-terminated (e.g. a string literal split across a `.Map()` boundary is not a
+        // pattern this scanner needs to diagnose) -- no binding found is the safe fallback.
+        return std::nullopt;
+    }
+
+    std::optional<MapReduceBinding> Result;
+    for (std::size_t I = 0; I < Tokens.size(); ++I) {
+        if (Tokens[I].kind != nyx::TokenKind::Dot || I + 1 >= Tokens.size() ||
+            Tokens[I + 1].kind != nyx::TokenKind::Identifier) {
+            continue;
+        }
+        const bool IsMap    = Tokens[I + 1].lexeme == "Map";
+        const bool IsReduce = Tokens[I + 1].lexeme == "Reduce";
+        if (!IsMap && !IsReduce) {
+            continue;
+        }
+
+        std::size_t J = I + 2;
+        if (J >= Tokens.size() || Tokens[J].kind != nyx::TokenKind::LParen) {
+            continue;
+        }
+        ++J; // the outer .Map( / .Reduce( call's own paren
+        if (J >= Tokens.size() || Tokens[J].kind != nyx::TokenKind::LParen) {
+            continue;
+        }
+        ++J; // the lambda's own parameter-list paren
+
+        // A `LambdaParam` is always `Type Name [= default]` (parser.cpp's own
+        // `ParseParenOrLambda`: `p.type = ParseType(); p.name = Expect(Identifier, ...)`) --
+        // untyped `(item) -> ...` isn't actually valid Nyx syntax, only `(int item) -> ...`
+        // is. `Type` may itself be generic (`Array<int> item`), so the parameter's own name
+        // is the *last* Identifier seen at bracket/paren depth 0 within this parameter's own
+        // span, not the first -- Type always precedes Name, never the reverse. Once `=` is
+        // seen at depth 0 the name is already known; further identifiers belong to the
+        // default-value expression and must not overwrite it (decision-log.md §5.14's default
+        // parameters still carry a declared name either way, so this only needs to stop
+        // updating, not fully evaluate that expression).
+        std::vector<std::string> Params;
+        while (J < Tokens.size() && Tokens[J].kind != nyx::TokenKind::RParen) {
+            std::string LastIdentifier;
+            int         AngleDepth = 0;
+            int         ParenDepth = 0;
+            bool        SawDefault = false;
+            while (J < Tokens.size() &&
+                   !(ParenDepth == 0 && AngleDepth == 0 &&
+                     (Tokens[J].kind == nyx::TokenKind::Comma || Tokens[J].kind == nyx::TokenKind::RParen))) {
+                switch (Tokens[J].kind) {
+                    case nyx::TokenKind::Less:
+                        ++AngleDepth;
+                        break;
+                    case nyx::TokenKind::Greater:
+                        if (AngleDepth > 0) {
+                            --AngleDepth;
+                        }
+                        break;
+                    case nyx::TokenKind::LParen:
+                        ++ParenDepth;
+                        break;
+                    case nyx::TokenKind::RParen:
+                        --ParenDepth;
+                        break;
+                    case nyx::TokenKind::Assign:
+                        if (ParenDepth == 0 && AngleDepth == 0) {
+                            SawDefault = true;
+                        }
+                        break;
+                    case nyx::TokenKind::Identifier:
+                        if (ParenDepth == 0 && AngleDepth == 0 && !SawDefault) {
+                            LastIdentifier = Tokens[J].lexeme;
+                        }
+                        break;
+                    default:
+                        break;
+                }
+                ++J;
+            }
+            if (!LastIdentifier.empty()) {
+                Params.push_back(LastIdentifier);
+            }
+            if (J < Tokens.size() && Tokens[J].kind == nyx::TokenKind::Comma) {
+                ++J;
+            }
+        }
+        if (J >= Tokens.size() || Tokens[J].kind != nyx::TokenKind::RParen) {
+            continue; // malformed -- no matching close found
+        }
+        ++J; // the lambda param list's own closing paren
+        if (J >= Tokens.size() || Tokens[J].kind != nyx::TokenKind::Arrow || Params.empty()) {
+            continue;
+        }
+        ++J; // `->`
+
+        MapReduceBinding Binding;
+        if (IsMap) {
+            Binding.Item = Params[0];
+            if (Params.size() > 1) {
+                Binding.Index = Params[1];
+            }
+        } else {
+            if (Params.size() < 2) {
+                continue; // Reduce always takes (acc, item) -- malformed otherwise
+            }
+            Binding.Item = Params[1]; // second lambda param is the element; first is the accumulator
+        }
+
+        // From here on this is the lambda body: track paren depth starting at 1 (the outer
+        // .Map(/.Reduce( call's own still-open paren) -- if depth never returns to 0 by the end
+        // of this Text segment, the call is still open, and the element segment immediately
+        // following belongs to this lambda's body.
+        int  Depth     = 1;
+        bool StillOpen = true;
+        for (std::size_t K = J; K < Tokens.size(); ++K) {
+            if (Tokens[K].kind == nyx::TokenKind::LParen) {
+                ++Depth;
+            } else if (Tokens[K].kind == nyx::TokenKind::RParen) {
+                if (--Depth == 0) {
+                    StillOpen = false;
+                    break;
+                }
+            }
+        }
+        if (StillOpen) {
+            Result = Binding; // the closest-to-the-end open call wins
+        }
+    }
+    return Result;
+}
+
 } // namespace
 
 std::string ReconstructNyxSource(const IrisIrDocument& Document) {
@@ -118,10 +273,18 @@ std::string ReconstructNyxSource(const IrisIrDocument& Document) {
 }
 
 void ChaosSlotMarker::RegisterOn(nyx::host::NyxRuntime& Runtime) {
-    std::shared_ptr<std::vector<std::size_t>> Selected = Selected_;
+    std::shared_ptr<std::vector<ChaosSlotPick>> Selected = Selected_;
     Runtime.RegisterFunction("__chaos_slot_pick", [Selected](std::vector<Value> Args) -> Value {
         if (!Args.empty() && Args[0].Kind() == ValueKind::Int) {
-            Selected->push_back(static_cast<std::size_t>(std::get<int32_t>(Args[0].data)));
+            ChaosSlotPick Pick;
+            Pick.ElementIndex = static_cast<std::size_t>(std::get<int32_t>(Args[0].data));
+            if (Args.size() > 1) {
+                Pick.Item = Args[1];
+            }
+            if (Args.size() > 2) {
+                Pick.IterationIndex = Args[2];
+            }
+            Selected->push_back(std::move(Pick));
         }
         return Value();
     });
@@ -154,8 +317,10 @@ NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRunt
         return StringifyValue(Runtime.EvaluateInScope(Scope, Node.Source()));
     };
 
-    Eval.EvaluateSlot = [&Runtime, &Scope, &Marker](const IrNyxExpressionNode& Node,
-                                                       const IrElementConverter& Convert) -> IrisSlotResult {
+    Eval.EvaluateSlot =
+        [&Runtime, &Scope, &Marker, InvokeChild, Errors,
+         PickScopes = std::make_shared<std::vector<std::shared_ptr<nyx::host::NyxRuntime::NyxScope>>>()](
+            const IrNyxExpressionNode& Node, const IrElementConverter& Convert) -> IrisSlotResult {
         const std::vector<IrElementNode> Elements = Node.Elements();
         if (Elements.empty()) {
             // A plain (non-JSX) escape hatch's own callable return value has no natural
@@ -166,26 +331,77 @@ NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRunt
             return std::vector<Iris::Component>{};
         }
 
-        std::string Reconstructed;
-        std::size_t ElementIndex = 0;
+        std::string                              Reconstructed;
+        std::size_t                              ElementIndex = 0;
+        std::unordered_map<std::size_t, MapReduceBinding> Bindings;
+        std::optional<MapReduceBinding>          Pending;
         for (const IrNyxExpressionSegment& Seg : Node.Segments) {
             if (Seg.Kind == IrNyxExpressionSegmentKind::Text) {
                 Reconstructed += Seg.Text;
+                Pending = DetectOpenMapReduceLambda(Seg.Text);
             } else {
-                Reconstructed += "__chaos_slot_pick(" + std::to_string(ElementIndex) + ")";
+                if (Pending.has_value()) {
+                    Bindings[ElementIndex] = *Pending;
+                }
+                Reconstructed += "__chaos_slot_pick(" + std::to_string(ElementIndex);
+                if (Pending.has_value()) {
+                    Reconstructed += ", " + Pending->Item;
+                    if (Pending->Index.has_value()) {
+                        Reconstructed += ", " + *Pending->Index;
+                    }
+                }
+                Reconstructed += ")";
                 ++ElementIndex;
+                Pending.reset();
             }
         }
 
         Marker.Selected_->clear();
         InvokeAsLambda(Runtime, Scope, Reconstructed, {});
-        std::vector<std::size_t> Picked = *Marker.Selected_;
+        std::vector<ChaosSlotPick> Picked = *Marker.Selected_;
+
+        // Discards the previous call's per-pick scopes -- safe once this call's own picks are
+        // about to (re)build the tree: any prop closure capturing the old scopes belonged to
+        // Components this same re-render is about to replace, same "freshly rebuilt, old
+        // discarded" lifetime every other prop closure in this file already has.
+        PickScopes->clear();
 
         std::vector<Iris::Component> Out;
-        for (std::size_t Index : Picked) {
-            if (Index < Elements.size()) {
-                Out.push_back(Convert(Elements[Index]));
+        for (const ChaosSlotPick& Pick : Picked) {
+            if (Pick.ElementIndex >= Elements.size()) {
+                continue;
             }
+            if (!Pick.Item.has_value()) {
+                Out.push_back(Convert(Elements[Pick.ElementIndex]));
+                continue;
+            }
+            const auto BindingIt = Bindings.find(Pick.ElementIndex);
+            if (BindingIt == Bindings.end()) {
+                Out.push_back(Convert(Elements[Pick.ElementIndex])); // shouldn't happen; fall back rather than drop
+                continue;
+            }
+
+            // The same EvalContext-substitution shape InvokeComponent already uses
+            // (decision-log.md §7.3), applied per pick instead of per invocation: a fresh
+            // child Environment of the outer invocation's own scope, with the .Map()/.Reduce()
+            // callback's bound parameter(s) Defined directly -- two picks from the same call
+            // never share an Environment, so never see each other's bound item. Heap-allocated
+            // and kept alive via PickScopes (this closure's own persistent state, not a local)
+            // since a produced element's event-handler prop may re-evaluate against it long
+            // after this call returns -- MakeNyxEvaluator's closures hold a raw reference into
+            // whatever NyxScope they're given, same contract IrisNyxDriver's own DriverState
+            // already satisfies for the outer per-invocation scope.
+            auto ChildEnv = std::make_shared<nyx::runtime::Environment>(Scope.context.env);
+            ChildEnv->Define(BindingIt->second.Item, *Pick.Item);
+            if (BindingIt->second.Index.has_value() && Pick.IterationIndex.has_value()) {
+                ChildEnv->Define(*BindingIt->second.Index, *Pick.IterationIndex);
+            }
+            auto PerPickScope = std::make_shared<nyx::host::NyxRuntime::NyxScope>(
+                nyx::host::NyxRuntime::NyxScope{Scope.interpreter, nyx::interpreter::EvalContext{ChildEnv, Scope.context.thisObject}});
+            PickScopes->push_back(PerPickScope);
+
+            NyxEvaluator PerPickEval = MakeNyxEvaluator(Runtime, *PerPickScope, Marker, InvokeChild, Errors);
+            Out.push_back(ConvertIrElement(Elements[Pick.ElementIndex], PerPickEval, Errors));
         }
         return Out;
     };
@@ -215,7 +431,7 @@ NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRunt
             }
         }
 
-        return InvokeChild(Node.Tag, Value(Props));
+        return InvokeChild(Node.Tag, Value(Props), Node);
     };
 
     return Eval;

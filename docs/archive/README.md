@@ -18,3 +18,5 @@ handoffs, kept for the reasoning trail").
 | `iris_stage1_open_questions.md` | Closed by `docs/iris_stage1_decision_doc.md` / `_pt2.md`; current reference is `docs/iris_core_spec.md` |
 | `iris_stage2_open_questions.md` | Closed by `docs/iris_stage2_decision_doc.md`; current reference is `docs/iris_core_spec.md` |
 | `iris_stage3_open_questions.md` | Closed by `docs/iris_stage3_decision_doc.md`; current reference is `docs/iris_core_spec.md` |
+| `iris_nyx_slot_loop_and_reload_gap.md` | Both sized gaps resolved on nyx-proto's side (`decision-log.md` §7.4, §9.2) and consumed here — see `docs/next-steps.md`'s "Chaos runtime" entry |
+| `iris_nyx_slot_loop_and_reload_gap_resolved.md` | Same as above — the iris-proto-side implementation this doc sized (Map/Reduce slot loops, free-function hot reload) is done, current reference is `docs/next-steps.md` |

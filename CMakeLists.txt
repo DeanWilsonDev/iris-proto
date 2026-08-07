@@ -150,7 +150,8 @@ add_library(iris STATIC
     src/Iris/SlotResolution.cpp
     src/Iris/NyxSignalDecorator.cpp
     src/Iris/ReloadTarget.cpp
-    src/Iris/IrisNyxEvaluator.cpp)
+    src/Iris/IrisNyxEvaluator.cpp
+    src/Iris/IrisNyxDriver.cpp)
 
 target_include_directories(iris PUBLIC include)
 target_compile_features(iris PUBLIC cxx_std_23)
@@ -241,7 +242,8 @@ add_executable(test_iris
     tests/SlotResolutionTests.cpp
     tests/SlotSiblingGroupTests.cpp
     tests/ReloadTargetTests.cpp
-    tests/IrisNyxEvaluatorTests.cpp)
+    tests/IrisNyxEvaluatorTests.cpp
+    tests/IrisNyxDriverTests.cpp)
 
 target_link_libraries(test_iris PRIVATE iris cimmerian)
 set_target_properties(test_iris PROPERTIES
