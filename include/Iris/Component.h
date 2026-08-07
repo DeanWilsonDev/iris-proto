@@ -10,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -90,6 +91,18 @@ struct IrisNativeBuilder;
 // found one added, removed, or type-changed (`SignalLayoutChanged`) — the tier-1/tier-2
 // distinction a reload driver needs, computed structurally rather than predicted ahead of
 // time from source text.
+//
+// `InvocationTag` (docs/next-steps.md's "Chaos runtime" entry, nested `.irisx` reload) is set
+// only when this `Component` is the result of a component invocation (a non-primitive
+// `<Name .../>` tag, docs/iris_core_spec.md §2.6) -- `nullopt` otherwise, same "present only
+// where relevant" convention as `Key`/`Ref`/`ReloadTier`. Exists purely so a previous render's
+// own `Component` tree can answer "which tag produced this subtree" -- otherwise unanswerable
+// from a `Component` tree alone, since the rest of this struct only ever records the
+// Core-primitive tree an invocation rendered *into*, never which tag invoked it. Set today
+// only by the interpreted `.irisx` path (`IrisIrRuntime.cpp`'s `ConvertComponentInvocation`,
+// consumed by `IrisNyxDriver`'s nested-reload matching); the compiled `.iris`/Codegen path
+// leaves it unset, since nothing there reads it (compiled-path reload is still open, see
+// docs/next-steps.md).
 struct Component {
     IrisElementTag                    Tag{IrisElementTag::Frame};
     IrisProps                         Props;
@@ -100,6 +113,7 @@ struct Component {
     std::optional<IrisPropValue>      Ref;
     std::shared_ptr<iris::ComponentInstance> Instance;
     std::optional<iris::ComponentReloadTier> ReloadTier;
+    std::optional<std::string>        InvocationTag;
 
     Component() = default;
     Component(IrisElementTag Tag, IrisProps Props, std::vector<Component> Children,

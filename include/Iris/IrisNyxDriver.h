@@ -79,6 +79,15 @@ public:
     // what Iris itself requires.
     nyx::host::NyxRuntime& Runtime();
 
+    // Registers a named `<Native>` widget builder (`NyxEvaluator::EvaluateNative`,
+    // IrisIrRuntime.h / `NativeBuilderLookup`, IrisNyxEvaluator.h) -- called by the host
+    // application before the first `MountRoot`/`ReloadRoot` call that mounts a `.irisx` file
+    // using `<Native build={"Name"} />`, same "register additional things up front" convention
+    // `Runtime()`'s own doc comment already documents for host types/functions. `Factory` is
+    // called lazily, exactly once per `Build()` call on the resulting `IrisNativeBuilder` --
+    // never eagerly, and never by this driver itself.
+    void RegisterNativeBuilder(std::string Name, std::function<std::unique_ptr<Umbra::IWidget>()> Factory);
+
     // Every error accumulated across every `MountRoot`/`ReloadRoot`/`InvokeComponent` call so
     // far -- file-load/import-resolution failures (reported with a default-constructed
     // `IrSourceLocation`, since they have no single node to point at) and ordinary
@@ -125,15 +134,20 @@ public:
     // applying the result to real widgets is the caller's own job, via its own
     // `iris::ReloadTarget::Reconcile` (`ReloadTarget.h`, already built), not this driver's.
     //
-    // **Scope boundary:** only `EntryFunctionName`'s own state is reload-preserved this way. Any
-    // *nested* cross-file component invocation reached while converting its tree (a `<Card/>`
-    // inside the entry component's own render output) mounts fresh every time, exactly as
-    // `MountRoot` already does -- checked directly against `Component.h` while building this: a
-    // mounted invocation's resulting `Component` carries no trace of which tag name (`"Card"`)
-    // produced it, only the Core-primitive tree it rendered into, so matching a previous nested
-    // invocation isn't answerable from a previous `Component` tree alone. That needs its own
-    // position-to-`ComponentInstance` trace recorded across renders -- real, undesigned scope,
-    // not attempted here; see this file's own doc comment on `InvokeComponent`.
+    // **Scope boundary:** a *statically*-nested component invocation -- a direct, unconditional
+    // child of a Core primitive somewhere in `EntryFunctionName`'s own render output (a `<Header
+    // />` that's always present, not behind a `<Slot>`) -- now reloads too, matched against its
+    // own prior render via `Component::InvocationTag` (Component.h) and `InvokeComponent`'s own
+    // nested-invocation cursor (IrisNyxDriver.cpp's `CollectNestedInvocations`), propagating to
+    // any nesting depth. What still always mounts fresh: any invocation reached only through a
+    // `<Slot>`'s dynamically-produced output (a `.Map()`-rendered list, a conditional) -- a
+    // `<Slot>`'s own current output is never stored in `Component::Children` at all, only inside
+    // the live-widget-layer `SlotState` (SlotRuntime.h) this backend-agnostic driver deliberately
+    // never touches, so such an invocation is structurally invisible to the collector above, not
+    // just unmatched. Closing that would mean either breaking the backend-agnostic boundary or
+    // giving `SlotState` its own way to report "here's what I rendered last time" back to a
+    // driver observing from outside the widget layer -- real, undesigned scope, not attempted
+    // here; see this file's own doc comment on `InvokeComponent`.
     IrisNyxReloadResult ReloadRoot(const std::string& EntryResolvedPath, const std::string& EntryFunctionName,
                                     std::vector<nyx::runtime::Value> InitialArgs, const Iris::Component& PreviousRoot);
 
@@ -163,10 +177,17 @@ private:
 
     // The recursive core `MountRoot`/`ReloadRoot` and a component invocation's own
     // `ChildComponentInvoker` (built inside this function, passed to `MakeNyxEvaluator`) all
-    // call. `Previous` is `nullptr` for an ordinary mount (`MountRoot`, or any nested child
-    // invocation -- see this class's own `ReloadRoot` doc comment on why nested children never
-    // pass one); non-null only for `ReloadRoot`'s own entry-point call, naming the prior render
-    // of this exact same invocation to reload against.
+    // call. `Previous` is `nullptr` for an ordinary mount (`MountRoot`, or a nested child
+    // invocation this call's own `ChildInvoker` couldn't match against `Previous->Children` --
+    // see `CollectNestedInvocations`, IrisNyxDriver.cpp); non-null for `ReloadRoot`'s own
+    // entry-point call, and for any nested statically-nested child invocation this call's own
+    // `ChildInvoker` *did* match (`Component::InvocationTag`-based, tag+position only -- see
+    // this class's own `ReloadRoot` doc comment on the `<Slot>`-mediated case this still doesn't
+    // reach) -- either way, names the prior render of this exact same invocation to reload
+    // against. Building `ChildInvoker`'s own matching cursor from `Previous->Children` below is
+    // what makes this recursive: a match found here becomes the very next nesting level's own
+    // `Previous`, so a statically-nested invocation's *own* nested invocations get the same
+    // treatment automatically.
     //
     // Mount path (`Previous == nullptr`, or `Previous` has no reusable
     // `Instance`/`DriverState`): loads `ResolvedPath`'s document, invokes `FunctionName` against
@@ -239,16 +260,24 @@ private:
     // The `ChildComponentInvoker` body `InvokeComponent` registers with `MakeNyxEvaluator`:
     // resolves `Tag` against `CallerResolvedPath`'s own already-resolved `Document.Imports`
     // (`IrImportNode::Name` == `Tag`) to find which file it refers to, then re-enters
-    // `InvokeComponent` for that file/function (always as a fresh mount, `Previous = nullptr`
-    // -- see this class's own `ReloadRoot` doc comment) -- the only two things a cross-file
-    // component invocation actually needs beyond what `InvokeComponent` already does for a
-    // same-file one. An unimported tag is reported into `Errors_` and mounts nothing,
-    // rather than falling back to guessing a same-file function of that name -- every
-    // documented `.chaos`/`.irisx` example puts one component per file
-    // (chaos-ui-authoring.md §27.1), so an invocation naming a tag with no matching
-    // `import` is treated as an authoring mistake, not a same-file call.
+    // `InvokeComponent` for that file/function -- the only two things a cross-file component
+    // invocation actually needs beyond what `InvokeComponent` already does for a same-file one.
+    // `Previous` is whatever `InvokeComponent`'s own nested-invocation cursor matched at this
+    // position (nullptr for an unmatched or non-reload call -- an ordinary fresh mount, exactly
+    // as before this parameter existed) -- forwarded straight through as `InvokeComponent`'s own
+    // reload parameter, so a matched statically-nested cross-file child reloads too. An
+    // unimported tag is reported into `Errors_` and mounts nothing, rather than falling back to
+    // guessing a same-file function of that name -- every documented `.chaos`/`.irisx` example
+    // puts one component per file (chaos-ui-authoring.md §27.1), so an invocation naming a tag
+    // with no matching `import` is treated as an authoring mistake, not a same-file call.
     Iris::Component InvokeChildComponent(const std::string& CallerResolvedPath, const std::string& Tag,
-                                          const nyx::runtime::Value& Props);
+                                          const nyx::runtime::Value& Props, const Iris::Component* Previous);
+
+    // Builds a `NativeBuilderLookup` (IrisNyxEvaluator.h) bound to `NativeBuilders_` -- every
+    // `MakeNyxEvaluator` call site in this class passes the result of this rather than reaching
+    // into `NativeBuilders_` directly, so registering a new builder kind never needs touching
+    // more than this one function.
+    NativeBuilderLookup MakeNativeBuilderLookup();
 
     IrisConfig  Config_;
     std::string ProjectRoot_;
@@ -258,6 +287,7 @@ private:
 
     std::unordered_map<std::string, IrisIrDocument>              Documents_;
     std::unordered_map<std::string, nyx::host::NyxRuntime::NyxScope> FileScopes_;
+    std::unordered_map<std::string, std::function<std::unique_ptr<Umbra::IWidget>()>> NativeBuilders_;
 
     std::vector<IrisIrRuntimeError> Errors_;
 };

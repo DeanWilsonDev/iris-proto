@@ -166,18 +166,33 @@ Iris::Component ConvertOrdinaryPrimitive(const IrElementNode& Node, const NyxEva
 }
 
 // `<Native>` (docs/archive/iris_next_steps_resolved.md, "No way to declare a custom widget/
-// imperative-draw node as an Iris element") has no interpreted-runtime evaluator hook yet --
-// its `build` prop evaluates to an already-built `Umbra::IWidget` handle, which has no room in
-// `IrisPropValue` and no natural `NyxEvaluator` callback shape (unlike every other escape
-// hatch here, its result isn't representable as a prop, text, or `Component`). Deliberately
-// deferred rather than guessed at; see docs/next-steps.md.
-Iris::Component ConvertNative(const IrElementNode& Node, const NyxEvaluator& /*Evaluator*/,
+// imperative-draw node as an Iris element") -- its `build` prop evaluates to an already-built
+// `Umbra::IWidget` handle, which has no room in `IrisPropValue` and no natural "evaluate this
+// Nyx expression" callback shape (unlike every other escape hatch here, its result isn't
+// representable as a prop, text, or `Component`), so it goes through the dedicated
+// `NyxEvaluator::EvaluateNative` hook instead of `Evaluator.EvaluateProp`. An unset callback
+// (a mock evaluator with no opinion on `<Native>`, e.g. most of `IrisIrRuntimeTests.cpp`) keeps
+// today's "not yet supported" error; a set callback returning `nullptr` (the real
+// implementation's own failure cases -- see `IrisNyxEvaluator.cpp`) gets a specific error
+// instead, still reported here rather than by the callback, since only this function knows
+// `Node.Location`.
+Iris::Component ConvertNative(const IrElementNode& Node, const NyxEvaluator& Evaluator,
                                 std::vector<IrisIrRuntimeError>* Errors) {
-    AddError(Errors,
-              "<Native> is not yet supported for .irisx -- its `build` prop's opaque widget-builder escape hatch "
-              "has no interpreted-runtime evaluator hook (only the compiled .iris/Codegen path supports it)",
-              Node.Location);
-    return Iris::Component{Iris::IrisElementTag::Native, Iris::IrisProps{}, {}, nullptr};
+    if (!Evaluator.EvaluateNative) {
+        AddError(Errors,
+                  "<Native> is not yet supported for .irisx -- its `build` prop's opaque widget-builder escape "
+                  "hatch has no interpreted-runtime evaluator hook (only the compiled .iris/Codegen path "
+                  "supports it)",
+                  Node.Location);
+        return Iris::Component{Iris::IrisElementTag::Native, Iris::IrisProps{}, {}, nullptr};
+    }
+
+    std::shared_ptr<Iris::IrisNativeBuilder> Builder = Evaluator.EvaluateNative(Node);
+    if (Builder == nullptr) {
+        AddError(Errors, "<Native>'s `build` prop did not resolve to a registered native builder", Node.Location);
+        return Iris::Component{Iris::IrisElementTag::Native, Iris::IrisProps{}, {}, nullptr};
+    }
+    return Iris::Component{Iris::IrisElementTag::Native, Iris::IrisProps{}, {}, nullptr, std::move(Builder)};
 }
 
 // `<Slot>`'s single escape-hatch child becomes a list-returning `Iris::IrisSlotCallable`
@@ -206,10 +221,14 @@ Iris::Component ConvertSlot(const IrElementNode& Node, const NyxEvaluator& Evalu
     std::shared_ptr<IrNyxExpressionNode> ExprNode = Node.Children[0].Expression;
     NyxEvaluator                          EvaluatorCopy = Evaluator;
 
-    // `Errors` is deliberately not captured here -- see ConvertIrElement's own doc comment in
-    // IrisIrRuntime.h on why a re-invocation's errors have nowhere durable to land yet.
-    IrElementConverter Convert = [EvaluatorCopy](const IrElementNode& Child) {
-        return ConvertIrElement(Child, EvaluatorCopy, nullptr);
+    // `Errors` is forwarded (by pointer, not by value) into the closure -- see ConvertIrElement's
+    // own doc comment in IrisIrRuntime.h for when this is actually durable across a re-invocation
+    // (it is, for the one real production caller, `IrisNyxDriver`) versus not (a caller passing a
+    // stack-scoped vector, e.g. a test calling `WalkIrisIrDocument` directly, is responsible for
+    // keeping it alive itself if it wants re-invocation diagnostics -- same opt-in-via-non-null
+    // convention `Errors` already has everywhere else in this file).
+    IrElementConverter Convert = [EvaluatorCopy, Errors](const IrElementNode& Child) {
+        return ConvertIrElement(Child, EvaluatorCopy, Errors);
     };
 
     std::function<std::vector<Iris::Component>()> Callable = [ExprNode, EvaluatorCopy, Convert]() {
@@ -248,7 +267,13 @@ Iris::Component ConvertComponentInvocation(const IrElementNode& Node, const NyxE
                   Node.Location);
         return Iris::Component{nullptr};
     }
-    return Evaluator.EvaluateComponentInvocation(Node);
+    Iris::Component Result = Evaluator.EvaluateComponentInvocation(Node);
+    // Records which tag produced this subtree -- Component.h's own `InvocationTag` doc comment
+    // explains why nothing else here can answer that later. Set unconditionally (even on a
+    // `Component{nullptr}`/None-tagged failure result) so a later reload-matching pass sees a
+    // consistent identity for this position either way.
+    Result.InvocationTag = Node.Tag;
+    return Result;
 }
 
 } // namespace

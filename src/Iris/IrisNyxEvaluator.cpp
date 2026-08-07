@@ -292,7 +292,8 @@ void ChaosSlotMarker::RegisterOn(nyx::host::NyxRuntime& Runtime) {
 
 NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRuntime::NyxScope& Scope,
                                  ChaosSlotMarker& Marker, ChildComponentInvoker InvokeChild,
-                                 std::vector<IrisIrRuntimeError>* Errors) {
+                                 std::vector<IrisIrRuntimeError>* Errors,
+                                 NativeBuilderLookup FindNativeBuilder) {
     NyxEvaluator Eval;
 
     Eval.EvaluateProp = [&Runtime, &Scope](const IrNyxExpressionNode& Node,
@@ -317,8 +318,47 @@ NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRunt
         return StringifyValue(Runtime.EvaluateInScope(Scope, Node.Source()));
     };
 
+    if (FindNativeBuilder) {
+        Eval.EvaluateNative = [&Runtime, &Scope, FindNativeBuilder,
+                                 Errors](const IrElementNode& Node) -> std::shared_ptr<Iris::IrisNativeBuilder> {
+            const IrPropNode* BuildProp = nullptr;
+            for (const IrPropNode& P : Node.Props) {
+                if (P.Name == "build") {
+                    BuildProp = &P;
+                    break;
+                }
+            }
+            if (BuildProp == nullptr || BuildProp->Value.IsLiteral) {
+                AddError(Errors,
+                          "<Native> requires a `build` prop with a Nyx expression naming a registered builder",
+                          Node.Location);
+                return nullptr;
+            }
+
+            // `build` is author-written as a `() -> ...` lambda, same as every other escape
+            // hatch here (chaos-ir-spec.md §3.6) -- evaluating its raw source alone (as opposed
+            // to InvokeAsLambda's own "parse and immediately call" contract) would yield the
+            // *Callable* itself, never the string it returns.
+            const Value Result = InvokeAsLambda(Runtime, Scope, BuildProp->Value.Expression.Source(), {});
+            if (Result.Kind() != ValueKind::String) {
+                AddError(Errors, "<Native>'s `build` prop must evaluate to a string naming a registered builder",
+                          BuildProp->Value.Expression.Location);
+                return nullptr;
+            }
+
+            const std::string& Name = std::get<std::string>(Result.data);
+            std::function<std::unique_ptr<Umbra::IWidget>()> Factory = FindNativeBuilder(Name);
+            if (!Factory) {
+                AddError(Errors, "no native builder registered for name '" + Name + "'",
+                          BuildProp->Value.Expression.Location);
+                return nullptr;
+            }
+            return Iris::MakeNativeBuilder(std::move(Factory));
+        };
+    }
+
     Eval.EvaluateSlot =
-        [&Runtime, &Scope, &Marker, InvokeChild, Errors,
+        [&Runtime, &Scope, &Marker, InvokeChild, Errors, FindNativeBuilder,
          PickScopes = std::make_shared<std::vector<std::shared_ptr<nyx::host::NyxRuntime::NyxScope>>>()](
             const IrNyxExpressionNode& Node, const IrElementConverter& Convert) -> IrisSlotResult {
         const std::vector<IrElementNode> Elements = Node.Elements();
@@ -400,7 +440,8 @@ NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRunt
                 nyx::host::NyxRuntime::NyxScope{Scope.interpreter, nyx::interpreter::EvalContext{ChildEnv, Scope.context.thisObject}});
             PickScopes->push_back(PerPickScope);
 
-            NyxEvaluator PerPickEval = MakeNyxEvaluator(Runtime, *PerPickScope, Marker, InvokeChild, Errors);
+            NyxEvaluator PerPickEval =
+                MakeNyxEvaluator(Runtime, *PerPickScope, Marker, InvokeChild, Errors, FindNativeBuilder);
             Out.push_back(ConvertIrElement(Elements[Pick.ElementIndex], PerPickEval, Errors));
         }
         return Out;

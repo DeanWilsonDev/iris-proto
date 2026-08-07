@@ -55,6 +55,21 @@ using ChildComponentInvoker =
     std::function<Iris::Component(const std::string& TagName, const nyx::runtime::Value& Props,
                                     const IrElementNode& Node)>;
 
+// The seam a `<Native>` element's `build` prop needs (`NyxEvaluator::EvaluateNative`,
+// IrisIrRuntime.h): given the name the `build` prop's Nyx expression evaluated to, returns the
+// registered *factory* for that name (an empty `std::function` if no builder is registered
+// under it) -- not an already-built widget, so the widget itself is still only constructed
+// whenever whoever holds the resulting `IrisNativeBuilder` actually calls `Build()`, exactly
+// the same lazy timing the compiled `.iris`/Codegen path's own `build` prop already has
+// (`Iris::MakeNativeBuilder`, `Component.h`). Nyx script has no binding for constructing
+// `Umbra::IWidget` directly, so the sanctioned way to author `<Native>` for `.irisx` is
+// `build={() -> "someRegisteredName"}` -- a string naming a builder the host application
+// registered up front (`IrisNyxDriver::RegisterNativeBuilder`), the same "runtime supplies a
+// callback, this code never knows what's on the other side of it" pattern `ChildComponentInvoker`
+// above already uses for component invocation.
+using NativeBuilderLookup =
+    std::function<std::function<std::unique_ptr<Umbra::IWidget>()>(const std::string& Name)>;
+
 // Registers the host function a real `EvaluateSlot` implementation (`MakeNyxEvaluator`
 // below) needs to resolve a JSX-transform escape hatch's conditional content --
 // docs/iris_nyx_evaluator_scope_gap.md's Problem 3. Not a decision-log.md §7.3 item --
@@ -95,7 +110,8 @@ public:
 
 private:
     friend NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime&, nyx::host::NyxRuntime::NyxScope&, ChaosSlotMarker&,
-                                            ChildComponentInvoker, std::vector<IrisIrRuntimeError>*);
+                                            ChildComponentInvoker, std::vector<IrisIrRuntimeError>*,
+                                            NativeBuilderLookup);
 
     std::shared_ptr<std::vector<ChaosSlotPick>> Selected_ = std::make_shared<std::vector<ChaosSlotPick>>();
 };
@@ -123,6 +139,15 @@ private:
 // cost that pattern implies (each firing re-parses), acceptable for a UI event handler
 // (rare compared to a render pass), not attempted for a hot path.
 //
+// `EvaluateNative` resolves `<Native>`'s `build` prop against `FindNativeBuilder` (this file's
+// own `NativeBuilderLookup` doc comment above) -- `build`, like every other escape hatch here,
+// is author-written as a `() -> ...` lambda (chaos-ir-spec.md §3.6), so it goes through
+// `InvokeAsLambda` (this file's own event-handler mechanism, above) rather than a plain
+// `EvaluateInScope`, and its result must be a `std::string`. A missing/wrong-typed `build`
+// prop, or a name `FindNativeBuilder` doesn't recognize, reports a specific error and returns
+// `nullptr` (`ConvertNative`, IrisIrRuntime.cpp, turns that into its own error since only it
+// has `Node.Location`); a resolved builder is wrapped via `Iris::MakeNativeBuilder`.
+//
 // `EvaluateSlot` also resolves `list.Map((item[, index]) -> <Card .../>)` and
 // `list.Reduce((acc, item) -> ..., initial)` -- the sanctioned way to write a dynamic list of
 // components inside a `<Slot>` (`nyx-scripting-language/decision-log.md` §7.4,
@@ -131,8 +156,15 @@ private:
 // (`ChaosSlotMarker`'s own doc comment) and bound into a fresh per-pick `NyxScope` before that
 // element's own prop expressions (`item.name`) are converted -- two picks from the same
 // `.Map()` call never see each other's bound item.
+//
+// `FindNativeBuilder` is defaulted (empty) so every existing call site -- the recursive
+// per-pick self-call inside `EvaluateSlot` above, and every test that has no opinion on
+// `<Native>` -- needs no change: an empty `FindNativeBuilder` means `EvaluateNative` itself is
+// left unset on the returned `NyxEvaluator`, preserving `ConvertNative`'s existing "not yet
+// supported" behavior exactly (IrisIrRuntime.cpp).
 NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRuntime::NyxScope& Scope,
                                  ChaosSlotMarker& Marker, ChildComponentInvoker InvokeChild,
-                                 std::vector<IrisIrRuntimeError>* Errors);
+                                 std::vector<IrisIrRuntimeError>* Errors,
+                                 NativeBuilderLookup FindNativeBuilder = nullptr);
 
 } // namespace Iris

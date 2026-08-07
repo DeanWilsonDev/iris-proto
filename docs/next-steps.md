@@ -26,8 +26,13 @@ both since removed) plus one gap identified directly against `docs/iris_core_spe
 > nyx-proto's same-day decision-log batch (§7.4, §9.2) per
 > `docs/archive/iris_nyx_slot_loop_and_reload_gap_resolved.md`: a genuine runtime `<Slot>` loop via
 > `Array<T>.Map()`/`.Reduce()`, a real hot-reload driver (`IrisNyxDriver::ReloadRoot`) for
-> free-function components, and a second, class-based component authoring model (Model 2). What's
-> left is narrower still: `<Native>` for `.irisx`, and a couple of smaller open items below.
+> free-function components, and a second, class-based component authoring model (Model 2). Since
+> then (also 2026-08-07): `<Native>` for `.irisx` is done, a `<Slot>` re-invocation's own
+> conversion errors now reach a durable sink, and nested `.irisx` reload is partially closed
+> (statically-nested invocations only — see "Also open, smaller" below for the remaining
+> `<Slot>`-mediated gap). What's left is narrower still: the compiled-`.iris`-path hot-reload
+> driver (deferred — see "Also open, smaller"), the `<Slot>`-mediated nested-reload gap just
+> mentioned, and the IR-generation-trigger open question.
 > **History:** This entry consolidates the still-open tail of two now-archived entries —
 > `` `NyxTokenizer` (IHostLanguageTokenizer for `.irisx`) `` and `` `Codegen` has no Nyx-target
 > emission `` — both moved to `docs/archive/iris_next_steps_resolved.md` once their own scope
@@ -199,18 +204,31 @@ primitive to run them through, and every documented Model 2 example has nothing 
 parameter itself. Verified in `tests/IrisNyxDriverTests.cpp`: a mount running a real constructor
 and binding `Render`'s own parameter, and both reload tiers.
 
-**`<Native>` is unsupported for `.irisx`.** `ConvertIrElement` reports an error for it — its
-`build` prop evaluates to an opaque `Umbra::IWidget` handle, which has no natural
-`NyxEvaluator` callback shape (unlike every other escape hatch here, its result isn't
-representable as a prop, text, or `Component`). Only the compiled `.iris`/`Codegen` path
-supports `<Native>` today.
+**`<Native>` is now supported for `.irisx` — done (2026-08-07).** `NyxEvaluator` gained a
+dedicated `EvaluateNative` callback (`IrisIrRuntime.h`) rather than reusing `EvaluateProp` --
+`<Native>`'s `build` prop still evaluates to an opaque `Umbra::IWidget` handle, which has no
+natural "evaluate this Nyx expression" shape (unlike every other escape hatch here, its result
+isn't representable as a prop, text, or `Component`), so Nyx script instead names a builder the
+host application registered up front: `build={() -> "someRegisteredName"}`.
+`IrisNyxDriver::RegisterNativeBuilder` (`IrisNyxDriver.h`/`.cpp`) stores a name → factory map;
+`MakeNyxEvaluator` gained a defaulted `NativeBuilderLookup` parameter (empty by default, so
+every pre-existing call site is unaffected) that resolves the `build` prop's evaluated string
+against it and wraps a match via `Iris::MakeNativeBuilder` -- the widget itself is still only
+constructed lazily, whenever whoever holds the resulting `IrisNativeBuilder` calls `Build()`,
+matching the compiled `.iris`/Codegen path's own timing. Verified in
+`tests/IrisNyxEvaluatorTests.cpp` (name resolution, an unregistered name, no lookup supplied)
+and end to end in `tests/IrisNyxDriverTests.cpp` (a real `.irisx` file mounted through
+`IrisNyxDriver`).
 
-**A `<Slot>` re-invocation's own conversion errors have no durable sink.** `ConvertIrElement`
-takes an `IrisIrRuntimeError*` that may be `nullptr`; the `IrElementConverter` closure a
-`<Slot>`'s `EvaluateSlot` callback receives passes `nullptr`, since a re-invocation (driven by
-`iris::Tick()`, long after the original `WalkIrisIrDocument` call that produced the `<Slot>`
-already returned its own one-shot, by-value error list) has nowhere to report into yet. Minor
-compared to the above, but real — a diagnostics story for this is future work.
+**A `<Slot>` re-invocation's own conversion errors have a durable sink — done (2026-08-07).**
+`ConvertSlot`'s `IrElementConverter` closure (`IrisIrRuntime.cpp`) now forwards whichever
+`Errors` pointer was live at the `<Slot>`'s own initial conversion, rather than hardcoding
+`nullptr`, so a later re-invocation (driven by `iris::Tick()`) reports into that same sink.
+Durable specifically on the one real production path: `IrisNyxDriver` passes its own `Errors_`
+member, which lives for the driver's whole lifetime. A caller passing a stack-scoped vector
+directly to `WalkIrisIrDocument`/`ConvertIrElement` (a test, say) still gets no durability
+guarantee beyond that call returning — same opt-in-via-non-null convention `Errors` already had.
+Verified in `tests/IrisIrRuntimeTests.cpp`.
 
 ### Also open, smaller
 
@@ -237,13 +255,38 @@ compared to the above, but real — a diagnostics story for this is future work.
   mechanism (`iris::ReloadComponentInstance`/`BeginReloadReplay`/`EndReloadReplay` reconcile
   `IRIS_SIGNAL` storage by declaration order, which has nothing to do with interpreted
   `Environment`/`NyxObject`-backed state). **Still not built for the compiled path:** an actual
-  driver calling `ReloadComponentInstance` at all — nothing in this repo currently produces the
-  "recompiled `.iris` source, please reload" trigger a driver would react to, unlike the
-  interpreted path where "the file changed on disk" is `ReloadRoot`'s own explicit precondition
-  — and the component-invocation lockstep matching such a driver would use to find which
-  `ComponentInstance` to replay at each position (`docs/iris_hot_reload_reconciliation_decision.md`
-  §4, deliberately left external, single caller) — the same open problem the interpreted path's
-  own `ReloadRoot` scoped down to "the entry component only," not solved generally there either.
+  driver calling `ReloadComponentInstance` at all. Sized against the real code (2026-08-07):
+  `Codegen.cpp`'s `EmitComponentInvocation` emits a bare, unconditional
+  `iris::MountComponentInstance(...)` for every `<Name .../>` with zero indirection — no seam a
+  runtime driver could hook without recompiling. Closing this needs a new `MountOrReload`-style
+  primitive plus an ambient reload registry, changing what every existing compiled `.iris`
+  file's component invocations emit — a foundational-file change, not a driver-side one. Its
+  actual trigger (how a running binary gets newly-compiled behavior — most plausibly `dlopen` of
+  a rebuilt shared library) is also undefined product mechanism, same category as the IR
+  generation trigger item below. Deliberately deferred, not attempted here.
+
+  The interpreted path's own nested-reload scope is now **partially closed (2026-08-07)**:
+  `IrisNyxDriver::ReloadRoot` reloads a *statically*-nested component invocation too — a direct,
+  unconditional child of a Core primitive somewhere in the entry component's own render output
+  (e.g. an always-present `<Header />`, not behind a `<Slot>`) — not just the entry component
+  itself, propagating to any nesting depth. `Component` (`Component.h`) gained an
+  `InvocationTag` field recording which tag produced a component-invocation subtree — the trace
+  that was previously entirely missing, per this entry's own prior wording — and
+  `IrisNyxDriver.cpp`'s `CollectNestedInvocations` walks a previous render's own `Component`
+  tree to match a newly-encountered nested invocation against it by tag (position-based, not
+  key-based: the matching decision has to be made before a `key` prop, if any, gets evaluated,
+  which only happens one level up in the caller's own `ConvertIrElement`). **What's still
+  unreachable:** any invocation reached only through a `<Slot>`'s dynamically-produced output (a
+  `.Map()`-rendered list, a conditional) — a `<Slot>`'s own current output is never stored in
+  `Component::Children` at all, only inside the live-widget-layer `SlotState` (SlotRuntime.h)
+  this backend-agnostic driver deliberately never touches, so such an invocation is structurally
+  invisible to the collector, not just unmatched. Closing that would mean either breaking the
+  backend-agnostic boundary or giving `SlotState` its own way to report "here's what I rendered
+  last time" back to a driver observing from outside the widget layer — real, undesigned scope,
+  not attempted here. Verified in `tests/IrisNyxDriverTests.cpp`: a statically-nested cross-file
+  invocation's own `@signal` state survives an unrelated reload of its parent (same
+  `ComponentInstance` identity), and a `<Slot>`-mediated one still mounts fresh (documented, not
+  regressed).
 
 ### Explicitly not requested
 

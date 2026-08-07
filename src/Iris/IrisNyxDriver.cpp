@@ -54,6 +54,37 @@ iris::ComponentReloadTier CompareEnvironments(const nyx::runtime::Environment& O
     return iris::ComponentReloadTier::Unchanged;
 }
 
+// Pre-order collection of every direct-or-indirect component-invocation `Component` reachable
+// from `Node` *without* descending past one already found -- a matched invocation's own nested
+// invocations belong to a separate, later `InvokeComponent` call's own collection, not this
+// one's (Component.h's own `InvocationTag` doc comment). Visits `Node.Children` in the same
+// left-to-right document order `ConvertChildrenList` (IrisIrRuntime.cpp) walks the *new* IR in,
+// so position N here corresponds to the Nth component invocation the new render tree's own walk
+// encounters, absent a structural change (handled below by simply not matching).
+//
+// Deliberately does not descend into a `<Slot>` node's own `Children` for anything beyond what's
+// already there structurally: a `<Slot>`'s dynamically-produced output is never stored in
+// `Component::Children` at all (`SlotState` in SlotRuntime.h owns it instead, at the live-widget
+// layer this backend-agnostic driver never touches) -- so a component invocation reached only
+// through a `<Slot>` (a `.Map()`-rendered list, a conditional) is invisible to this collector and
+// always mounts fresh, same as before this feature. Only a *statically*-nested invocation (a
+// direct, unconditional child of a Core primitive) is found here.
+void CollectInvocationsBelow(const Iris::Component& Node, std::vector<const Iris::Component*>& Out) {
+    if (Node.InvocationTag.has_value()) {
+        Out.push_back(&Node);
+        return;
+    }
+    for (const Iris::Component& Child : Node.Children) {
+        CollectInvocationsBelow(Child, Out);
+    }
+}
+
+void CollectNestedInvocations(const Iris::Component& Root, std::vector<const Iris::Component*>& Out) {
+    for (const Iris::Component& Child : Root.Children) {
+        CollectInvocationsBelow(Child, Out);
+    }
+}
+
 } // namespace
 
 IrisNyxDriver::IrisNyxDriver(IrisConfig Config, std::string ProjectRoot)
@@ -68,6 +99,17 @@ IrisNyxDriver::IrisNyxDriver(IrisConfig Config, std::string ProjectRoot)
 }
 
 nyx::host::NyxRuntime& IrisNyxDriver::Runtime() { return Runtime_; }
+
+void IrisNyxDriver::RegisterNativeBuilder(std::string Name, std::function<std::unique_ptr<Umbra::IWidget>()> Factory) {
+    NativeBuilders_[std::move(Name)] = std::move(Factory);
+}
+
+NativeBuilderLookup IrisNyxDriver::MakeNativeBuilderLookup() {
+    return [this](const std::string& Name) -> std::function<std::unique_ptr<Umbra::IWidget>()> {
+        const auto It = NativeBuilders_.find(Name);
+        return It != NativeBuilders_.end() ? It->second : nullptr;
+    };
+}
 
 const IrisIrDocument* IrisNyxDriver::LoadDocument(const std::string& ResolvedPath) {
     const auto Cached = Documents_.find(ResolvedPath);
@@ -162,10 +204,42 @@ Iris::Component IrisNyxDriver::InvokeComponent(const std::string& ResolvedPath, 
     const bool                             IsClass    = Registry.classes.count(FunctionName) != 0;
     const bool                             IsFunction = Registry.functions.count(FunctionName) != 0;
 
-    const ChildComponentInvoker ChildInvoker = [this, ResolvedPath](const std::string& Tag,
-                                                                      const nyx::runtime::Value& Props,
-                                                                      const IrElementNode&) {
-        return InvokeChildComponent(ResolvedPath, Tag, Props);
+    // Nested-reload matching (docs/next-steps.md): only meaningful when this call is itself a
+    // reload (`PriorState != nullptr`) -- `Previous->Children` is this exact invocation's own
+    // previously-rendered output, the thing a statically-nested child invocation inside it
+    // should be matched against. A fresh mount (PriorState == nullptr, including every nested
+    // child invocation reached via an ordinary, non-reload-aware mount) leaves this empty, so
+    // every lookup below misses and every child mounts fresh -- unchanged from before this
+    // feature. Shared (not per-closure-copy) mutable state, same convention IrisNyxEvaluator.cpp's
+    // own EvaluateSlot uses for PickScopes -- a std::function may be copied as it's threaded
+    // through MakeNyxEvaluator, and every copy must see the same cursor position.
+    auto PreviousInvocations = std::make_shared<std::vector<const Iris::Component*>>();
+    if (PriorState != nullptr) {
+        CollectNestedInvocations(*Previous, *PreviousInvocations);
+    }
+    auto NextPreviousIndex = std::make_shared<std::size_t>(0);
+
+    const ChildComponentInvoker ChildInvoker = [this, ResolvedPath, PreviousInvocations, NextPreviousIndex](
+                                                     const std::string& Tag, const nyx::runtime::Value& Props,
+                                                     const IrElementNode&) {
+        // Tag-only, position-based matching -- not tag+key like ReconcileWidget's own rule:
+        // this decision has to be made *before* the new invocation's own `key` prop (if any)
+        // gets evaluated, which only happens one level up in the *caller's* ConvertIrElement,
+        // after EvaluateComponentInvocation (and hence this callback) already returned a
+        // mounted-or-reloaded Component. Reasonable for the statically-nested case this feature
+        // targets (an unconditional, always-present child rarely needs a key at all); a
+        // structural change at this position simply fails to match (falls through to a fresh
+        // mount) rather than mismatching, same fail-safe direction `ReconcileWidget`'s own
+        // tag/key-mismatch fallback already takes.
+        const Iris::Component* Matched = nullptr;
+        if (*NextPreviousIndex < PreviousInvocations->size()) {
+            const Iris::Component* Candidate = (*PreviousInvocations)[*NextPreviousIndex];
+            if (Candidate->InvocationTag == Tag) {
+                Matched = Candidate;
+            }
+        }
+        ++*NextPreviousIndex;
+        return InvokeChildComponent(ResolvedPath, Tag, Props, Matched);
     };
 
     if (IsClass) {
@@ -195,7 +269,7 @@ Iris::Component IrisNyxDriver::InvokeComponent(const std::string& ResolvedPath, 
             auto State = std::make_shared<NyxDriverState>(
                 NyxDriverState{Runtime_.InvokeComponent(FileScope, FunctionName, std::move(Args)), std::nullopt});
 
-            const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, State->RenderScope, Marker_, ChildInvoker, &Errors_);
+            const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, State->RenderScope, Marker_, ChildInvoker, &Errors_, MakeNativeBuilderLookup());
             Iris::Component    Result = ConvertIrElement(Block->Root, Eval, &Errors_);
 
             // Keep `State` alive for as long as this mounted instance is -- every NyxEvaluator
@@ -238,7 +312,7 @@ Iris::Component IrisNyxDriver::InvokeComponent(const std::string& ResolvedPath, 
     auto NewState = std::make_shared<NyxDriverState>(NyxDriverState{std::move(NewScope), std::nullopt});
     Previous->Instance->DriverState = std::static_pointer_cast<void>(NewState);
 
-    const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, NewState->RenderScope, Marker_, ChildInvoker, &Errors_);
+    const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, NewState->RenderScope, Marker_, ChildInvoker, &Errors_, MakeNativeBuilderLookup());
     Iris::Component    Result = ConvertIrElement(Block->Root, Eval, &Errors_);
     Result.Instance = Previous->Instance;
     Result.ReloadTier = Tier;
@@ -312,7 +386,7 @@ Iris::Component IrisNyxDriver::InvokeClassComponent(const IrisIrDocument& Docume
                                                  nyx::interpreter::EvalContext{RenderEnv, InstanceObj}},
                 Instance});
 
-            const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, State->RenderScope, Marker_, ChildInvoker, &Errors_);
+            const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, State->RenderScope, Marker_, ChildInvoker, &Errors_, MakeNativeBuilderLookup());
             Iris::Component    Result = ConvertIrElement(Block.Root, Eval, &Errors_);
 
             iris::ComponentInstance* CurrentInstance = iris::IrisRuntime::Instance().CurrentComponentInstance();
@@ -350,7 +424,7 @@ Iris::Component IrisNyxDriver::InvokeClassComponent(const IrisIrDocument& Docume
         *PriorState->ClassInstance});
     Previous->Instance->DriverState = std::static_pointer_cast<void>(NewState);
 
-    const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, NewState->RenderScope, Marker_, ChildInvoker, &Errors_);
+    const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, NewState->RenderScope, Marker_, ChildInvoker, &Errors_, MakeNativeBuilderLookup());
     Iris::Component    Result = ConvertIrElement(Block.Root, Eval, &Errors_);
     Result.Instance = Previous->Instance;
     Result.ReloadTier = Tier;
@@ -358,7 +432,8 @@ Iris::Component IrisNyxDriver::InvokeClassComponent(const IrisIrDocument& Docume
 }
 
 Iris::Component IrisNyxDriver::InvokeChildComponent(const std::string& CallerResolvedPath, const std::string& Tag,
-                                                      const nyx::runtime::Value& Props) {
+                                                      const nyx::runtime::Value& Props,
+                                                      const Iris::Component* Previous) {
     const IrisIrDocument* CallerDocument = LoadDocument(CallerResolvedPath);
     if (CallerDocument == nullptr) {
         return Iris::Component{nullptr};
@@ -379,7 +454,13 @@ Iris::Component IrisNyxDriver::InvokeChildComponent(const std::string& CallerRes
         return Iris::Component{nullptr};
     }
 
-    return InvokeComponent(Import->ResolvedPath, Tag, {Props}, nullptr, nullptr);
+    // `Previous` (a matched nested invocation from the caller's own prior render, or nullptr for
+    // an ordinary/unmatched mount) is forwarded straight through as InvokeComponent's own reload
+    // parameter -- this composes recursively for free: if it names a reusable prior instance,
+    // InvokeComponent's own reload branch builds its own fresh nested-invocation cursor from
+    // *this* invocation's own children, so a match here can itself contain further statically-
+    // nested matches, propagating to any depth without this function needing to know that.
+    return InvokeComponent(Import->ResolvedPath, Tag, {Props}, Previous, nullptr);
 }
 
 Iris::Component IrisNyxDriver::MountRoot(const std::string& EntryResolvedPath, const std::string& EntryFunctionName,

@@ -293,6 +293,32 @@ DESCRIBE("IrisIrRuntime", {
         ASSERT_TRUE(Result.SlotCallable == nullptr);
     });
 
+    IT("a <Slot> re-invocation's own conversion error reaches a caller-owned durable Errors vector", {
+        NyxEvaluator Eval = MakeEvaluator();
+        auto          CallCount = std::make_shared<int>(0);
+        Eval.EvaluateSlot = [CallCount](const IrNyxExpressionNode& Node, const IrElementConverter& Convert) -> IrisSlotResult {
+            ++*CallCount;
+            return Convert(Node.Elements()[*CallCount == 1 ? 0 : 1]);
+        };
+        IrElementNode SlotNode = MakeElement(
+            "Slot", {},
+            {MakeExprChild("cond", {MakeElement("Frame"),
+                                     MakeElement("Text", {}, {MakeElementChild(MakeElement("Frame"))})})});
+
+        // Owned by the test itself, outliving the initial ConvertIrElement call below -- models
+        // IrisNyxDriver::Errors_, the one real production caller this now actually helps.
+        std::vector<IrisIrRuntimeError> Errors;
+        Component                        Result = ConvertIrElement(SlotNode, Eval, &Errors);
+        ASSERT_TRUE(Errors.empty());
+        REQUIRE_TRUE(Result.SlotCallable != nullptr);
+
+        auto& Callable = std::get<std::function<std::vector<Component>()>>(Result.SlotCallable->Callable);
+        Callable(); // first invocation picks <Frame> -- no error
+        ASSERT_TRUE(Errors.empty());
+        Callable(); // second invocation picks <Text> containing a nested element -- an error
+        ASSERT_FALSE(Errors.empty());
+    });
+
     IT("<Native> is reported as not yet supported", {
         IrElementNode Node = MakeElement("Native", {MakeExprProp("build", "buildIt()")});
         std::vector<IrisIrRuntimeError> Errors;

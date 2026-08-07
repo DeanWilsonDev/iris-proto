@@ -35,6 +35,18 @@ const IrRenderBlockNode& OnlyRenderBlock(const IrisIrDocument& Document) {
     throw std::runtime_error("no render_block in document");
 }
 
+// A minimal Umbra::IWidget stub -- same shape as SlotRuntimeTests.cpp's own StubWidget, used
+// here only as <Native>'s registered builder's own return value; these tests exercise
+// EvaluateNative's own name-resolution logic, not what a real backend would do with the widget.
+class StubWidget : public Umbra::IWidget {
+public:
+    void            ApplyPropDiff(const Umbra::IrisPropDiff&) override {}
+    std::size_t     GetChildCount() const override { return 0; }
+    Umbra::IWidget* GetChildAt(std::size_t) const override { return nullptr; }
+    void            InsertChildAt(std::size_t, std::unique_ptr<Umbra::IWidget>) override {}
+    std::unique_ptr<Umbra::IWidget> RemoveChildAt(std::size_t) override { return nullptr; }
+};
+
 } // namespace
 
 DESCRIBE("IrisNyxEvaluator", {
@@ -360,5 +372,83 @@ DESCRIBE("IrisNyxEvaluator", {
         REQUIRE_EQUAL(Output.size(), static_cast<std::size_t>(2));
         ASSERT_TRUE(std::get<std::string>(Output[0].Props.at("class")) == "Ann");
         ASSERT_TRUE(std::get<std::string>(Output[1].Props.at("class")) == "Bo");
+    });
+
+    IT("<Native> resolves its build prop's name against a registered builder", {
+        const std::string_view Source =
+            "void App() {\n"
+            "    render {\n"
+            "        <Native build={() -> \"stub\"} />\n"
+            "    }\n"
+            "}\n";
+        const IrisIrDocument Document = BuildRealDocument(Source);
+
+        nyx::host::NyxRuntime Runtime;
+        ChaosSlotMarker Marker;
+        auto FileScope = Runtime.CreateScope(ReconstructNyxSource(Document), "test.irisx");
+        auto Invocation = Runtime.InvokeComponent(FileScope, "App", {});
+
+        std::vector<IrisIrRuntimeError> Errors;
+        NativeBuilderLookup             Lookup = [](const std::string& Name) -> std::function<std::unique_ptr<Umbra::IWidget>()> {
+            if (Name != "stub") {
+                return nullptr;
+            }
+            return []() -> std::unique_ptr<Umbra::IWidget> { return std::make_unique<StubWidget>(); };
+        };
+        NyxEvaluator Eval = MakeNyxEvaluator(Runtime, Invocation, Marker, nullptr, &Errors, Lookup);
+
+        const Component Result = ConvertIrElement(OnlyRenderBlock(Document).Root, Eval, &Errors);
+        REQUIRE_TRUE(Errors.empty());
+        ASSERT_TRUE(Result.Tag == IrisElementTag::Native);
+        REQUIRE_TRUE(Result.NativeBuilder != nullptr);
+        std::unique_ptr<Umbra::IWidget> Built = Result.NativeBuilder->Build();
+        ASSERT_TRUE(Built != nullptr);
+    });
+
+    IT("<Native> reports an error when the build prop names an unregistered builder", {
+        const std::string_view Source =
+            "void App() {\n"
+            "    render {\n"
+            "        <Native build={() -> \"missing\"} />\n"
+            "    }\n"
+            "}\n";
+        const IrisIrDocument Document = BuildRealDocument(Source);
+
+        nyx::host::NyxRuntime Runtime;
+        ChaosSlotMarker Marker;
+        auto FileScope = Runtime.CreateScope(ReconstructNyxSource(Document), "test.irisx");
+        auto Invocation = Runtime.InvokeComponent(FileScope, "App", {});
+
+        std::vector<IrisIrRuntimeError> Errors;
+        NativeBuilderLookup             Lookup = [](const std::string&) -> std::function<std::unique_ptr<Umbra::IWidget>()> {
+            return nullptr;
+        };
+        NyxEvaluator Eval = MakeNyxEvaluator(Runtime, Invocation, Marker, nullptr, &Errors, Lookup);
+
+        const Component Result = ConvertIrElement(OnlyRenderBlock(Document).Root, Eval, &Errors);
+        ASSERT_FALSE(Errors.empty());
+        ASSERT_TRUE(Result.NativeBuilder == nullptr);
+    });
+
+    IT("<Native> with no NativeBuilderLookup supplied keeps the existing not-yet-supported error", {
+        const std::string_view Source =
+            "void App() {\n"
+            "    render {\n"
+            "        <Native build={() -> \"stub\"} />\n"
+            "    }\n"
+            "}\n";
+        const IrisIrDocument Document = BuildRealDocument(Source);
+
+        nyx::host::NyxRuntime Runtime;
+        ChaosSlotMarker Marker;
+        auto FileScope = Runtime.CreateScope(ReconstructNyxSource(Document), "test.irisx");
+        auto Invocation = Runtime.InvokeComponent(FileScope, "App", {});
+
+        std::vector<IrisIrRuntimeError> Errors;
+        NyxEvaluator Eval = MakeNyxEvaluator(Runtime, Invocation, Marker, nullptr, &Errors); // no lookup
+
+        const Component Result = ConvertIrElement(OnlyRenderBlock(Document).Root, Eval, &Errors);
+        ASSERT_FALSE(Errors.empty());
+        ASSERT_TRUE(Result.NativeBuilder == nullptr);
     });
 });

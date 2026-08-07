@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 
 namespace {
@@ -41,6 +42,18 @@ IrisConfig UmbraConfig() {
     Config.SearchPaths  = {"demo"};
     return Config;
 }
+
+// A minimal Umbra::IWidget stub -- same shape as SlotRuntimeTests.cpp's/
+// IrisNyxEvaluatorTests.cpp's own StubWidget, used here only as a registered <Native>
+// builder's return value.
+class StubWidget : public Umbra::IWidget {
+public:
+    void            ApplyPropDiff(const Umbra::IrisPropDiff&) override {}
+    std::size_t     GetChildCount() const override { return 0; }
+    Umbra::IWidget* GetChildAt(std::size_t) const override { return nullptr; }
+    void            InsertChildAt(std::size_t, std::unique_ptr<Umbra::IWidget>) override {}
+    std::unique_ptr<Umbra::IWidget> RemoveChildAt(std::size_t) override { return nullptr; }
+};
 
 } // namespace
 
@@ -375,5 +388,129 @@ DESCRIBE("IrisNyxDriver", {
         REQUIRE_TRUE(Driver.Errors().empty());
         ASSERT_TRUE(Reloaded.Tier == iris::ComponentReloadTier::SignalLayoutChanged);
         ASSERT_TRUE(std::get<std::string>(Reloaded.Root.Props.at("class")) == "v2");
+    });
+
+    IT("mounts a <Native> element via a builder registered with RegisterNativeBuilder", {
+        TempProject Project;
+        const std::string AppPath = Project.Write("App.irisx",
+                                                    "void App() {\n"
+                                                    "    render {\n"
+                                                    "        <Native build={() -> \"stub\"} />\n"
+                                                    "    }\n"
+                                                    "}\n");
+
+        IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+        Driver.RegisterNativeBuilder("stub", []() -> std::unique_ptr<Umbra::IWidget> {
+            return std::make_unique<StubWidget>();
+        });
+
+        const Component Root = Driver.MountRoot(AppPath, "App");
+        REQUIRE_TRUE(Driver.Errors().empty());
+        ASSERT_TRUE(Root.Tag == IrisElementTag::Native);
+        REQUIRE_TRUE(Root.NativeBuilder != nullptr);
+        ASSERT_TRUE(Root.NativeBuilder->Build() != nullptr);
+    });
+
+    // docs/next-steps.md's narrowed nested-reload gap: a statically-nested (non-<Slot>) cross-
+    // file component invocation now reloads too, matched via Component::InvocationTag, instead
+    // of always mounting fresh -- proven here by firing Header's own onPress before reloading
+    // App with an unrelated render-body-only change, then checking Header's own @signal-derived
+    // class survived (would reset to "zero" on a fresh mount) and its ComponentInstance identity
+    // is unchanged (would be a different Instance on a fresh mount).
+    IT("ReloadRoot reloads a statically-nested cross-file component invocation, preserving its own @signal state", {
+        TempProject Project;
+        Project.Write("Header.irisx",
+                       "void Header(HeaderProps props) {\n"
+                       "    @signal int count = 0;\n"
+                       "\n"
+                       "    render {\n"
+                       "        <Frame onPress={() -> { count = count + 1; }}"
+                       " class={count == 0 ? \"zero\" : \"nonzero\"} />\n"
+                       "    }\n"
+                       "}\n");
+        auto AppSource = [](const std::string& RootClass) {
+            return "import Header\n"
+                   "\n"
+                   "void App() {\n"
+                   "    render {\n"
+                   "        <Frame class=\"" +
+                   RootClass +
+                   "\">\n"
+                   "            <Header />\n"
+                   "        </Frame>\n"
+                   "    }\n"
+                   "}\n";
+        };
+        const std::string AppPath = Project.Write("App.irisx", AppSource("app"));
+
+        IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+        const Component Root = Driver.MountRoot(AppPath, "App");
+        REQUIRE_TRUE(Driver.Errors().empty());
+        REQUIRE_EQUAL(Root.Children.size(), static_cast<std::size_t>(1));
+        REQUIRE_TRUE(Root.Children[0].Instance != nullptr);
+
+        // Bump Header's own count to 1 before reloading.
+        std::get<std::function<void()>>(Root.Children[0].Props.at("onPress"))();
+
+        // Render-body-only change to App's own root class -- Header.irisx itself is untouched.
+        Project.Write("App.irisx", AppSource("app-v2"));
+
+        const IrisNyxReloadResult Reloaded = Driver.ReloadRoot(AppPath, "App", {}, Root);
+        REQUIRE_TRUE(Driver.Errors().empty());
+        ASSERT_TRUE(std::get<std::string>(Reloaded.Root.Props.at("class")) == "app-v2");
+        REQUIRE_EQUAL(Reloaded.Root.Children.size(), static_cast<std::size_t>(1));
+        ASSERT_TRUE(Reloaded.Root.Children[0].Instance == Root.Children[0].Instance);
+        ASSERT_TRUE(std::get<std::string>(Reloaded.Root.Children[0].Props.at("class")) == "nonzero");
+    });
+
+    // The remaining, documented boundary (IrisNyxDriver.h's own ReloadRoot doc comment): a
+    // component invocation reached only through a <Slot> is invisible to the nested-invocation
+    // collector (a <Slot>'s own dynamic output is never stored in Component::Children), so it
+    // still mounts fresh on every reload -- this test documents that this is unchanged, not a
+    // regression this feature was expected to close.
+    IT("a <Slot>-mediated nested component invocation still mounts fresh on reload", {
+        TempProject Project;
+        Project.Write("Header.irisx",
+                       "void Header(HeaderProps props) {\n"
+                       "    @signal int count = 0;\n"
+                       "\n"
+                       "    render {\n"
+                       "        <Frame onPress={() -> { count = count + 1; }}"
+                       " class={count == 0 ? \"zero\" : \"nonzero\"} />\n"
+                       "    }\n"
+                       "}\n");
+        const std::string AppPath = Project.Write("App.irisx",
+                                                    "import Header\n"
+                                                    "\n"
+                                                    "void App() {\n"
+                                                    "    render {\n"
+                                                    "        <Frame class=\"app\">\n"
+                                                    "            <Slot>\n"
+                                                    "                !{() -> <Header />}\n"
+                                                    "            </Slot>\n"
+                                                    "        </Frame>\n"
+                                                    "    }\n"
+                                                    "}\n");
+
+        IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+        const Component Root = Driver.MountRoot(AppPath, "App");
+        REQUIRE_TRUE(Driver.Errors().empty());
+
+        auto SlotOutput = [](const Component& Root) -> Component {
+            const Component& Slot = Root.Children.at(0);
+            std::vector<Component> Out =
+                std::get<std::function<std::vector<Component>()>>(Slot.SlotCallable->Callable)();
+            return std::move(Out.at(0));
+        };
+
+        const Component Header = SlotOutput(Root);
+        std::get<std::function<void()>>(Header.Props.at("onPress"))();
+
+        const IrisNyxReloadResult Reloaded = Driver.ReloadRoot(AppPath, "App", {}, Root);
+        REQUIRE_TRUE(Driver.Errors().empty());
+
+        const Component ReloadedHeader = SlotOutput(Reloaded.Root);
+        ASSERT_TRUE(ReloadedHeader.Instance != Header.Instance); // fresh mount, not the same instance
+        ASSERT_TRUE(std::get<std::string>(ReloadedHeader.Props.at("class")) == "zero"); // count reset
     });
 });

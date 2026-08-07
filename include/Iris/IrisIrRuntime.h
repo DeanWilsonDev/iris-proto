@@ -102,6 +102,19 @@ struct NyxEvaluator {
     // declaration, `@signal` locals, free functions). Invoked once per region encountered,
     // in document order, before whichever `render_block` (if any) follows it.
     std::function<void(const IrNyxSourceNode&)> EvaluateSource;
+
+    // A `<Native>` element's `build` prop (docs/next-steps.md's "Chaos runtime" entry). Nyx
+    // script has no binding for `Umbra::IWidget` construction (no such binding should exist --
+    // it would leak a backend type into the interpreter), so unlike every other callback here
+    // this isn't "evaluate this expression and narrow the result" -- it's handed the *whole*
+    // node so it can read+evaluate the `build` prop's own expression however its own
+    // implementation decides is meaningful (the real implementation, `MakeNyxEvaluator`,
+    // requires it to name a host-registered builder; a mock is free to do something simpler).
+    // Expected to return the already-wrapped builder (`Iris::MakeNativeBuilder`) on success, or
+    // `nullptr` on any failure (unset callback, missing/wrong-typed `build` prop, unresolved
+    // name) -- `ConvertNative` reports an error in every `nullptr` case, same as when this
+    // callback is left unset entirely.
+    std::function<std::shared_ptr<Iris::IrisNativeBuilder>(const IrElementNode&)> EvaluateNative;
 };
 
 // Converts one `IrElementNode` into a live `Component`, per this file's own top comment.
@@ -109,12 +122,18 @@ struct NyxEvaluator {
 // implementations need an `IrElementConverter` bound to this, and tests exercising element
 // conversion in isolation don't need a whole document.
 //
-// `Errors` may be `nullptr` -- used by the `IrElementConverter` a `<Slot>` callable closure
-// captures (`ConvertSlot`, IrisIrRuntime.cpp), since a `<Slot>` re-invocation can happen an
-// arbitrary time after the `WalkIrisIrDocument` call that produced it already returned its own
-// (by-value, one-shot) error list; there is no durable sink for a re-invocation's own errors
-// to report into yet -- a real diagnostics story is future work, once a real evaluator exists
-// to drive re-invocation at all (see this file's top comment).
+// `Errors` may be `nullptr`. A `<Slot>` callable's own `IrElementConverter` closure
+// (`ConvertSlot`, IrisIrRuntime.cpp) forwards whichever `Errors` pointer was live at the moment
+// the `<Slot>` was first converted, since a re-invocation can happen an arbitrary time later (via
+// `iris::Tick()`), long after the original `WalkIrisIrDocument`/`ConvertIrElement` call that
+// produced it already returned. Whether that makes a re-invocation's own errors durable depends
+// entirely on what the caller passed in here: `IrisNyxDriver` (IrisNyxDriver.cpp) passes its own
+// `Errors_` member, which lives for the driver's whole lifetime, so a re-invocation error reaches
+// a real, durable sink on that path. A caller passing a stack-scoped vector instead (e.g. a test
+// calling `WalkIrisIrDocument` directly with `&Result.Errors`) gets no such guarantee -- that
+// vector is gone the moment the call returns, before any later re-invocation could run -- so such
+// a caller should supply its own durable vector if it wants re-invocation diagnostics, same
+// opt-in-via-non-null convention this parameter already has for every other use.
 Iris::Component ConvertIrElement(const IrElementNode& Node, const NyxEvaluator& Evaluator,
                                    std::vector<IrisIrRuntimeError>* Errors);
 
