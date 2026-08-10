@@ -4,6 +4,9 @@
 #include "Iris/Reconciler.h"
 #include "Iris/SlotResolution.h"
 
+#include "host/marshal.hpp"
+#include "host/type-builder.hpp"
+
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -96,6 +99,16 @@ public:
     std::vector<std::unique_ptr<Umbra::IWidget>> Children;
 };
 
+// A stand-in host engine type -- not a real Pharos/Umbra type, just something to prove a
+// HostObject Value survives being passed as a component-invocation prop
+// (`<Card node={...} />`), the exact shape Pharos's own Explorer migration needs
+// (docs/next-steps.md's "component-invocation props silently drop HostObject/Array/
+// Object values" entry) for `<ExplorerRowNode node={item} />` inside a `.Map()` callback.
+struct TestNode {
+    std::string name;
+    std::string Name() const { return name; }
+};
+
 class TestMounter {
 public:
     std::unique_ptr<Umbra::IWidget> operator()(const Component& Node) {
@@ -183,6 +196,47 @@ DESCRIBE("IrisNyxDriver", {
         const Component& CardResult = Root.Children[0];
         ASSERT_TRUE(std::get<std::string>(CardResult.Props.at("class")) == "hi");
         ASSERT_TRUE(CardResult.Instance != nullptr); // mounted via iris::MountComponentInstance, not a bare Component
+    });
+
+    IT("a HostObject prop passed to a child component invocation survives intact, not just "
+       "primitive props (docs/next-steps.md's component-invocation-prop-marshaling gap)", {
+        TempProject Project;
+        Project.Write("Card.irisx",
+                       "void Card(CardProps props) {\n"
+                       "    render {\n"
+                       "        <Frame class={props.node.Name()} />\n"
+                       "    }\n"
+                       "}\n");
+        const std::string ParentPath = Project.Write("Parent.irisx",
+                                                       "import Card\n"
+                                                       "\n"
+                                                       "void Parent(TestNode node) {\n"
+                                                       "    render {\n"
+                                                       "        <Frame class=\"parent\">\n"
+                                                       "            <Card node={node} />\n"
+                                                       "        </Frame>\n"
+                                                       "    }\n"
+                                                       "}\n");
+
+        IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+        Driver.Runtime().RegisterType<TestNode>("TestNode").Method("Name", &TestNode::Name);
+        const auto* Descriptor =
+            std::get<std::shared_ptr<nyx::runtime::HostObject>>(Driver.Runtime().Globals().at("TestNode").data)
+                ->descriptor;
+
+        TestNode Node;
+        Node.name = "vulkan_context.cpp";
+        const Component Root =
+            Driver.MountRoot(ParentPath, "Parent", {nyx::host::ToValue(&Node, Descriptor)});
+
+        REQUIRE_TRUE(Driver.Errors().empty());
+        ASSERT_TRUE(std::get<std::string>(Root.Props.at("class")) == "parent");
+        REQUIRE_EQUAL(Root.Children.size(), static_cast<std::size_t>(1));
+        // Before this fix, EvaluateComponentInvocation's prop loop routed every prop through
+        // ValueToPropValue (bool/int/float/string only), so `node={node}` silently dropped the
+        // HostObject -- Card.irisx's own `props.node` would have been Null, and
+        // `props.node.Name()` would have thrown rather than resolving to "vulkan_context.cpp".
+        ASSERT_TRUE(std::get<std::string>(Root.Children[0].Props.at("class")) == "vulkan_context.cpp");
     });
 
     IT("two invocations of the same imported component keep independent @signal state", {

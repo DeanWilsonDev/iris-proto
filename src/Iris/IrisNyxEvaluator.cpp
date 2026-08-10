@@ -455,21 +455,24 @@ NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRunt
             return Iris::Component{nullptr};
         }
 
+        // Stores the raw evaluated Value directly -- deliberately *not* routed through
+        // ValueToPropValue (this file's own helper for a leaf Core primitive's own
+        // Penumbra-facing props, e.g. <Icon size={...}>), which only has cases for
+        // bool/int/float/string and silently drops everything else (Array/Object/
+        // HostObject) from Props->fields entirely. That's the right narrowing for a leaf
+        // widget prop -- Penumbra has no concept of a HostObject -- but wrong here: a
+        // component-invocation prop is a pure Nyx-side value the callee's own render body
+        // reads back via ordinary `props.name` field access (NyxObject::fields already
+        // holds `Value`, no kind restriction), so passing a HostObject (e.g. a marshaled
+        // tree node) or an Array through a recursive/child component invocation --
+        // `<ExplorerRowNode node={item} />` inside a `.Map()` callback, in particular --
+        // was previously impossible: the prop silently vanished rather than erroring,
+        // discovered while wiring a real recursive .irisx component tree.
         auto Props = std::make_shared<nyx::runtime::NyxObject>();
         Props->typeName = Node.Tag;
         for (const IrPropNode& P : Node.Props) {
-            const Iris::IrisPropValue Evaluated =
-                P.Value.IsLiteral ? Iris::IrisPropValue{P.Value.Literal.Value}
-                                    : ValueToPropValue(Runtime.EvaluateInScope(Scope, P.Value.Expression.Source()));
-            if (const auto* AsString = std::get_if<std::string>(&Evaluated)) {
-                Props->fields[P.Name] = Value(*AsString);
-            } else if (const auto* AsInt = std::get_if<int>(&Evaluated)) {
-                Props->fields[P.Name] = Value(static_cast<int32_t>(*AsInt));
-            } else if (const auto* AsFloat = std::get_if<float>(&Evaluated)) {
-                Props->fields[P.Name] = Value(*AsFloat);
-            } else if (const auto* AsBool = std::get_if<bool>(&Evaluated)) {
-                Props->fields[P.Name] = Value(*AsBool);
-            }
+            Props->fields[P.Name] = P.Value.IsLiteral ? Value(P.Value.Literal.Value)
+                                                        : Runtime.EvaluateInScope(Scope, P.Value.Expression.Source());
         }
 
         return InvokeChild(Node.Tag, Value(Props), Node);
