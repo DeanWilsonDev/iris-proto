@@ -1,10 +1,13 @@
 #include "cimmerian/test.hpp"
 
 #include "Iris/IrisNyxDriver.h"
+#include "Iris/Reconciler.h"
+#include "Iris/SlotResolution.h"
 
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <set>
 #include <string>
 
 namespace {
@@ -53,6 +56,71 @@ public:
     Umbra::IWidget* GetChildAt(std::size_t) const override { return nullptr; }
     void            InsertChildAt(std::size_t, std::unique_ptr<Umbra::IWidget>) override {}
     std::unique_ptr<Umbra::IWidget> RemoveChildAt(std::size_t) override { return nullptr; }
+};
+
+// A real (non-stub) widget tree, mirroring SlotResolutionTests.cpp's own MockWidget/
+// TestMounter -- needed only by the reconcile-path @signal/<Slot> regression test below,
+// which (unlike every other test in this file) must go through iris::ResolveSlots/
+// SlotState::Reconcile()/iris::Tick() instead of calling a <Slot>'s raw Callable() by
+// hand, to actually exercise the read-tracking path a real click goes through
+// (docs/next-steps.md's "@signal never reconciles on write" gap).
+class MockWidget : public Umbra::IWidget {
+public:
+    explicit MockWidget(std::string Tag) : Tag(std::move(Tag)) {}
+
+    void ApplyPropDiff(const Umbra::IrisPropDiff& Diff) override {
+        if (Diff.ClassName) {
+            ClassName = *Diff.ClassName;
+        }
+        if (Diff.Text) {
+            Text = *Diff.Text;
+        }
+    }
+
+    std::size_t     GetChildCount() const override { return Children.size(); }
+    Umbra::IWidget* GetChildAt(std::size_t Index) const override { return Children[Index].get(); }
+
+    void InsertChildAt(std::size_t Index, std::unique_ptr<Umbra::IWidget> Child) override {
+        Children.insert(Children.begin() + static_cast<long>(Index), std::move(Child));
+    }
+
+    std::unique_ptr<Umbra::IWidget> RemoveChildAt(std::size_t Index) override {
+        std::unique_ptr<Umbra::IWidget> Removed = std::move(Children[Index]);
+        Children.erase(Children.begin() + static_cast<long>(Index));
+        return Removed;
+    }
+
+    std::string                                  Tag;
+    std::string                                  ClassName;
+    std::string                                  Text;
+    std::vector<std::unique_ptr<Umbra::IWidget>> Children;
+};
+
+class TestMounter {
+public:
+    std::unique_ptr<Umbra::IWidget> operator()(const Component& Node) {
+        auto Widget = std::make_unique<MockWidget>(TagName(Node.Tag));
+        Widget->ApplyPropDiff(iris::ComputePropDiff({}, Node.Props));
+        for (const Component& Child : Node.Children) {
+            if (Child.Tag == IrisElementTag::None || Child.Tag == IrisElementTag::Slot) {
+                continue; // matches BuildWidgetTree's own real behavior for these two
+            }
+            Widget->Children.push_back((*this)(Child));
+        }
+        return Widget;
+    }
+
+private:
+    static std::string TagName(IrisElementTag Tag) {
+        switch (Tag) {
+            case IrisElementTag::Frame:
+                return "Frame";
+            case IrisElementTag::Text:
+                return "Text";
+            default:
+                return "?";
+        }
+    }
 };
 
 } // namespace
@@ -161,6 +229,49 @@ DESCRIBE("IrisNyxDriver", {
 
         ASSERT_TRUE(std::get<std::string>(SlotOutput(Root.Children[0])[0].Props.at("class")) == "on");
         ASSERT_TRUE(std::get<std::string>(SlotOutput(Root.Children[1])[0].Props.at("class")) == "off");
+    });
+
+    IT("a real .irisx <Slot> reconciles on a @signal write reached through iris::Tick() "
+       "(docs/next-steps.md's read-tracking gap, nyx-scripting-language/decision-log.md §6.8) -- "
+       "not by calling the Slot's raw Callable() directly, the blind spot that let the original "
+       "bug through every existing test here",
+       {
+        TempProject Project;
+        const std::string AppPath = Project.Write("Counter.irisx",
+                                                    "void Counter() {\n"
+                                                    "    @signal int count = 0;\n"
+                                                    "\n"
+                                                    "    render {\n"
+                                                    "        <Frame onPress={() -> { count = count + 1; }}>\n"
+                                                    "            <Slot>\n"
+                                                    "                !{() -> count == 0\n"
+                                                    "                    ? <Frame class=\"zero\" />\n"
+                                                    "                    : <Frame class=\"nonzero\" />}\n"
+                                                    "            </Slot>\n"
+                                                    "        </Frame>\n"
+                                                    "    }\n"
+                                                    "}\n");
+
+        IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+        const Component RootNode = Driver.MountRoot(AppPath, "Counter");
+        REQUIRE_TRUE(Driver.Errors().empty());
+
+        iris::MountFn                   Mount = TestMounter();
+        std::unique_ptr<Umbra::IWidget> Root  = Mount(RootNode);
+        auto                             Slots = iris::ResolveSlots(*Root, RootNode, Mount);
+        REQUIRE_EQUAL(Root->GetChildCount(), static_cast<std::size_t>(1));
+        ASSERT_TRUE(dynamic_cast<MockWidget*>(Root->GetChildAt(0))->ClassName == "zero");
+
+        // The exact same onPress firing the "independent @signal state" test above already
+        // exercises -- proven to reach SetSignal/NotifySignalDependents. What's new here is
+        // observing the result through the real Reconcile()/Tick() path a live app actually
+        // uses, instead of re-invoking the Slot's Callable() by hand: that's what the original
+        // bug report (pharos-proto's real click test) needed and no prior test here provided.
+        std::get<std::function<void()>>(RootNode.Props.at("onPress"))();
+        iris::Tick();
+
+        REQUIRE_EQUAL(Root->GetChildCount(), static_cast<std::size_t>(1));
+        ASSERT_TRUE(dynamic_cast<MockWidget*>(Root->GetChildAt(0))->ClassName == "nonzero");
     });
 
     IT("reports an error for a component invocation with no matching import", {

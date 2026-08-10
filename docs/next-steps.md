@@ -319,3 +319,170 @@ own `docs/`, not here.
 > target at all. No Iris-side change requested.
 
 ---
+
+## A real `.irisx` `<Slot>` never reconciles on a `@signal` write — read-side dependency tracking was never wired, only write-side (2026-08-07)
+
+> **Status:** Fixed (2026-08-10) in both repos, verified by both test suites (`nyx-proto`
+> 171/171, `iris-proto` 234/234) clean under AddressSanitizer + UndefinedBehaviorSanitizer —
+> see "What closed this" below. **Not yet committed or pushed in either repo**, and
+> `iris-proto`'s own `libs/nyx-proto` submodule pointer still points at the pre-fix commit
+> (`7667b4f`) — the fix currently exists only as local working-tree changes (`nyx-proto`'s
+> canonical checkout, plus a matching copy in `iris-proto/libs/nyx-proto` used to build and
+> test the consuming side locally) and needs an explicit go-ahead to commit/push/bump the
+> submodule, since that's a cross-repo, shared-state action. Originally found by `pharos-proto`
+> doing its first real, live-app end-to-end mount of an authored `.irisx` file — not a unit
+> test, not a mock. Recorded here per this repo's own convention (the "Chaos runtime" entry
+> above documents the same kind of cross-repo handoff); no implementation was attempted from
+> `pharos-proto`'s side, per its own `CLAUDE.md`'s "record the ask in the dependency's own doc,
+> then stop" rule — this fix was implemented from `iris-proto`'s side instead, once `nyx-proto`
+> got a design decision for the new primitive (see below).
+
+### What was being done
+
+`pharos-proto` mounted a real, authored `.irisx` file through `Iris::IrisNyxDriver::MountRoot`,
+built it into real Penumbra widgets via `PenumbraUiBackend::BuildWidgetTree` +
+`iris::ResolveSlots`, spliced the result into its actual toolbar, and calls `iris::Tick()` once
+per frame in the app's real frame loop — proving out the exact pipeline a real Phase 8.2-8.4
+panel migration (Explorer/Inspector/Atlas) will eventually depend on. The file
+(`pharos-proto`'s `src/ui/nyx/NyxSmokeCounter.irisx`):
+
+```
+void NyxSmokeCounter() {
+    @signal int count = 0;
+
+    render {
+        <Frame class="nyx-smoke-counter" onPress={() -> { count = count + 1; }}>
+            <Text class="nyx-smoke-counter-label">Nyx</Text>
+            <Slot>
+                !{() -> count == 0
+                    ? <Frame class="nyx-smoke-counter-zero" />
+                    : <Frame class="nyx-smoke-counter-nonzero" />}
+            </Slot>
+        </Frame>
+    }
+}
+```
+
+Clicking it in the real running app does fire `onPress` and does reassign `count` through the
+interpreter (confirmed — see "Also found and already fixed" below for a real crash this
+surfaced, since fixed on `pharos-proto`'s own side). But the visible `<Slot>` output never
+changes, across many real clicks verified live via `cliclick` + `screencapture` against the
+actual app window. This isn't a `pharos-proto`-side wiring bug: `iris::Tick()` is called every
+frame, `iris::ResolveSlots` correctly attached the `SlotState` (confirmed working for the
+mount-time initial render), and it's the same `AttachToGroup`/`Reconcile` machinery this repo's
+own test suite already exercises for the compiled `.iris` path.
+
+### Root cause, traced into real source
+
+Confirmed by reading the actual vendored source at this repo's commit `4fe8b28` (via
+`pharos-proto`'s `FetchContent` checkout):
+
+1. `iris::ComponentInstance::GetSignal(SignalId)` (`include/Iris/ComponentInstance.h:142-145`)
+   calls `TrackSignalDependency(Storage)` — the read-side half of the reactivity contract,
+   registering `IrisRuntime::ActiveSlot()` as a dependent of that signal.
+2. `iris::ComponentInstance::SetSignal(SignalId, ...)` (same file, ~155-158) calls
+   `NotifySignalDependents(Storage)` — the write-side half, marking every registered dependent
+   `SlotState` dirty.
+3. `iris::RegisterSignalDecorator` (`src/Iris/NyxSignalDecorator.cpp`) wires `@signal`'s
+   Nyx-side *write* path correctly: `Variable.OnWrite([Instance, Id](const Value& NewValue) {
+   Instance->SetSignal(Id, NewValue); })` — confirmed this reaches step 2 above.
+4. There is no equivalent *read*-side wiring anywhere. Grepped `src/Iris/IrisNyxEvaluator.cpp`,
+   `src/Iris/IrisIrRuntime.cpp`, and `NyxSignalDecorator.cpp` itself for
+   `GetSignal`/`TrackSignalDependency` — zero matches outside `ComponentInstance.h`'s own
+   definition. When `IrisNyxEvaluator.cpp`'s `EvaluateSlot` evaluates a real `.irisx`
+   `<Slot>`'s escape-hatch expression (`!{() -> count == 0 ? ... : ...}`) via
+   `NyxRuntime::EvaluateInScope` → the ordinary Nyx interpreter, reading `count` is just a
+   plain `Environment::Get()` — nothing calls `ComponentInstance::GetSignal`, so
+   `TrackSignalDependency` never fires, so the `SlotState` never becomes a registered dependent
+   of that signal's storage.
+5. Traced one level further, into `nyx-proto` itself (`src/runtime/environment.hpp`):
+   `Environment::Binding` (line ~92) has only an `onWrite` observer field (per
+   `nyx-scripting-language/decision-log.md` §6.7's own design) — there is no `onRead`-equivalent
+   hook at all. Even if this repo wired read-tracking today, `nyx-proto` exposes no primitive to
+   hang it on. **This is a two-repo gap**: a missing hook in `nyx-proto`'s `Environment`, and
+   missing consumption of it in this repo's `NyxSignalDecorator`/`IrisNyxEvaluator`.
+
+### Why this differs from what was previously believed proven
+
+`pharos-proto`'s own `docs/next_steps.md` (2026-08-06 session) recorded "`@signal` reactivity
+itself has now fully landed in `iris-proto`, verified working when linked into Pharos's own
+binary" — but that verification (`RunSignalReactivitySmokeTest`,
+`pharos-proto`'s `src/nyx/nyx_integration.cpp`) used a hand-written C++ callback that explicitly
+called `instance->GetSignal(0)` itself to build the `<Slot>`'s callable, sidestepping the exact
+mechanism a real `.irisx` author's own Nyx expression would need — there is no way for Nyx
+script to call `ComponentInstance::GetSignal` directly, it's a C++-only API. That test proved
+the write side works. It did not, and could not, prove that an ordinary Nyx-side read inside a
+real `<Slot>` expression registers as a dependency, because it never exercised that path.
+
+This repo's own test suite has the same blind spot: `IrisNyxDriverTests.cpp`'s toggle/counter
+tests (e.g. "two invocations of the same imported component keep independent `@signal` state")
+check a `<Slot>`'s *current output* by directly re-invoking its raw `Callable()` by hand
+(`std::get<function<...>>(Slot.SlotCallable->Callable)()`), never through
+`SlotState::Reconcile()`/`iris::Tick()`'s actual dirty-tracking path — so this specific gap was
+never caught by any existing test, only by `pharos-proto`'s genuine live-app, real-click
+verification.
+
+**Net effect:** no real, authored `.irisx` file's `<Slot>` can currently be made reactive to a
+`@signal` it reads via ordinary Nyx expression syntax — the write plumbing all works, but
+nothing ever calls the read-tracking half for an interpreted read. This is the concrete blocker
+for any real Phase 8.2-8.4 panel migration (Explorer/Inspector/Atlas as `.irisx`) that wants to
+use `@signal` + `<Slot>` the way every documented example — including `chaos-ir-spec.md` §4's
+own canonical `Button`/`isHovered` example — shows it.
+
+### Also found and already fixed, `pharos-proto`-side (not this repo's to act on)
+
+Separately from this gap: the first version of `pharos-proto`'s own mount code let the
+`Iris::Component` tree `MountRoot` returned (specifically its `.Instance`
+`shared_ptr<ComponentInstance>`) go out of scope right after building the widget tree, silently
+freeing the render `NyxScope`/`Environment` an `onPress` closure still referenced — the very
+first real click crashed with `SIGBUS` (`EXC_ARM_DA_ALIGN`) inside `shared_ptr<Environment>`'s
+copy constructor, deep in `Interpreter::EvalExpr` via `IrisNyxEvaluator.cpp`'s `InvokeAsLambda`.
+Already fixed on `pharos-proto`'s own side (kept `Root` alive on the same long-lived struct that
+owns the `SlotState`s) — mentioned only so a reader hitting the same crash shape doesn't re-chase
+it; it's resolved, and it's not what this entry is about.
+
+### What closed this (2026-08-10)
+
+Two changes, one in each repo, exactly as originally scoped below:
+
+- **`nyx-proto`**: `nyx-scripting-language/decision-log.md` §6.8 ("`@signal` read tracking:
+  nyx-proto adds `onRead` mirroring `onWrite`") records the design decision this needed first,
+  per `nyx-proto`'s own "stop on undocumented design decisions" rule. Both open questions the
+  original writeup below flagged were answered by mirroring `onWrite` exactly rather than
+  inventing new scope: `onRead` is opt-in per binding (only a decorator that calls
+  `NyxVariable::OnRead` installs one — a plain local's stays null), so the cost for the
+  overwhelmingly common non-reactive read is the same single null-function-pointer check
+  already paid by every write. Implementation: `Environment::Binding` gained an `onRead` field
+  next to `onWrite`; `Environment::Get()` fires it (if set) at the binding it actually resolves
+  to — the same "fire where found" spot `Set()` already used for `onWrite` — before returning,
+  so both real script-read call sites (`interpreter.cpp`'s `Identifier` eval and `ReadTarget`
+  for compound-assignment/`++`/`--`) get it for free. `NyxVariable`/`Environment::SetOnRead`
+  mirror the existing `OnWrite`/`SetOnWrite` installation path in `EvalVarDecl`. Verified with a
+  new `host_test.cpp` case mirroring the existing `OnWrite` one — confirmed to fail without the
+  fix, not just pass with it. Full suite (171/171) clean under AddressSanitizer +
+  UndefinedBehaviorSanitizer.
+- **`iris-proto`** (this repo): `NyxSignalDecorator.cpp`'s `@signal` `OnApply` now also calls
+  `Variable.OnRead([Instance, Id](const Value&) { Instance->GetSignal(Id); })`, discarding the
+  returned value — `Environment::Get()` already returns the real stored value, so this callback
+  exists purely to run `GetSignal`'s existing `TrackSignalDependency` side effect. No change
+  needed in `IrisNyxEvaluator.cpp`/`IrisIrRuntime.cpp`: a `<Slot>`'s escape-hatch expression
+  already evaluates through the ordinary Nyx interpreter, which now carries the read-tracking
+  side effect for free. Verified with a new `IrisNyxDriverTests.cpp` case that (unlike every
+  pre-existing test here, including the ones that missed this gap originally) goes through the
+  real `iris::ResolveSlots`/`SlotState::Reconcile()`/`iris::Tick()` path against a real
+  `Umbra::IWidget` tree, firing a real `.irisx` `onPress` handler and asserting the mounted
+  widget's own `class` prop actually changes — reproducing pharos-proto's original click-driven
+  finding, not just re-checking a `<Slot>`'s raw `Callable()` output by hand. Confirmed failing
+  without the fix, passing with it. Full suite (234/234) clean under AddressSanitizer +
+  UndefinedBehaviorSanitizer.
+
+### Explicitly not requested
+
+- Committing or pushing either repo's changes, or bumping `iris-proto`'s `libs/nyx-proto`
+  submodule pointer — cross-repo, shared-remote actions held for an explicit go-ahead (see
+  Status above).
+- A workaround inside `pharos-proto` — this was an architectural gap spanning `nyx-proto` and
+  this repo, not something a consuming application could have composed around; not needed now
+  that both sides are fixed.
+
+---
