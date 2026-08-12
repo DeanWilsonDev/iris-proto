@@ -107,11 +107,18 @@ set_target_properties(nyx-lexer PROPERTIES
 # across the nyx-runtime/iris boundary directly. Publicly links nyx-lexer so
 # consumers of this target automatically get lexer.cpp/token.cpp linked in
 # too, rather than duplicating them here.
+#
+# Source list bumped to add interpreter/resolver.cpp alongside nyx-proto's e28c957
+# (decision-log.md §8.7/§8.8's field-slot-caching fix): Interpreter's ctor now
+# unconditionally calls the new ResolveFieldNames, so omitting this file is a link
+# error for any consumer. Same fix applied to pharos-proto's and penumbra-proto's own
+# identical manually-reconstructed nyx-core lists, hit at the same time.
 # ---------------------------------------------------------------------------
 add_library(nyx-runtime STATIC
     libs/nyx-proto/src/parser/parser.cpp
     libs/nyx-proto/src/runtime/value.cpp
     libs/nyx-proto/src/runtime/environment.cpp
+    libs/nyx-proto/src/interpreter/resolver.cpp
     libs/nyx-proto/src/interpreter/interpreter.cpp
     libs/nyx-proto/src/interpreter/decl-registry.cpp)
 target_include_directories(nyx-runtime PUBLIC libs/nyx-proto/src)
