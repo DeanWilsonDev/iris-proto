@@ -44,27 +44,53 @@ set(CIMMERIAN_VISUAL_PLATFORM "None" CACHE STRING "" FORCE)
 add_subdirectory(libs/cimmerian)
 
 # ---------------------------------------------------------------------------
-# nyx-lexer — just nyx-proto's Lexer/Token translation units (libs/nyx-proto,
-# a git submodule), used by NyxTokenizer (below) to reuse Nyx's real,
-# already-tested tokenizer rather than reimplementing its string-escape/
-# template-interpolation scanning a second time
-# (nyx-proto's docs/nyx-scripting-language/decision-log.md §7.1). Deliberately
-# does NOT add_subdirectory(libs/nyx-proto) and build nyx-proto's own
-# CMakeLists.txt: that pulls in nyx-proto's own vendored Firefly/Amanuensis/
-# Cimmerian submodules, which would define `amanuensis` and `cimmerian`
-# targets a second time and collide with this repo's own libs/amanuensis and
-# libs/cimmerian above. Lexer.cpp/Token.cpp have zero dependency on the rest
-# of nyx-proto (no Firefly, no runtime/interpreter code — verified by
-# inspection), so compiling just those two translation units sidesteps the
-# collision entirely while still linking Nyx's real lexer. Built at C++26
-# (nyx-proto's own required standard, per its CLAUDE.md) independent of this
-# project's own CMAKE_CXX_STANDARD, since nothing else here assumes it can
-# use C++26 features.
+# nyx-proto — fetched via FetchContent tracking `main`, not vendored as a
+# pinned git submodule the way libs/amanuensis, libs/umbra-interfaces, and
+# libs/cimmerian above are. Those three are stable; nyx-proto is under active,
+# alongside co-development with every consumer in this ecosystem (no released
+# tag yet) — a pinned submodule pointer here meant every nyx-proto fix needed
+# an explicit "bump the submodule pointer" commit in this repo too before any
+# consumer could pick it up, a recurring trap this file's own history hit and
+# fixed five separate times (see docs/next-steps.md). Switched to the same
+# floating-`main` FetchContent pattern pharos-proto's cmake/Dependencies.cmake
+# and penumbra-proto's own CMakeLists.txt (PENUMBRA_WITH_NYX block) already
+# use — matches this repo's own existing populate-source-only pattern (below),
+# just one dependency further down. Populate-source-only, not
+# FetchContent_MakeAvailable/add_subdirectory(nyx-proto's own CMakeLists.txt):
+# that pulls in nyx-proto's own vendored Firefly/Amanuensis/Cimmerian
+# submodules, which would define `amanuensis` and `cimmerian` targets a
+# second time and collide with this repo's own libs/amanuensis and
+# libs/cimmerian above — same collision nyx-lexer/nyx-runtime below already
+# had to dodge when this was a submodule, unchanged by this switch.
+# ---------------------------------------------------------------------------
+include(FetchContent)
+FetchContent_Declare(
+    nyx
+    GIT_REPOSITORY https://github.com/DeanWilsonDev/nyx-proto.git
+    GIT_TAG        main
+)
+FetchContent_GetProperties(nyx)
+if(NOT nyx_POPULATED)
+    FetchContent_Populate(nyx)
+endif()
+
+# ---------------------------------------------------------------------------
+# nyx-lexer — just nyx-proto's Lexer/Token translation units, used by
+# NyxTokenizer (below) to reuse Nyx's real, already-tested tokenizer rather
+# than reimplementing its string-escape/template-interpolation scanning a
+# second time (nyx-proto's docs/nyx-scripting-language/decision-log.md §7.1).
+# Lexer.cpp/Token.cpp have zero dependency on the rest of nyx-proto (no
+# Firefly, no runtime/interpreter code — verified by inspection), so
+# compiling just those two translation units sidesteps the collision
+# described above entirely while still linking Nyx's real lexer. Built at
+# C++26 (nyx-proto's own required standard, per its CLAUDE.md) independent of
+# this project's own CMAKE_CXX_STANDARD, since nothing else here assumes it
+# can use C++26 features.
 # ---------------------------------------------------------------------------
 add_library(nyx-lexer STATIC
-    libs/nyx-proto/src/lexer/lexer.cpp
-    libs/nyx-proto/src/lexer/token.cpp)
-target_include_directories(nyx-lexer PUBLIC libs/nyx-proto/src)
+    ${nyx_SOURCE_DIR}/src/lexer/lexer.cpp
+    ${nyx_SOURCE_DIR}/src/lexer/token.cpp)
+target_include_directories(nyx-lexer PUBLIC ${nyx_SOURCE_DIR}/src)
 # Built at this project's own C++23, *not* nyx-proto's own required C++26
 # (its CLAUDE.md/CMakeLists): nyx-runtime below shares nyx::runtime::Value
 # (a std::variant of libc++ container types) directly with `iris`/`test_iris`,
@@ -112,22 +138,22 @@ set_target_properties(nyx-lexer PROPERTIES
 # (decision-log.md §8.7/§8.8's field-slot-caching fix): Interpreter's ctor now
 # unconditionally calls the new ResolveFieldNames, so omitting this file is a link
 # error for any consumer. Same fix applied to pharos-proto's and penumbra-proto's own
-# identical manually-reconstructed nyx-core lists, hit at the same time.
+# identical manually-reconstructed nyx-core lists, hit at the same time. Now that
+# nyx-proto tracks `main` here too (see the FetchContent block above), a source-list
+# gap like this is the one thing that switch does *not* fix automatically — a new
+# nyx-proto .cpp still needs adding here by hand the next time one lands upstream.
 # ---------------------------------------------------------------------------
 add_library(nyx-runtime STATIC
-    libs/nyx-proto/src/parser/parser.cpp
-    libs/nyx-proto/src/runtime/value.cpp
-    libs/nyx-proto/src/runtime/environment.cpp
-    libs/nyx-proto/src/interpreter/resolver.cpp
-    libs/nyx-proto/src/interpreter/interpreter.cpp
-    libs/nyx-proto/src/interpreter/decl-registry.cpp)
-target_include_directories(nyx-runtime PUBLIC libs/nyx-proto/src)
+    ${nyx_SOURCE_DIR}/src/parser/parser.cpp
+    ${nyx_SOURCE_DIR}/src/runtime/value.cpp
+    ${nyx_SOURCE_DIR}/src/runtime/environment.cpp
+    ${nyx_SOURCE_DIR}/src/interpreter/resolver.cpp
+    ${nyx_SOURCE_DIR}/src/interpreter/interpreter.cpp
+    ${nyx_SOURCE_DIR}/src/interpreter/decl-registry.cpp)
+target_include_directories(nyx-runtime PUBLIC ${nyx_SOURCE_DIR}/src)
 target_link_libraries(nyx-runtime PUBLIC nyx-lexer)
 set_target_properties(nyx-runtime PROPERTIES
     CXX_STANDARD 23
-    CXX_STANDARD_REQUIRED ON)
-set_target_properties(nyx-runtime PROPERTIES
-    CXX_STANDARD 26
     CXX_STANDARD_REQUIRED ON)
 
 # ---------------------------------------------------------------------------

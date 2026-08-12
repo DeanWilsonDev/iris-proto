@@ -7,6 +7,3 @@
 [submodule "libs/cimmerian"]
 	path = libs/cimmerian
 	url = https://github.com/DeanWilsonDev/cimmerian.git
-[submodule "libs/nyx-proto"]
-	path = libs/nyx-proto
-	url = https://github.com/DeanWilsonDev/nyx-proto.git
