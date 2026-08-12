@@ -468,11 +468,17 @@ NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRunt
         // `<ExplorerRowNode node={item} />` inside a `.Map()` callback, in particular --
         // was previously impossible: the prop silently vanished rather than erroring,
         // discovered while wiring a real recursive .irisx component tree.
+        //
+        // Props->adHocFields, not Props->fields (nyx-proto's e28c957, decision-log.md
+        // §8.7/§8.8, replaced the single field map with schema/slots for real class/data
+        // instances plus an adHocFields fallback for host-constructed objects like this
+        // one -- Props is never registered against a schema, so it's always ad hoc mode).
         auto Props = std::make_shared<nyx::runtime::NyxObject>();
         Props->typeName = Node.Tag;
         for (const IrPropNode& P : Node.Props) {
-            Props->fields[P.Name] = P.Value.IsLiteral ? Value(P.Value.Literal.Value)
-                                                        : Runtime.EvaluateInScope(Scope, P.Value.Expression.Source());
+            Value PropValue = P.Value.IsLiteral ? Value(P.Value.Literal.Value)
+                                                 : Runtime.EvaluateInScope(Scope, P.Value.Expression.Source());
+            Props->adHocFields.emplace_back(P.Name, std::move(PropValue));
         }
 
         return InvokeChild(Node.Tag, Value(Props), Node);

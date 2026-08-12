@@ -3,6 +3,7 @@
 #include "Iris/Driver.h"
 #include "Iris/NyxSignalDecorator.h"
 
+#include "runtime/class-field-schema.hpp"
 #include "runtime/environment.hpp"
 
 #include <amanuensis/io/reader.hpp>
@@ -345,10 +346,25 @@ std::string RenderParamName(const nyx::interpreter::DeclRegistry& Registry, cons
 // (`ComponentInstance::EndReloadReplay`'s own IRIS_SIGNAL-counting logic has nothing to do with
 // this state shape at all -- decision-log.md §9.2's own item 4 guidance, same reasoning
 // `CompareEnvironments` above already applies to the free-function case).
+//
+// Post-nyx-proto-e28c957 (decision-log.md §8.7/§8.8): `NyxObject::fields` (a single
+// unordered_map) no longer exists -- an instance is either schema mode (`schema` set,
+// field names live on the shared `ClassFieldSchema`, values in the parallel `slots`
+// vector) or ad hoc mode (`schema == nullptr`, name/value pairs in `adHocFields`
+// directly). Every instance `ReconcileInstanceFields` ever snapshots is a real
+// class/data instance, so schema mode is the expected path here; ad hoc mode (host-
+// constructed objects like Iris's own component-prop bags) is handled too since
+// nothing about this helper's signature restricts it to one mode.
 std::unordered_map<std::string, nyx::runtime::ValueKind> FieldShape(const nyx::runtime::NyxObject& Instance) {
     std::unordered_map<std::string, nyx::runtime::ValueKind> Shape;
-    for (const auto& [Name, Value] : Instance.fields) {
-        Shape.emplace(Name, Value.Kind());
+    if (Instance.schema) {
+        for (size_t i = 0; i < Instance.schema->slots.size(); ++i) {
+            Shape.emplace(Instance.schema->slots[i].name, Instance.slots[i].Kind());
+        }
+    } else {
+        for (const auto& [Name, Val] : Instance.adHocFields) {
+            Shape.emplace(Name, Val.Kind());
+        }
     }
     return Shape;
 }
