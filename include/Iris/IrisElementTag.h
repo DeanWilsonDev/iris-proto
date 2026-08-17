@@ -51,10 +51,29 @@ enum class IrisElementTag {
     // `{ }` escape hatch evaluating to an already-built widget handle
     // (`Component::NativeBuilder`, not an ordinary `IrisProps` entry — see Component.h),
     // spliced directly into the built tree at this position by a backend-mapping pass.
-    // Deliberately mount-once and outside the reconciler's content-based diffing, unlike
-    // every other Core primitive here — the sanctioned escape valve for the same
-    // hand-rolled-`Box`-subclass composition pattern every backend already has, not a
-    // general imperative-draw sublanguage.
+    // Deliberately mount-once and outside the reconciler's *content*-based diffing (its
+    // `NativeBuilder` is never compared, and `ReconcileMatchedInPlace`'s `ApplyPropDiff`/
+    // child-recursion have nothing to act on for it either way) — the sanctioned escape
+    // valve for the same hand-rolled-`Box`-subclass composition pattern every backend
+    // already has, not a general imperative-draw sublanguage.
+    //
+    // That does not mean a `<Native>` node inside a re-rendering `<Slot>` can never
+    // rebuild (docs/next-steps.md's "`<Native>` doesn't participate in `<Slot>`
+    // reconciliation" entry, investigated 2026-08-17): `<Native>` gets no special-case
+    // treatment anywhere in `Reconciler.cpp` — it's walked and identity-checked
+    // (`Tag` + `Key`) exactly like every other Core primitive. A same-identity
+    // re-render is genuinely a no-op (confirmed by `tests/SlotRuntimeTests.cpp`'s "an
+    // unattached `<Native>` node's builder is NOT re-invoked..." case), but giving the
+    // node a `key` that changes whenever the data driving its rebuild changes already
+    // forces a fresh `NativeBuilder::Build()` call, through the exact same "different
+    // key → mount fresh" path any other primitive or component invocation already
+    // takes (see `tests/SlotRuntimeTests.cpp`'s two adjacent "...DOES get freshly
+    // re-invoked..."/"...also rebuilds..." cases, the latter proving the freshly-built
+    // widget genuinely lands in a real attached parent's child list, the shape a
+    // backend's own reconciler needs) — the same `key={id}`-forces-a-remount idiom this
+    // stack's own "Iris is this stack's JSX" framing (`CLAUDE.md`) already implies from
+    // React. No reconciler change was needed for this; it was already load-bearing,
+    // just unexercised and undocumented until now.
     Native,
     // A draggable-handle resizable split (docs/archive/iris_next_steps_resolved.md, "No layout-container
     // primitive beyond Frame's three stack modes") — exactly two element children

@@ -16,6 +16,121 @@ both since removed) plus one gap identified directly against `docs/iris_core_spe
 
 ---
 
+## `<Native>` doesn't participate in `<Slot>` reconciliation — a signal-driven re-render can't rebuild/swap a live Native-spliced widget (2026-08-17)
+
+> **Status:** Investigated and answered (2026-08-17) — turned out to be case 1 from the
+> original ask ("maybe this already works and nobody's exercised it"), with one real caveat.
+> No `Reconciler.cpp`/`SlotRuntime.cpp` code changes were needed; a doc-comment clarification
+> (`IrisElementTag.h`'s `Native` entry) and three new tests (`tests/SlotRuntimeTests.cpp`) were
+> added to prove and record it, since nothing here previously exercised this path at all. Cross-
+> repo ask, originating from `pharos-proto` — not an Iris-internal bug report. Matching ask filed
+> in `penumbra-ui-backend`'s own `docs/next_steps.md` (that repo owns the other half: actually
+> swapping a live real widget in place once a re-render happens) — see "What this means for
+> `penumbra-ui-backend`" below for the concrete handoff shape now proven to exist.
+
+### The answer, traced into real source and proven by new tests
+
+`<Native>` gets **no special-case treatment anywhere in `Reconciler.cpp`** — `ReconcileWidget`/
+`ReconcileChildrenAt`/`MatchLists` don't know the tag exists; every `Component` node, `Native`
+included, is walked and identity-matched (`Tag` + `Key`) exactly the same way. So the answer to
+the entry's own framing question is genuinely mixed, not a clean yes/no:
+
+- **Reached: yes, unconditionally.** Nothing "stops before recursing into" a `<Native>` node —
+  there's nothing to skip in the first place, since `ReconcileWidget` doesn't special-case any
+  tag before doing its identity check.
+- **Re-invoked on a same-identity re-render: no**, confirmed as actual runtime behavior (not
+  just the `IrisElementTag.h` doc comment's stated intent) by a new test,
+  `tests/SlotRuntimeTests.cpp`'s *"an unattached `<Native>` node's builder is NOT re-invoked
+  across a re-render with an unchanged key"*. When `Old.Tag == New.Tag` and `KeysEqual(Old.Key,
+  New.Key)` both hold, `ReconcileWidget` takes the "same identity, update in place" branch
+  (`ReconcileMatchedInPlace`), which only calls `ApplyPropDiff` (a no-op for `<Native>` — its
+  `build` closure isn't an `IrisProps` entry, `Component.h` says so directly) and recurses into
+  `Children` (always empty — `<Native>` is a leaf). `Component::NativeBuilder` is never read on
+  this path. This matches `IrisElementTag.h`'s own pre-existing doc comment ("deliberately
+  mount-once... outside the reconciler's content-based diffing") — confirmed as real behavior,
+  not just a stated intent nobody had checked.
+- **Re-invoked when identity changes (the `Key` differs): yes, already, with zero reconciler
+  changes needed.** Proven by two more new tests: *"...DOES get freshly re-invoked when its key
+  changes across a re-render"* (unattached `SlotState`, using `ReconcileWidget`'s own
+  `SingleWidget_` path) and *"a `<Native>` node spliced via an attached Slot also rebuilds...
+  only when its key changes"* (the actual `pharos-proto` splice shape — a `<Native>` attached
+  under a real parent widget via `SlotState::AttachToGroup`, going through
+  `ReconcileChildrenAt`). Both assert the real invocation count of `NativeBuilder::Build()`
+  (not just end-state), and the attached-mode test additionally proves the freshly-built widget
+  genuinely lands in the real parent's own child list, replacing the old one — the widget swap
+  a consuming backend needs, not just an internal state change. (That test needed a stable
+  `Id`-marker widget rather than raw pointer comparison — freeing the old widget and
+  immediately allocating the new one can land at the same heap address, a real false-negative
+  trap worth remembering for any future "was the widget actually swapped" test here.)
+
+**In short: this is React's own `key={id}`-forces-a-remount idiom, already fully load-bearing
+in this reconciler, just unexercised (zero prior test coverage — grepped, confirmed zero `Native`
+mentions anywhere in `ReconcilerTests.cpp`/`SlotRuntimeTests.cpp`/`SlotResolutionTests.cpp`/
+`SlotSiblingGroupTests.cpp` before this session) and undocumented as the sanctioned pattern for
+this specific need.** Nothing about it is `.irisx`-specific either — `key` is wired generically
+for every element tag including `<Native>` in the interpreted path too
+(`IrisIrRuntime.cpp`'s `ConvertIrElement`, ~line 303: `if (Node.Key.has_value()) { Base.Key =
+ConvertKeyRefValue(...); }`, applied after the tag-specific `Base` is built, regardless of tag —
+so a real `.irisx` author can already write `<Native key={fixturePath} build={...} />` inside a
+`<Slot>` today and get a real rebuild whenever `fixturePath` changes).
+
+### What this means for `penumbra-ui-backend`
+
+Nothing on this repo's side needs to change for the trigger half to work. What
+`penumbra-ui-backend`'s own `MountFn` implementation needs (the callback `SlotRuntime.h`
+documents as "supplied by whoever embeds Iris") is exactly what the new attached-mode test
+exercises: when asked to mount a `Component` with `Tag == IrisElementTag::Native`, call
+`Node.NativeBuilder->Build()` directly (no further recursion — `<Native>` is always a leaf) and
+return the result. `ReconcileWidget`/`ReconcileChildrenAt` already do the rest — detect the key
+mismatch, `RemoveChildAt` the old real widget, call `Mount` for the new `Component` (which, for
+Penumbra, means `PenumbraUiBackend`'s adapter constructing a real `Penumbra::Widgets::*` object
+from whatever `NativeBuilder->Build()` returns), and `InsertChildAt` it in the old one's place —
+the same "different key → mount fresh" path used for a fresh component invocation. So the
+concrete, minimal fix on `pharos-proto`'s own `.irisx` authoring side (once `penumbra-ui-backend`
+confirms its `MountFn` already does this, or adds it if not) is just: give each of the
+Explorer/Atlas/Inspector `<Native>` splices a `key` derived from whatever identifies "the data
+this panel is currently showing" (e.g. the loaded fixture path, or a lens name) — no new Iris
+primitive, no new `penumbra-ui-backend` primitive beyond an ordinary Native-aware `MountFn`,
+same mechanism every other remount in this reconciler already uses.
+
+### Original framing (superseded by the above, kept for the trail)
+
+**The concrete pain this traces to**, so the ask isn't abstract: `pharos-proto`'s
+`pharos_nyx_bootstrap` app has four panels (Toolbar/Explorer/Atlas/Inspector) spliced into
+`App.irisx` via `<Native build={...} />`, each backed by a genuinely custom-drawn C++ widget.
+When the user reloads a fixture or switches lens, three of those panels need to be torn down
+and rebuilt against new data — today this is done entirely by hand in `pharos-proto`'s own
+`nyx_app/main.cpp` (`loadFixtureFromPath()`/`switchLens()`): detach the live `SplitPanel`
+children, reset the C++ panel objects, rebuild them, re-splice the new widgets in. This is
+exactly what a reconciler should be doing automatically in response to "the underlying data
+changed" — the same way this repo's own `<Slot>` already re-renders ordinary Iris-authored
+content when a `@signal` it reads changes (this repo's adjacent "A real `.irisx` `<Slot>` never
+reconciles on a `@signal` write" entry above, fixed 2026-08-10) — but `<Native>` doesn't get
+that treatment.
+
+**Grounding, from this repo's own real source (not guessed):** `Component::NativeBuilder`
+(`include/Iris/Component.h`) is a factory (`std::function<std::unique_ptr<Umbra::IWidget>()>`),
+already technically callable more than once — nothing about the type itself is one-shot. But
+whether a `<Native>` node sitting inside a re-rendering `<Slot>`'s subtree actually gets
+re-visited and its builder re-invoked when that `<Slot>` reconciles is the open question this
+entry needs answered: does `vendor's own Reconciler.h`/`SlotState`/`ReconcileChildrenAt`
+machinery (identity-matched by `Component::Key`, confirmed Key-only elsewhere in this doc's
+own history) even walk into a `<Native>` node's position at all during a `<Slot>` re-render, or
+does reconciliation stop at/skip over `<Native>` nodes entirely today? If it does reach them,
+what's missing is likely small (surfacing the newly-built widget somewhere `penumbra-ui-backend`
+can pick up and swap in). If it doesn't, that's the real gap this entry is asking about.
+
+### What unblocks
+
+If a `<Native>` node genuinely re-invokes its builder when its containing `<Slot>` re-renders
+(triggered by a `@signal` write, the same mechanism already proven for ordinary content),
+`penumbra-ui-backend` can build the other half (swapping the newly-built real widget into the
+live Penumbra tree in place of the old one) — together, that's what would let a component like
+`pharos-proto`'s `ExplorerPanel` own its own "rebuild when the data changes" logic entirely,
+instead of the consuming app hand-rolling teardown/rebuild/re-splice in C++ the way it does
+today. Not proposing a specific API here — that's this repo's own design call, grounded in
+whatever the investigation above finds.
+
 ## Chaos runtime — the `.iris.ir` consumer — IR-to-Component walk is built; real Nyx evaluation is not (2026-08-06)
 
 > **Status:** Open, narrower still. A real `NyxEvaluator` (`IrisNyxEvaluator.h`) and a real mount
