@@ -5,6 +5,24 @@
 #include <functional>
 #include <string>
 
+namespace {
+
+// A minimal concrete Umbra::IWidgetLifecycle for exercising iris::RegisterLifecycle --
+// docs/next-steps.md's "iris::RegisterLifecycle" entry / docs/iris_stage3_decision_doc.md
+// §8. Real registration against a backend's own frame loop (e.g. Penumbra's
+// Application::RegisterLifecycle) is a consuming backend's job, not this repo's -- these
+// tests only cover that the pointer reaches ComponentInstance::Lifecycle correctly.
+struct RecordingLifecycle : Umbra::IWidgetLifecycle {
+    int  MountCount{0};
+    int  UnmountCount{0};
+    int  TickCount{0};
+    void OnMount() override { ++MountCount; }
+    void OnUnmount() override { ++UnmountCount; }
+    void OnTick(const Umbra::TickInfo&) override { ++TickCount; }
+};
+
+} // namespace
+
 DESCRIBE("ComponentInstance", {
     // The exact shape of the bug docs/iris_signal_lifetime_decision.md fixes: a function
     // that declares a signal, captures it by reference into a closure, and returns —
@@ -172,5 +190,99 @@ DESCRIBE("ComponentInstance", {
         REQUIRE_TRUE(Reloaded.ReloadTier.has_value());
         ASSERT_TRUE(*Reloaded.ReloadTier == iris::ComponentReloadTier::SignalLayoutChanged);
         ASSERT_EQUAL(GetIt(), "hello"); // no compatible old value to carry forward -- uses InitExpr
+    });
+
+    // docs/next-steps.md's "iris::RegisterLifecycle" entry / docs/iris_stage3_decision_doc.md
+    // §8: a component calls iris::RegisterLifecycle(...) with a single Umbra::IWidgetLifecycle*
+    // argument, mirroring IRIS_SIGNAL's ambient-current-instance pattern -- these tests cover
+    // that the pointer actually reaches ComponentInstance::Lifecycle, the passive/non-owning
+    // "extension slot" a backend's own reconciler is expected to read.
+    IT("ComponentInstance::Lifecycle is nullptr when RegisterLifecycle is never called", {
+        Iris::Component Node = iris::MountComponentInstance([&]() -> Iris::Component {
+            IRIS_SIGNAL(int, Count, 0); // an ordinary component that never registers a lifecycle
+            return Iris::Component(nullptr);
+        });
+        REQUIRE_TRUE(Node.Instance != nullptr);
+        ASSERT_TRUE(Node.Instance->Lifecycle == nullptr);
+    });
+
+    IT("iris::RegisterLifecycle stashes the pointer on the ambient ComponentInstance", {
+        RecordingLifecycle Lifecycle;
+        Iris::Component    Node = iris::MountComponentInstance([&]() -> Iris::Component {
+            iris::RegisterLifecycle(&Lifecycle);
+            return Iris::Component(nullptr);
+        });
+        REQUIRE_TRUE(Node.Instance != nullptr);
+        ASSERT_TRUE(Node.Instance->Lifecycle == &Lifecycle);
+    });
+
+    IT("RegisterLifecycle is passive -- it never calls OnMount/OnUnmount/OnTick itself", {
+        RecordingLifecycle Lifecycle;
+        Iris::Component    Node = iris::MountComponentInstance([&]() -> Iris::Component {
+            iris::RegisterLifecycle(&Lifecycle);
+            return Iris::Component(nullptr);
+        });
+        (void)Node;
+        // Registration alone must not drive the interface -- that's a backend's own frame
+        // loop's job (e.g. Penumbra's Application::RegisterLifecycle fanning out OnTick),
+        // which this repo deliberately never calls into (Iris stays backend-agnostic).
+        ASSERT_EQUAL(Lifecycle.MountCount, 0);
+        ASSERT_EQUAL(Lifecycle.UnmountCount, 0);
+        ASSERT_EQUAL(Lifecycle.TickCount, 0);
+    });
+
+    IT("two sibling components each register their own independent Lifecycle pointer", {
+        RecordingLifecycle LifecycleA;
+        RecordingLifecycle LifecycleB;
+        Iris::Component    NodeA = iris::MountComponentInstance([&]() -> Iris::Component {
+            iris::RegisterLifecycle(&LifecycleA);
+            return Iris::Component(nullptr);
+        });
+        Iris::Component NodeB = iris::MountComponentInstance([&]() -> Iris::Component {
+            iris::RegisterLifecycle(&LifecycleB);
+            return Iris::Component(nullptr);
+        });
+        REQUIRE_TRUE(NodeA.Instance != nullptr);
+        REQUIRE_TRUE(NodeB.Instance != nullptr);
+        ASSERT_TRUE(NodeA.Instance->Lifecycle == &LifecycleA);
+        ASSERT_TRUE(NodeB.Instance->Lifecycle == &LifecycleB);
+        ASSERT_TRUE(NodeA.Instance->Lifecycle != NodeB.Instance->Lifecycle);
+    });
+
+    IT("a reload replay re-registering a lifecycle overwrites the prior pointer on the same instance", {
+        RecordingLifecycle Original;
+        Iris::Component    Node = iris::MountComponentInstance([&]() -> Iris::Component {
+            iris::RegisterLifecycle(&Original);
+            return Iris::Component(nullptr);
+        });
+        REQUIRE_TRUE(Node.Instance->Lifecycle == &Original);
+
+        RecordingLifecycle Replacement;
+        Iris::Component    Reloaded = iris::ReloadComponentInstance(Node.Instance, [&]() -> Iris::Component {
+            iris::RegisterLifecycle(&Replacement); // same render body re-running on reload
+            return Iris::Component(nullptr);
+        });
+
+        ASSERT_TRUE(Reloaded.Instance == Node.Instance); // same ComponentInstance carried forward
+        ASSERT_TRUE(Reloaded.Instance->Lifecycle == &Replacement); // the latest registration wins
+    });
+
+    IT("Lifecycle stays a raw, non-owning pointer -- ComponentInstance destruction never touches the pointee", {
+        auto DestroyedFlag = std::make_shared<bool>(false);
+        struct FlaggingLifecycle : Umbra::IWidgetLifecycle {
+            std::shared_ptr<bool> Flag;
+            ~FlaggingLifecycle() override { *Flag = true; }
+        };
+        FlaggingLifecycle Lifecycle;
+        Lifecycle.Flag = DestroyedFlag;
+        {
+            Iris::Component Node = iris::MountComponentInstance([&]() -> Iris::Component {
+                iris::RegisterLifecycle(&Lifecycle);
+                return Iris::Component(nullptr);
+            });
+            REQUIRE_TRUE(Node.Instance->Lifecycle == &Lifecycle);
+        } // Node's ComponentInstance is destroyed here -- Lifecycle is stack-owned by this
+          // test, not the ComponentInstance, so its own destructor must not fire.
+        ASSERT_TRUE(*DestroyedFlag == false);
     });
 });

@@ -1200,3 +1200,76 @@ connected back to each other in this doc.
   already document both new shapes on their own.
 - Building any part of the not-yet-scoped Chaos runtime (the IR *consumer*) — unchanged,
   still out of scope, as every prior follow-up in this section already said.
+
+---
+
+## `iris::RegisterLifecycle` — designed in Stage 3, never implemented — needed for a framework-owned per-component update system — RESOLVED (2026-08-17)
+
+> **Status:** Resolved in this repo. The two downstream asks this decision blocked
+> (`penumbra-ui-backend`'s reconciler-side registration, `nyx-proto`'s Nyx-authoring of
+> `IWidgetLifecycle` overrides) are each that repo's own action item now, not this one — per
+> this doc's own archiving convention ("resolved to the point that nothing remaining is this
+> repo's own action item").
+> **Trigger:** Cross-repo ask, originating from `pharos-proto` (not an Iris-internal bug
+> report): `pharos-proto`'s own `docs/next_steps.md` "Phase 3" entry (under "Nyx-native
+> application") wants app-level per-frame orchestration (`PharosNyxApp.nyx`'s `OnUpdate`, which
+> hand-sequences ~15 named host calls every frame) replaced by something "kind of like an ECS
+> in a game engine but for UI components" — each mounted component owning its own update logic,
+> dispatched automatically by the framework rather than named by the app. This was the
+> Iris-side piece of that design.
+
+### What landed
+
+- Confirmed the pre-filed working hypothesis against real source before implementing, per this
+  entry's own request: `ComponentInstance` (`include/Iris/ComponentInstance.h`) genuinely has
+  no custom destructor anywhere, and `DriverState` (a passive `shared_ptr<void>` extension slot
+  a backend reads and manages) is a real, already-established pattern for exactly this kind of
+  cross-repo handoff. Both held up unchanged — no adjustment to the hypothesis was needed.
+- `ComponentInstance` gained a public `Umbra::IWidgetLifecycle* Lifecycle{nullptr}` field,
+  mirroring `DriverState`'s shape exactly: passive, non-owning, `nullptr` by default, set once
+  and read by whoever embeds Iris (`penumbra-ui-backend`'s own reconciler is the intended first
+  reader) — `ComponentInstance` itself never calls into a backend's real lifecycle registry
+  (`Penumbra::Application::RegisterLifecycle`/`UnregisterLifecycle`), keeping this repo
+  backend-agnostic per its own stated design.
+- `iris::RegisterLifecycle(Umbra::IWidgetLifecycle*)` — a free function in `include/Iris/
+  ComponentInstance.h`, taking the single argument `docs/iris_stage3_decision_doc.md` §8's own
+  worked example calls it with, not the two-argument `RegisterLifecycle(ComponentInstance&, ...)`
+  sketch this entry's own original text carried (explicitly flagged there as illustrative, not
+  a firm signature decision). Resolves the ambient "current component instance"
+  (`IrisRuntime::CurrentComponentInstance()`) exactly the way `IRIS_SIGNAL`'s
+  `Detail::DeclareSignal` already does, and asserts under the same precondition (must be called
+  from inside a component invocation reached via generated `<Name .../>` codegen or
+  `iris::Mount()`).
+- Covered by 6 new `tests/ComponentInstanceTests.cpp` cases: the field defaults to `nullptr`
+  when never registered; a registered pointer reaches `ComponentInstance::Lifecycle`; two
+  sibling components each keep an independent pointer; registration is purely passive (never
+  itself calls `OnMount`/`OnUnmount`/`OnTick` — that stays a backend frame loop's job); a reload
+  replay re-registering overwrites the prior pointer on the same, reused `ComponentInstance`;
+  and `ComponentInstance` destruction never touches the registered pointee (a raw, non-owning
+  pointer, not a `shared_ptr`/owned object). Full suite (241/241, was 234) passes, clean under
+  AddressSanitizer + UndefinedBehaviorSanitizer.
+- One scope clarification surfaced by `penumbra-ui-backend`'s own agent while designing against
+  this (not a code change here, just worth recording): `Component::Instance` is set by
+  `MountComponentInstance` for *every* component invocation `Codegen.h` wraps, not only the
+  outermost mount root — a plain nested `<ChildComponent .../>` used as an ordinary static child
+  (no `<Slot>` involved) gets its own `Instance`, inline in the same `Component` tree, at that
+  nested position. This was already true of the pre-existing `MountComponentInstance` design
+  (no change needed for it here); it means a consuming backend's own registration pass has to
+  visit every node of its widget-tree walk, not just the tree's root, to find every
+  `Lifecycle`-bearing instance — worth knowing for whoever tests that side, not this repo's own
+  action item to build or test further.
+
+### Explicitly not requested
+
+- Actually calling `Application::RegisterLifecycle`/`UnregisterLifecycle` against a real
+  backend — that's `penumbra-ui-backend`'s own filed ask, deliberately left to it so this repo
+  stays backend-agnostic.
+- A `ComponentInstance`-owned registry reference with self-unregister-at-destruction — sized and
+  rejected (see this entry's own original reasoning, carried into the field's doc comment in
+  `ComponentInstance.h`): would have required adding a first custom destructor to a class that
+  has never needed one, with a real registry/component-lifetime-ordering hazard that doesn't
+  exist today.
+- Any Nyx-side mechanism for a `.irisx`-authored component to *implement* `IWidgetLifecycle`
+  from script — `nyx-proto`'s own filed ask, generalizing the existing
+  `RegisterInheritableType` mechanism `ApplicationBridge.h` already uses for `Application`
+  specifically.

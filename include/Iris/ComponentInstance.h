@@ -4,6 +4,8 @@
 #include "Iris/Signal.h"
 #include "Iris/SlotRuntime.h"
 
+#include "Umbra/IWidgetLifecycle.h"
+
 #include "runtime/value.hpp"
 
 #include <cassert>
@@ -203,6 +205,26 @@ public:
     // `IRIS_SIGNAL`-only component.
     std::shared_ptr<void> DriverState;
 
+    // The producer side of `docs/iris_stage3_decision_doc.md` §8's `IWidgetLifecycle`
+    // design (`docs/next-steps.md`'s "`iris::RegisterLifecycle`" entry) -- set via the
+    // free function `iris::RegisterLifecycle` below, read by a backend's own reconciler
+    // (e.g. `penumbra-ui-backend`) to actually register/unregister against a real frame
+    // loop's lifecycle registry (e.g. Penumbra's `Application::RegisterLifecycle`/
+    // `UnregisterLifecycle`) at mount/unmount time. Passive and non-owning -- the same
+    // "opaque extension slot the backend reads and manages" shape `DriverState` above
+    // already establishes, deliberately not a `ComponentInstance`-owned registry
+    // reference with self-unregister-at-destruction: `ComponentInstance` has no custom
+    // destructor anywhere today (see this class's own doc comment above, "no separate
+    // on-unmount hook needed anywhere"), and adding one just to call a registry would
+    // introduce new, invasive machinery with a real registry/component-lifetime-ordering
+    // hazard that doesn't exist today. Whoever calls `iris::RegisterLifecycle` retains
+    // ownership of the pointee and must keep it alive for at least as long as this
+    // instance stays mounted -- typically by holding the concrete `IWidgetLifecycle`
+    // inside state this same `ComponentInstance` already keeps alive (a `Signal<T>`, or
+    // `DriverState`), not as a bare stack local. `nullptr` for every component that never
+    // calls `iris::RegisterLifecycle`.
+    Umbra::IWidgetLifecycle* Lifecycle{nullptr};
+
 private:
     std::vector<std::unique_ptr<Detail::SignalStorageBase>> Signals_;
     std::vector<std::unique_ptr<nyx::runtime::Value>>       NyxSignals_;
@@ -244,6 +266,28 @@ public:
 };
 
 } // namespace Detail
+
+// Registers `Lifecycle` against whichever `ComponentInstance` is currently ambient
+// (`IrisRuntime::CurrentComponentInstance()`) — the same ambient-current-instance
+// pattern `IRIS_SIGNAL`'s `Detail::DeclareSignal` above uses, and the one-argument
+// shape `docs/iris_stage3_decision_doc.md` §8's own worked example calls this with
+// (`iris::RegisterLifecycle(new class : public Umbra::IWidgetLifecycle { ... })`) —
+// not a two-argument `RegisterLifecycle(ComponentInstance&, ...)` form. Stashes the
+// pointer on `ComponentInstance::Lifecycle` above and returns; does not itself talk to
+// any backend's real lifecycle registry (Iris stays backend-agnostic per this repo's
+// own design) — a consuming backend's reconciler is expected to read that field back
+// and drive the actual registration. Asserts if called outside any component
+// invocation, the same precondition `IRIS_SIGNAL` already has.
+inline void RegisterLifecycle(Umbra::IWidgetLifecycle* Lifecycle) {
+    ComponentInstance* Instance = IrisRuntime::Instance().CurrentComponentInstance();
+    assert(Instance != nullptr &&
+           "iris::RegisterLifecycle used outside any component invocation wrapped with "
+           "MountComponentInstance -- every component function must be reached via "
+           "generated <Name .../> codegen or iris::Mount() for the ambient instance to "
+           "exist (mirrors IRIS_SIGNAL's own precondition, docs/iris_signal_lifetime_"
+           "decision.md).");
+    Instance->Lifecycle = Lifecycle;
+}
 
 // Wraps a component invocation — what `Codegen.h` emits for every `<Name .../>` — so
 // any `IRIS_SIGNAL` declarations inside the component function `Fn` calls register
