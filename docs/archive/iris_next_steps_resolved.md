@@ -1386,3 +1386,125 @@ this entry's own "What unblocks" section originally named.
   (`penumbra-proto`) — both pre-existing and untouched by this entry, exercised here only via
   direct `Instance->Lifecycle->OnTick(...)` calls in tests, matching this repo's own
   backend-agnostic boundary (it never drives a real frame loop itself).
+
+---
+
+## `IrisNyxDriver::GetFileScope` caches a stale snapshot of `Runtime_.Globals()` forever — a real, reproduced use-after-free for any host that re-registers a `RegisterFunction`/`RegisterNativeBuilder` between repeated `MountRoot` calls on one shared driver (2026-08-18)
+
+> **Status: RESOLVED (2026-08-18).** Cross-repo ask from `pharos-proto` — not an Iris-internal
+> bug report. `pharos-proto`'s own `docs/next_steps.md` had been chasing this for several
+> sessions as an unconfirmed "leading hypothesis" (heap-use-after-free in its
+> `pharos_nyx_bootstrap` app's lens-switch/reload path); this session reproduced it under
+> `-fsanitize=address,undefined` (`PHAROS_NYX_BENCHMARK_SEQUENCE=1 ./pharos_nyx_bootstrap`,
+> second `buildExplorerPanel()` call inside `switchLens()`) and traced the exact mechanism into
+> this repo's real source, not `pharos-proto`'s own code. Fixed exactly as proposed below, plus a
+> new regression test — see "What closed this" below.
+
+### The bug, traced end to end
+
+`IrisNyxDriver::GetFileScope` (`src/Iris/IrisNyxDriver.cpp:231-240`) caches one
+`nyx::host::NyxRuntime::NyxScope` per resolved file path, forever, and hands back the *same*
+cached scope on every later `MountRoot`/`InvokeComponent` call for that path — including the
+**ordinary fresh-mount path** (`Previous == nullptr`), not just `ReloadRoot`'s reuse case. The
+class's own doc comment (`IrisNyxDriver.h:181-188`) explains why this cache is never invalidated
+by a *reload* (`ReInvokeComponent`/`PatchClass` patch the same live `Interpreter` in place), but
+that reasoning has nothing to do with an unrelated, later, ordinary `MountRoot` call for the same
+path — which this cache also silently reuses.
+
+The scope itself comes from `nyx::host::NyxRuntime::CreateScope` (`nyx-proto`,
+`src/host/nyx-runtime.hpp:354-363`), which builds a **brand-new, separate `Interpreter`** for the
+file and seeds it with a **one-time copy** of the driver's globals at that exact moment:
+```cpp
+auto interp = std::make_shared<interpreter::Interpreter>(parser.ParseProgram());
+for (auto& [name, value] : globals_) interp->DefineGlobal(name, value);
+```
+This interpreter is never touched again after creation — it is not a live view onto
+`Runtime_.Globals()`, it's a snapshot. So: a host that calls `driver.Runtime().RegisterFunction(name, ...)`
+*after* a given file's scope was already created (e.g. re-registering the same-named function
+with fresh data before every `MountRoot` call, `pharos-proto`'s own established "register
+additional things up front" convention — `IrisNyxDriver.h:88-91`'s own doc comment) has that new
+registration silently invisible to any file whose scope was already cached. Worse: if the new
+registration's closure captures a pointer to something the *old* registration's closure also
+captured (a raw pointer replaced on every rebuild, the exact shape `pharos-proto`'s own
+`buildNativeExplorerPanel` uses for `"ExplorerTopLevelNodes"` — see its `explorer_panel_native.cpp:436-444`),
+the file's cached interpreter keeps calling the *old* closure, which may by then point at freed
+memory.
+
+### The concrete repro (traced with a real ASan stack, not guessed)
+
+`pharos-proto`'s `switchLens()` tears down and rebuilds its Explorer panel on every lens switch,
+which (a) frees the old `NativeNodeRegistry` (a map of heap-allocated node handles) and (b)
+re-registers `"ExplorerTopLevelNodes"` on the **same, shared, process-lifetime**
+`Iris::IrisNyxDriver` with a closure over the *new* registry, then calls
+`driver.MountRoot(".../ExplorerTree.irisx", "ExplorerTree")` again. `GetFileScope` returns the
+*same* cached scope/interpreter from the very first mount (back at `initializeApp()`), whose
+globals still hold the *first* call's `"ExplorerTopLevelNodes"` closure. When `ExplorerTree.irisx`'s
+render body evaluates its `.Map()`-list expression (`Iris::MakeNyxEvaluator`'s slot-expression
+evaluator, `IrisNyxEvaluator.cpp:~370-448`, reached synchronously inside `MountRoot` itself — not
+lazily at `SlotState::Reconcile()` time as `pharos-proto`'s own doc had assumed), it calls the
+*stale* `"ExplorerTopLevelNodes"`, which hands back node handles from the registry that
+`switchLens()` already destroyed. ASan confirms exactly this allocation/free/use triangle: the
+handle was allocated in the *first* `buildExplorerPanel()` (`initializeApp()`'s own call chain),
+freed by the registry's own destructor when `switchLens()` resets it, and read — heap-use-after-free
+— from inside the *second* `buildExplorerPanel()`'s own fresh `MountRoot` call, deep inside
+`ConvertNative`'s `build={() -> "tree_row_" + props.node.Id()}` name-expression evaluation
+(`props.node` itself is the stale handle, threaded down through the stale `.Map()` closure).
+
+### The fix, as landed — matches the proposal below exactly
+
+`nyx::interpreter::Interpreter::DefineGlobal` (public, `nyx-proto`'s `interpreter.hpp:97`) is
+already safe to call repeatedly with the same name — `Environment::Define` (`environment.cpp:9-11`)
+unconditionally overwrites `bindings_[name]`, no error, no special-casing. So `GetFileScope` now
+re-pushes the driver's *current* globals into an already-cached scope's interpreter before
+handing it back:
+
+```cpp
+nyx::host::NyxRuntime::NyxScope& IrisNyxDriver::GetFileScope(const std::string& ResolvedPath,
+                                                              const IrisIrDocument& Document) {
+    const auto Cached = FileScopes_.find(ResolvedPath);
+    if (Cached != FileScopes_.end()) {
+        for (const auto& [Name, Value] : Runtime_.Globals()) {
+            Cached->second.interpreter->DefineGlobal(Name, Value);
+        }
+        return Cached->second;
+    }
+    ...
+}
+```
+This directly mirrors what `CreateScope` already does once at creation time, just repeated on
+every reuse — so a host's `RegisterFunction`/`RegisterType`/`RegisterNativeBuilder` call made
+between two `MountRoot` calls on the same driver becomes visible to already-mounted files too,
+closing the staleness window without touching `ReloadRoot`'s own reuse semantics (which are
+unaffected — `ReInvokeComponent`/`PatchClass` don't go through `GetFileScope`'s cache-hit branch
+any differently). Doesn't require any `nyx-proto` API change — `DefineGlobal`/`Globals()` are
+both already public.
+
+### What closed this (2026-08-18)
+
+Implemented exactly as proposed above, in `src/Iris/IrisNyxDriver.cpp`'s `GetFileScope`, with a
+matching doc-comment update on the declaration in `include/Iris/IrisNyxDriver.h`. A new
+regression test was added to `tests/IrisNyxDriverTests.cpp` — *"a RegisterFunction call made
+after a file's scope is already cached becomes visible on a subsequent MountRoot for the same
+path, replacing an earlier-registered function of the same name"* — mounting a file whose render
+body calls a registered global function (`class={GetLabel()}`), re-registering that same-named
+function with different return data, then mounting the same path again and asserting the second
+mount's output reflects the *new* registration. Confirmed to genuinely exercise the gap: manually
+reverting the `GetFileScope` fix and re-running made this specific test fail (the second mount
+kept returning the first registration's value); with the fix restored it passes. Full suite
+(251/251, was 250) clean under both a plain build and AddressSanitizer + UndefinedBehaviorSanitizer.
+
+**Not done as part of this pass** (per the original write-up's own "worth a second look" note):
+whether `RegisterType`'s/`RegisterInheritableType`'s/`RegisterDecorator`'s own globals (types
+seed a global via `CommitType`, `nyx-runtime.hpp:139-149`) need the same refresh treatment — this
+fix only addresses the `RegisterFunction` case `pharos-proto` actually hit and reproduced; the
+same snapshot-at-`CreateScope`-time mechanism plausibly applies to those too, but wasn't sized or
+verified here. Would need a fresh entry if a concrete repro against one of those surfaces.
+
+### Explicitly not requested
+
+- Refreshing `RegisterType`/`RegisterInheritableType`/`RegisterDecorator`'s own globals the same
+  way — see "Not done as part of this pass" above; no concrete repro against those exists yet.
+- Any `nyx-proto` change — `DefineGlobal`/`Globals()` were already public; this was a
+  `GetFileScope`-only fix.
+- A workaround inside `pharos-proto` — this was `iris-proto`'s own architecture bug (a stale
+  cache), not something a consuming application could reasonably compose around.

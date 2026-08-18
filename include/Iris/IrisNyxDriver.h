@@ -181,10 +181,18 @@ private:
     // Returns the cached whole-file `NyxScope` for `ResolvedPath` (`ReconstructNyxSource`
     // + `Runtime_.CreateScope`), building it on first use. `Document` must be the same
     // one `LoadDocument(ResolvedPath)` already returned -- passed in rather than
-    // re-looked-up since every caller already has it. Deliberately never invalidated by a
-    // reload -- `Runtime_.ReInvokeComponent`/`PatchClass` patch this same live `Interpreter` in
-    // place; rebuilding it would drop every other still-running file-level declaration this
-    // reload has nothing to do with.
+    // re-looked-up since every caller already has it. The `NyxScope` itself (which file, which
+    // live `Interpreter`) is deliberately never invalidated by a reload -- `Runtime_.
+    // ReInvokeComponent`/`PatchClass` patch this same live `Interpreter` in place; rebuilding it
+    // would drop every other still-running file-level declaration this reload has nothing to do
+    // with. On a cache hit, though, `Runtime_.Globals()` *is* re-pushed into the cached
+    // Interpreter every call (via `DefineGlobal`, safe to repeat -- unconditional overwrite, no
+    // error) before returning it -- `CreateScope` only seeds globals once, at creation time, so
+    // without this a host's `RegisterFunction`/`RegisterType`/`RegisterNativeBuilder` call made
+    // between two `MountRoot` calls on the same driver would be silently invisible to (and, if a
+    // stale closure captured now-freed state, a use-after-free reachable from) any file whose
+    // scope was already cached -- a real bug found and fixed 2026-08-18, see `docs/next-steps.md`/
+    // `docs/archive/iris_next_steps_resolved.md`.
     nyx::host::NyxRuntime::NyxScope& GetFileScope(const std::string& ResolvedPath, const IrisIrDocument& Document);
 
     // The recursive core `MountRoot`/`ReloadRoot` and a component invocation's own

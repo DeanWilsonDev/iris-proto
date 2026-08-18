@@ -159,6 +159,53 @@ DESCRIBE("IrisNyxDriver", {
         ASSERT_TRUE(std::get<std::string>(Root.Children[0].Props.at("text")) == "Hello");
     });
 
+    // docs/next-steps.md's "GetFileScope caches a stale snapshot of Runtime_.Globals() forever"
+    // gap: a host's RegisterFunction call made *after* a file's whole-file NyxScope is already
+    // cached (i.e. after a first MountRoot for that path) was silently invisible to any
+    // subsequent MountRoot for that same path -- GetFileScope's cache-hit branch just returned
+    // the already-cached Interpreter untouched, which only ever saw the globals that existed at
+    // CreateScope time. This is exactly pharos-proto's own "register additional things up front"
+    // convention (switchLens() rebuilding its NativeNodeRegistry and re-registering
+    // "ExplorerTopLevelNodes" with a closure over the new registry before every MountRoot call on
+    // the same, shared, process-lifetime driver) -- reproduced here with a plain string-returning
+    // function instead of a node registry, since the underlying mechanism (a second
+    // RegisterFunction call under the same name, expected to be visible on the next MountRoot) is
+    // identical either way.
+    IT("a RegisterFunction call made after a file's scope is already cached becomes visible on a "
+       "subsequent MountRoot for the same path, replacing an earlier-registered function of the "
+       "same name",
+       {
+           TempProject Project;
+           const std::string AppPath = Project.Write("App.irisx",
+                                                       "void App() {\n"
+                                                       "    render {\n"
+                                                       "        <Frame class={GetLabel()} />\n"
+                                                       "    }\n"
+                                                       "}\n");
+
+           IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+           Driver.Runtime().RegisterFunction(
+               "GetLabel", [](std::vector<nyx::runtime::Value>) -> nyx::runtime::Value {
+                   return nyx::runtime::Value(std::string("first"));
+               });
+
+           const Component First = Driver.MountRoot(AppPath, "App");
+           REQUIRE_TRUE(Driver.Errors().empty());
+           ASSERT_TRUE(std::get<std::string>(First.Props.at("class")) == "first");
+
+           // Re-register "GetLabel" with fresh data before a second MountRoot call for the same
+           // path -- this is the exact moment GetFileScope's cache-hit branch used to hand back
+           // an Interpreter that had never seen this new registration.
+           Driver.Runtime().RegisterFunction(
+               "GetLabel", [](std::vector<nyx::runtime::Value>) -> nyx::runtime::Value {
+                   return nyx::runtime::Value(std::string("second"));
+               });
+
+           const Component Second = Driver.MountRoot(AppPath, "App");
+           REQUIRE_TRUE(Driver.Errors().empty());
+           ASSERT_TRUE(std::get<std::string>(Second.Props.at("class")) == "second");
+       });
+
     IT("reports an error rather than crashing when the entry file doesn't exist", {
         TempProject Project;
         IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());

@@ -232,6 +232,23 @@ nyx::host::NyxRuntime::NyxScope& IrisNyxDriver::GetFileScope(const std::string& 
                                                               const IrisIrDocument& Document) {
     const auto Cached = FileScopes_.find(ResolvedPath);
     if (Cached != FileScopes_.end()) {
+        // Re-push the driver's *current* globals into this already-cached scope's
+        // Interpreter before handing it back. CreateScope only seeds globals once, at
+        // creation time -- the cached Interpreter is not a live view onto Runtime_.Globals(),
+        // it's a snapshot -- so without this, a host's RegisterFunction/RegisterType/
+        // RegisterNativeBuilder call made between two MountRoot calls on the same driver
+        // (pharos-proto's own "register additional things up front" convention,
+        // IrisNyxDriver.h's own doc comment) would be silently invisible to any file whose
+        // scope was already cached, and a stale closure captured by the *previous*
+        // registration could keep being called against freed state. DefineGlobal is safe to
+        // call repeatedly with the same name -- Environment::Define unconditionally
+        // overwrites, no error -- so this mirrors what CreateScope already does once at
+        // creation time, just repeated on every cache hit. Doesn't affect ReloadRoot's own
+        // reuse semantics: ReInvokeComponent/PatchClass patch this same live Interpreter in
+        // place, unrelated to this cache-hit branch.
+        for (const auto& [Name, Value] : Runtime_.Globals()) {
+            Cached->second.interpreter->DefineGlobal(Name, Value);
+        }
         return Cached->second;
     }
     const auto Inserted =
