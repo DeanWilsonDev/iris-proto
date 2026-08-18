@@ -678,4 +678,226 @@ DESCRIBE("IrisNyxDriver", {
         ASSERT_TRUE(ReloadedHeader.Instance != Header.Instance); // fresh mount, not the same instance
         ASSERT_TRUE(std::get<std::string>(ReloadedHeader.Props.at("class")) == "zero"); // count reset
     });
+
+    // docs/next-steps.md's "A `.irisx` component can't register its own per-frame OnTick" entry:
+    // a Model 1 (free-function) component declaring a reserved-name local lambda (`auto OnTick =
+    // (float dt) -> { ... };`) gets a real `iris::ComponentInstance::Lifecycle` wired
+    // automatically, callable by whoever drives a real frame loop (a `penumbra-ui-backend`
+    // `UmbraLifecycleBridge`, in the real consuming pipeline -- called directly here, since this
+    // driver is deliberately backend-agnostic and never drives one itself).
+    IT("a Model 1 component's `auto OnTick = ...` local is wired to a real Lifecycle, called via "
+       "Instance->Lifecycle->OnTick",
+       {
+        TempProject Project;
+        const std::string AppPath = Project.Write("Ticker.irisx",
+                                                    "void Ticker() {\n"
+                                                    "    @signal float elapsed = 0;\n"
+                                                    "\n"
+                                                    "    auto OnTick = (float dt) -> { elapsed = elapsed + dt; };\n"
+                                                    "\n"
+                                                    "    render {\n"
+                                                    "        <Frame>\n"
+                                                    "            <Slot>\n"
+                                                    "                !{() -> elapsed > 0.4\n"
+                                                    "                    ? <Frame class=\"ticked\" />\n"
+                                                    "                    : <Frame class=\"idle\" />}\n"
+                                                    "            </Slot>\n"
+                                                    "        </Frame>\n"
+                                                    "    }\n"
+                                                    "}\n");
+
+        IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+        const Component Root = Driver.MountRoot(AppPath, "Ticker");
+        REQUIRE_TRUE(Driver.Errors().empty());
+        REQUIRE_TRUE(Root.Instance != nullptr);
+        REQUIRE_TRUE(Root.Instance->Lifecycle != nullptr);
+
+        auto SlotClass = [&]() {
+            std::vector<Component> Out =
+                std::get<std::function<std::vector<Component>()>>(Root.Children.at(0).SlotCallable->Callable)();
+            return std::get<std::string>(Out.at(0).Props.at("class"));
+        };
+        ASSERT_TRUE(SlotClass() == "idle");
+
+        Root.Instance->Lifecycle->OnTick(Umbra::TickInfo{0.5f});
+        ASSERT_TRUE(SlotClass() == "ticked");
+    });
+
+    IT("a Model 1 component's `auto OnMount`/`auto OnUnmount` locals are wired to the same "
+       "Lifecycle, called via Instance->Lifecycle->OnMount/OnUnmount",
+       {
+        TempProject Project;
+        const std::string AppPath = Project.Write("Watcher.irisx",
+                                                    "void Watcher() {\n"
+                                                    "    @signal bool mounted = false;\n"
+                                                    "    @signal bool unmounted = false;\n"
+                                                    "\n"
+                                                    "    auto OnMount = () -> { mounted = true; };\n"
+                                                    "    auto OnUnmount = () -> { unmounted = true; };\n"
+                                                    "\n"
+                                                    "    render {\n"
+                                                    "        <Frame>\n"
+                                                    "            <Slot>\n"
+                                                    "                !{() -> !mounted\n"
+                                                    "                    ? <Frame class=\"neither\" />\n"
+                                                    "                    : (!unmounted ? <Frame class=\"mounted-only\" /> : <Frame class=\"both\" />)}\n"
+                                                    "            </Slot>\n"
+                                                    "        </Frame>\n"
+                                                    "    }\n"
+                                                    "}\n");
+
+        IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+        const Component Root = Driver.MountRoot(AppPath, "Watcher");
+        REQUIRE_TRUE(Driver.Errors().empty());
+        REQUIRE_TRUE(Root.Instance != nullptr);
+        REQUIRE_TRUE(Root.Instance->Lifecycle != nullptr);
+
+        auto SlotClass = [&]() {
+            std::vector<Component> Out =
+                std::get<std::function<std::vector<Component>()>>(Root.Children.at(0).SlotCallable->Callable)();
+            return std::get<std::string>(Out.at(0).Props.at("class"));
+        };
+        ASSERT_TRUE(SlotClass() == "neither");
+
+        Root.Instance->Lifecycle->OnMount();
+        ASSERT_TRUE(SlotClass() == "mounted-only");
+
+        Root.Instance->Lifecycle->OnUnmount();
+        ASSERT_TRUE(SlotClass() == "both");
+    });
+
+    IT("a component declaring none of OnMount/OnUnmount/OnTick leaves Instance->Lifecycle null "
+       "(no per-frame cost for the common case)",
+       {
+        TempProject Project;
+        const std::string AppPath = Project.Write("Plain.irisx",
+                                                    "void Plain() {\n"
+                                                    "    render {\n"
+                                                    "        <Frame class=\"plain\" />\n"
+                                                    "    }\n"
+                                                    "}\n");
+
+        IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+        const Component Root = Driver.MountRoot(AppPath, "Plain");
+        REQUIRE_TRUE(Driver.Errors().empty());
+        REQUIRE_TRUE(Root.Instance != nullptr);
+        ASSERT_TRUE(Root.Instance->Lifecycle == nullptr);
+    });
+
+    // Model 2 (class-based) counterpart of the Model 1 OnTick test above -- `void OnTick(float
+    // dt) { ... }` declared as an ordinary instance method, dispatched via
+    // `Interpreter::TryCallInstanceMethod`.
+    IT("a Model 2 (class-based) component's `OnTick(float)` method is wired to a real Lifecycle",
+       {
+        TempProject Project;
+        const std::string AppPath = Project.Write("Ticker.irisx",
+                                                    "class Ticker : Component {\n"
+                                                    "public:\n"
+                                                    "    @signal float elapsed = 0;\n"
+                                                    "\n"
+                                                    "    void OnTick(float dt) {\n"
+                                                    "        elapsed = elapsed + dt;\n"
+                                                    "    }\n"
+                                                    "\n"
+                                                    "    void Render() {\n"
+                                                    "        render {\n"
+                                                    "            <Frame>\n"
+                                                    "                <Slot>\n"
+                                                    "                    !{() -> elapsed > 0.4\n"
+                                                    "                        ? <Frame class=\"ticked\" />\n"
+                                                    "                        : <Frame class=\"idle\" />}\n"
+                                                    "                </Slot>\n"
+                                                    "            </Frame>\n"
+                                                    "        }\n"
+                                                    "    }\n"
+                                                    "}\n");
+
+        IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+        const Component Root = Driver.MountRoot(AppPath, "Ticker");
+        REQUIRE_TRUE(Driver.Errors().empty());
+        REQUIRE_TRUE(Root.Instance != nullptr);
+        REQUIRE_TRUE(Root.Instance->Lifecycle != nullptr);
+
+        auto SlotClass = [&]() {
+            std::vector<Component> Out =
+                std::get<std::function<std::vector<Component>()>>(Root.Children.at(0).SlotCallable->Callable)();
+            return std::get<std::string>(Out.at(0).Props.at("class"));
+        };
+        ASSERT_TRUE(SlotClass() == "idle");
+
+        Root.Instance->Lifecycle->OnTick(Umbra::TickInfo{0.5f});
+        ASSERT_TRUE(SlotClass() == "ticked");
+    });
+
+    // A class declaring no OnMount/OnUnmount/OnTick method gets the same null-Lifecycle
+    // backward-compatibility guarantee as the Model 1 case above.
+    IT("a Model 2 component declaring no lifecycle methods leaves Instance->Lifecycle null", {
+        TempProject Project;
+        const std::string AppPath = Project.Write("Plain.irisx",
+                                                    "class Plain : Component {\n"
+                                                    "public:\n"
+                                                    "    void Render() {\n"
+                                                    "        render {\n"
+                                                    "            <Frame class=\"plain\" />\n"
+                                                    "        }\n"
+                                                    "    }\n"
+                                                    "}\n");
+
+        IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+        const Component Root = Driver.MountRoot(AppPath, "Plain");
+        REQUIRE_TRUE(Driver.Errors().empty());
+        REQUIRE_TRUE(Root.Instance != nullptr);
+        ASSERT_TRUE(Root.Instance->Lifecycle == nullptr);
+    });
+
+    // Regression coverage for the "rebuilt fresh every reload" requirement
+    // (BuildFreeFunctionLifecycleAdapter's own doc comment, IrisNyxDriver.cpp): a Model 1
+    // reload's new RenderScope is a genuinely different NyxScope than the pre-reload one, so a
+    // Lifecycle adapter left pointing at the old one would evaluate `OnTick(...)` against a
+    // stale/dangling scope after a reload -- exactly the kind of bug AddressSanitizer is run
+    // against this suite to catch (docs/next-steps.md's own verification convention).
+    IT("Instance->Lifecycle keeps working, against the reloaded scope, after ReloadRoot", {
+        TempProject Project;
+        auto Source = [](const std::string& InitialClass) {
+            return "void Ticker() {\n"
+                   "    @signal float elapsed = 0;\n"
+                   "\n"
+                   "    auto OnTick = (float dt) -> { elapsed = elapsed + dt; };\n"
+                   "\n"
+                   "    render {\n"
+                   "        <Frame>\n"
+                   "            <Slot>\n"
+                   "                !{() -> elapsed > 0.4\n"
+                   "                    ? <Frame class=\"" + InitialClass + "-ticked\" />\n"
+                   "                    : <Frame class=\"" + InitialClass + "-idle\" />}\n"
+                   "            </Slot>\n"
+                   "        </Frame>\n"
+                   "    }\n"
+                   "}\n";
+        };
+        const std::string AppPath = Project.Write("Ticker.irisx", Source("v1"));
+
+        IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+        const Component Root = Driver.MountRoot(AppPath, "Ticker");
+        REQUIRE_TRUE(Driver.Errors().empty());
+        REQUIRE_TRUE(Root.Instance != nullptr);
+        REQUIRE_TRUE(Root.Instance->Lifecycle != nullptr);
+
+        Project.Write("Ticker.irisx", Source("v2")); // render-body-only change -- tier Unchanged
+        const IrisNyxReloadResult Reloaded = Driver.ReloadRoot(AppPath, "Ticker", {}, Root);
+        REQUIRE_TRUE(Driver.Errors().empty());
+        REQUIRE_EQUAL(static_cast<int>(Reloaded.Tier), static_cast<int>(iris::ComponentReloadTier::Unchanged));
+        REQUIRE_TRUE(Reloaded.Root.Instance == Root.Instance); // same ComponentInstance, reused
+        REQUIRE_TRUE(Reloaded.Root.Instance->Lifecycle != nullptr);
+
+        auto SlotClass = [&](const Component& RootNode) {
+            std::vector<Component> Out =
+                std::get<std::function<std::vector<Component>()>>(RootNode.Children.at(0).SlotCallable->Callable)();
+            return std::get<std::string>(Out.at(0).Props.at("class"));
+        };
+        ASSERT_TRUE(SlotClass(Reloaded.Root) == "v2-idle");
+
+        Reloaded.Root.Instance->Lifecycle->OnTick(Umbra::TickInfo{0.5f});
+        ASSERT_TRUE(SlotClass(Reloaded.Root) == "v2-ticked");
+    });
 });

@@ -10,6 +10,7 @@
 
 #include "host/nyx-runtime.hpp"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -46,6 +47,17 @@ namespace Iris {
 struct NyxDriverState {
     nyx::host::NyxRuntime::NyxScope    RenderScope;
     std::optional<nyx::runtime::Value> ClassInstance;
+
+    // Non-null only when this invocation's own component body declares at least one of the
+    // three reserved `OnMount`/`OnUnmount`/`OnTick` hook names (`NyxLifecycleAdapter.h`'s own
+    // doc comment) -- docs/next-steps.md's ".irisx OnTick" entry. Registered onto
+    // `iris::ComponentInstance::Lifecycle` (a raw, non-owning pointer) at mount and at every
+    // reload; living here is what keeps the pointee alive for as long as `DriverState` does,
+    // per `ComponentInstance::Lifecycle`'s own doc comment. `shared_ptr`, not `unique_ptr`,
+    // only because `Umbra::IWidgetLifecycle` has no move-friendly reason to be `unique_ptr`
+    // here and every other per-invocation piece of driver state already goes through
+    // `shared_ptr` (`RenderScope`'s own captured `Environment`, `ClassInstance`).
+    std::shared_ptr<Umbra::IWidgetLifecycle> Lifecycle;
 };
 
 // What `ReloadRoot` reports back: the freshly re-rendered tree, plus which tier the *entry*

@@ -1,6 +1,7 @@
 #include "Iris/IrisNyxDriver.h"
 
 #include "Iris/Driver.h"
+#include "Iris/NyxLifecycleAdapter.h"
 #include "Iris/NyxSignalDecorator.h"
 
 #include "runtime/class-field-schema.hpp"
@@ -9,6 +10,7 @@
 #include <amanuensis/io/reader.hpp>
 
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <utility>
 
@@ -84,6 +86,75 @@ void CollectNestedInvocations(const Iris::Component& Root, std::vector<const Iri
     for (const Iris::Component& Child : Root.Children) {
         CollectInvocationsBelow(Child, Out);
     }
+}
+
+// Renders `V` back as parseable Nyx literal source text -- only the numeric kinds, since the
+// only hook payload that exists today is `OnTick`'s `float dt` (`NyxLifecycleAdapter.h`'s own
+// doc comment deliberately keeps this narrow rather than handling every ValueKind). `Float`
+// uses enough digits to round-trip a float exactly (9 significant digits, matching the
+// standard `FLT_DECIMAL_DIG`); `Double` uses `DBL_DECIMAL_DIG`'s 17, unused today but kept
+// alongside for the same reason -- so a future numeric hook payload doesn't quietly lose
+// precision on every reconstructed call.
+std::string NumericLiteralText(const nyx::runtime::Value& V) {
+    switch (V.Kind()) {
+        case nyx::runtime::ValueKind::Int:
+            return std::to_string(std::get<int32_t>(V.data));
+        case nyx::runtime::ValueKind::Long:
+            return std::to_string(std::get<int64_t>(V.data));
+        case nyx::runtime::ValueKind::Float: {
+            std::ostringstream Out;
+            Out << std::setprecision(9) << std::get<float>(V.data);
+            return Out.str();
+        }
+        case nyx::runtime::ValueKind::Double: {
+            std::ostringstream Out;
+            Out << std::setprecision(17) << std::get<double>(V.data);
+            return Out.str();
+        }
+        default:
+            return "0"; // unreachable for today's only hook payload (OnTick's float dt)
+    }
+}
+
+// Model 1 (free-function component) half of docs/next-steps.md's ".irisx OnTick" entry:
+// `Scope` is this invocation's own captured call-frame Environment (`NyxDriverState::
+// RenderScope`) -- `FindOwn` (already public, `NyxRuntime::ReInvokeComponent`'s own
+// @signal-carry-forward logic already relies on it) checks whether the component body
+// declared a top-level local named `OnMount`/`OnUnmount`/`OnTick`
+// (`auto OnTick = (float dt) -> { ... };`, functions-and-control-flow.md §10.2's own named-
+// lambda-local syntax). Returns nullptr (no adapter, no per-frame cost at all) when none of
+// the three names are declared -- the overwhelmingly common case for a component with no
+// lifecycle needs.
+std::shared_ptr<Umbra::IWidgetLifecycle> BuildFreeFunctionLifecycleAdapter(nyx::host::NyxRuntime&               Runtime,
+                                                                            nyx::host::NyxRuntime::NyxScope& Scope) {
+    const bool HasOnMount   = Scope.context.env->FindOwn("OnMount") != nullptr;
+    const bool HasOnUnmount = Scope.context.env->FindOwn("OnUnmount") != nullptr;
+    const bool HasOnTick    = Scope.context.env->FindOwn("OnTick") != nullptr;
+    if (!HasOnMount && !HasOnUnmount && !HasOnTick) {
+        return nullptr;
+    }
+
+    // Calls the named local by reconstructing "<HookName>(<args...>)" as source text and
+    // evaluating it against `Scope` -- the same "reconstruct call-site source text, parse,
+    // evaluate" mechanism `IrisNyxEvaluator.cpp`'s own `InvokeAsLambda` already uses for event-
+    // handler props, since nyx-proto exposes no public "call this already-bound Value"
+    // primitive to call the local directly. Re-parses on every call (including every OnTick,
+    // once per frame) -- the same acknowledged cost `IrisNyxEvaluator.h`'s own doc comment
+    // already accepts for event handlers, not attempted to be optimized away here.
+    Iris::NyxLifecycleAdapter::HookInvoker Invoker =
+        [&Runtime, &Scope](const std::string& HookName,
+                            std::vector<nyx::runtime::Value> Args) -> std::optional<nyx::runtime::Value> {
+        std::string Call = HookName + "(";
+        for (std::size_t I = 0; I < Args.size(); ++I) {
+            if (I != 0) {
+                Call += ", ";
+            }
+            Call += NumericLiteralText(Args[I]);
+        }
+        Call += ")";
+        return Runtime.EvaluateInScope(Scope, Call);
+    };
+    return std::make_shared<Iris::NyxLifecycleAdapter>(std::move(Invoker), HasOnMount, HasOnUnmount, HasOnTick);
 }
 
 } // namespace
@@ -269,6 +340,7 @@ Iris::Component IrisNyxDriver::InvokeComponent(const std::string& ResolvedPath, 
         return iris::MountComponentInstance([&]() -> Iris::Component {
             auto State = std::make_shared<NyxDriverState>(
                 NyxDriverState{Runtime_.InvokeComponent(FileScope, FunctionName, std::move(Args)), std::nullopt});
+            State->Lifecycle = BuildFreeFunctionLifecycleAdapter(Runtime_, State->RenderScope);
 
             const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, State->RenderScope, Marker_, ChildInvoker, &Errors_, MakeNativeBuilderLookup());
             Iris::Component    Result = ConvertIrElement(Block->Root, Eval, &Errors_);
@@ -276,9 +348,11 @@ Iris::Component IrisNyxDriver::InvokeComponent(const std::string& ResolvedPath, 
             // Keep `State` alive for as long as this mounted instance is -- every NyxEvaluator
             // closure above (in particular a <Slot>'s own callable, IrisIrRuntime.cpp's
             // ConvertSlot) holds a raw reference into it, and may be re-invoked by iris::Tick()
-            // long after this lambda returns.
+            // long after this lambda returns. Same reasoning for `State->Lifecycle`'s own raw
+            // reference into `State->RenderScope`, held via `Instance->Lifecycle` below.
             iris::ComponentInstance* Instance = iris::IrisRuntime::Instance().CurrentComponentInstance();
             if (Instance != nullptr) {
+                Instance->Lifecycle  = State->Lifecycle.get();
                 Instance->DriverState = std::static_pointer_cast<void>(std::move(State));
             }
             return Result;
@@ -311,6 +385,13 @@ Iris::Component IrisNyxDriver::InvokeComponent(const std::string& ResolvedPath, 
     }
 
     auto NewState = std::make_shared<NyxDriverState>(NyxDriverState{std::move(NewScope), std::nullopt});
+    // Rebuilt fresh every reload (not carried forward from PriorState->Lifecycle): NewState's
+    // own RenderScope is a genuinely new NyxScope each reload, and the old adapter's Invoker_
+    // held a raw reference into the *old* one -- see BuildFreeFunctionLifecycleAdapter's own
+    // doc comment. Also naturally picks up a hook added/removed by the reloaded source, the
+    // same way CompareEnvironments already re-derives the @signal-layout tier fresh each time.
+    NewState->Lifecycle = BuildFreeFunctionLifecycleAdapter(Runtime_, NewState->RenderScope);
+    Previous->Instance->Lifecycle   = NewState->Lifecycle.get();
     Previous->Instance->DriverState = std::static_pointer_cast<void>(NewState);
 
     const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, NewState->RenderScope, Marker_, ChildInvoker, &Errors_, MakeNativeBuilderLookup());
@@ -339,6 +420,52 @@ std::string RenderParamName(const nyx::interpreter::DeclRegistry& Registry, cons
         }
     }
     return "props";
+}
+
+// Model 2 (class-based component) half of docs/next-steps.md's ".irisx OnTick" entry: true
+// if `ClassName`'s own declared methods (not walking any base chain -- `RenderParamName`
+// above takes the same "own methods only" shortcut, reasonable here since Model 2 components
+// only ever extend the zero-method `NyxComponentBase` marker, `NyxComponentBridge.h`) include
+// one named `MethodName`.
+bool ClassDeclaresMethod(const nyx::interpreter::DeclRegistry& Registry, const std::string& ClassName,
+                          const std::string& MethodName) {
+    const auto ClassIt = Registry.classes.find(ClassName);
+    if (ClassIt == Registry.classes.end()) {
+        return false;
+    }
+    for (const nyx::ast::MethodDecl& Method : ClassIt->second->methods) {
+        if (Method.name == MethodName) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Model 2's counterpart to `BuildFreeFunctionLifecycleAdapter` above: `Instance` is the live
+// `NyxObject` `Interpreter::Instantiate`/a prior mount already produced for this invocation.
+// Unlike Model 1, no source-text reconstruction is needed -- `Interpreter::
+// TryCallInstanceMethod` (already public) calls a named instance method directly and reports
+// "no override" as `std::nullopt` rather than an error, which is exactly `NyxLifecycleAdapter`'s
+// own "hook not declared" no-op contract -- so `HasOnMount`/`HasOnUnmount`/`HasOnTick` here are
+// only a cheap up-front skip for a class that declares none of the three, not a correctness
+// requirement the way Model 1's own `FindOwn` check is.
+std::shared_ptr<Umbra::IWidgetLifecycle> BuildClassLifecycleAdapter(
+    const nyx::host::NyxRuntime::NyxScope& FileScope, const std::string& ClassName,
+    std::shared_ptr<nyx::runtime::NyxObject> Instance) {
+    const nyx::interpreter::DeclRegistry& Registry = FileScope.interpreter->Registry();
+    const bool                             HasOnMount   = ClassDeclaresMethod(Registry, ClassName, "OnMount");
+    const bool                             HasOnUnmount = ClassDeclaresMethod(Registry, ClassName, "OnUnmount");
+    const bool                             HasOnTick    = ClassDeclaresMethod(Registry, ClassName, "OnTick");
+    if (!HasOnMount && !HasOnUnmount && !HasOnTick) {
+        return nullptr;
+    }
+
+    Iris::NyxLifecycleAdapter::HookInvoker Invoker =
+        [Interp = FileScope.interpreter, Instance](
+            const std::string& HookName, std::vector<nyx::runtime::Value> Args) -> std::optional<nyx::runtime::Value> {
+        return Interp->TryCallInstanceMethod(nyx::runtime::Value(Instance), HookName, std::move(Args));
+    };
+    return std::make_shared<Iris::NyxLifecycleAdapter>(std::move(Invoker), HasOnMount, HasOnUnmount, HasOnTick);
 }
 
 // A snapshot of a `NyxObject`'s own field shape -- name plus `ValueKind`, per field -- taken
@@ -401,12 +528,14 @@ Iris::Component IrisNyxDriver::InvokeClassComponent(const IrisIrDocument& Docume
                 nyx::host::NyxRuntime::NyxScope{FileScope.interpreter,
                                                  nyx::interpreter::EvalContext{RenderEnv, InstanceObj}},
                 Instance});
+            State->Lifecycle = BuildClassLifecycleAdapter(FileScope, ClassName, InstanceObj);
 
             const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, State->RenderScope, Marker_, ChildInvoker, &Errors_, MakeNativeBuilderLookup());
             Iris::Component    Result = ConvertIrElement(Block.Root, Eval, &Errors_);
 
             iris::ComponentInstance* CurrentInstance = iris::IrisRuntime::Instance().CurrentComponentInstance();
             if (CurrentInstance != nullptr) {
+                CurrentInstance->Lifecycle   = State->Lifecycle.get();
                 CurrentInstance->DriverState = std::static_pointer_cast<void>(std::move(State));
             }
             return Result;
@@ -438,6 +567,13 @@ Iris::Component IrisNyxDriver::InvokeClassComponent(const IrisIrDocument& Docume
     auto NewState = std::make_shared<NyxDriverState>(NyxDriverState{
         nyx::host::NyxRuntime::NyxScope{FileScope.interpreter, nyx::interpreter::EvalContext{RenderEnv, InstanceObj}},
         *PriorState->ClassInstance});
+    // Rebuilt fresh every reload, same reasoning as InvokeComponent's own Model 1 reload
+    // branch -- naturally picks up a hook added/removed by the just-`PatchClass`-ed source.
+    // `InstanceObj` itself (unlike Model 1's RenderScope) is the *same* live NyxObject across
+    // a reload, so this isn't fixing a dangling reference, only keeping the declared-hook set
+    // current.
+    NewState->Lifecycle = BuildClassLifecycleAdapter(FileScope, ClassName, InstanceObj);
+    Previous->Instance->Lifecycle   = NewState->Lifecycle.get();
     Previous->Instance->DriverState = std::static_pointer_cast<void>(NewState);
 
     const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, NewState->RenderScope, Marker_, ChildInvoker, &Errors_, MakeNativeBuilderLookup());

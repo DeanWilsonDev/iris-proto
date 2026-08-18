@@ -1273,3 +1273,116 @@ connected back to each other in this doc.
   from script — `nyx-proto`'s own filed ask, generalizing the existing
   `RegisterInheritableType` mechanism `ApplicationBridge.h` already uses for `Application`
   specifically.
+
+---
+
+## A `.irisx` component can't register its own per-frame OnTick — `iris::RegisterLifecycle` is C++-only, the interpreted path never reaches it — RESOLVED (2026-08-18)
+
+> **Status:** Resolved in this repo, with **no new nyx-proto interpreter primitive needed** --
+> the "genuinely interpreter-level support" branch this entry's own briefing flagged as a
+> possible outcome turned out not to be necessary once the real available primitives (`Environment
+> ::FindOwn`, `NyxRuntime::EvaluateInScope`, `Interpreter::TryCallInstanceMethod`) were checked
+> against nyx-proto's actual source, not assumed. Cross-repo ask, originating from `pharos-proto`.
+
+### The gap, traced into real source (original framing, unchanged)
+
+`iris::RegisterLifecycle(Umbra::IWidgetLifecycle*)` (`include/Iris/ComponentInstance.h`,
+~line 281-290) stashes the given pointer onto `IrisRuntime::Instance().CurrentComponentInstance()
+->Lifecycle`. It asserts a non-null current instance, with a precondition that only holds for
+two callers: generated Codegen (`.iris` → C++) component invocations, or C++ code running
+directly inside `MountComponentInstance`/`Mount`. Its own doc comment cites
+`docs/iris_stage3_decision_doc.md` §8's worked example, which calls it straight from C++
+(`iris::RegisterLifecycle(new class : public Umbra::IWidgetLifecycle { ... })`).
+
+Every real `.irisx` file in this ecosystem runs through the **interpreted** path instead —
+`Iris::IrisNyxDriver`/`IrisNyxEvaluator`/`EvaluateComponentInvocation` — never through Codegen.
+There was no Nyx-script-callable primitive that reached `iris::RegisterLifecycle` from inside a
+`.irisx` component's own body.
+
+### What landed
+
+A reserved-name convention, checked and wired per authoring model rather than a new decorator or
+interpreter-level dispatch mechanism:
+
+- **New file `include/Iris/NyxLifecycleAdapter.h`** — `Iris::NyxLifecycleAdapter`, a small
+  `Umbra::IWidgetLifecycle` implementation whose `OnMount`/`OnUnmount`/`OnTick` each call a
+  model-supplied `HookInvoker` (`std::function<std::optional<Value>(const std::string&,
+  std::vector<Value>)>`) only if that hook was found to be declared at construction time (a
+  `bool` cached per hook, so an absent hook costs nothing on the hot `OnTick` path).
+- **Model 1 (free-function components):** a reserved top-level local lambda —
+  `auto OnTick = (float dt) -> { ... };`, `functions-and-control-flow.md` §10.2's own named-
+  lambda-local syntax — declared anywhere in the component body before `render{}`. Presence is
+  checked via `Environment::FindOwn` (already public — `NyxRuntime::ReInvokeComponent`'s own
+  `@signal`-carry-forward logic already relies on it) against the invocation's own captured
+  call-frame `Environment` (`NyxDriverState::RenderScope`). Since nyx-proto exposes no public
+  "call this already-bound Value" primitive, the hook is invoked by reconstructing
+  `"<HookName>(<args...>)"` as source text and evaluating it via `NyxRuntime::EvaluateInScope` —
+  the same "reconstruct call-site source text, parse, evaluate" mechanism
+  `IrisNyxEvaluator.cpp`'s own `InvokeAsLambda` already uses for event-handler props, with the
+  same accepted per-call re-parse cost (now paid once per frame for `OnTick`, not just per
+  click). `BuildFreeFunctionLifecycleAdapter`/`NumericLiteralText` (`IrisNyxDriver.cpp`).
+- **Model 2 (class-based components):** a reserved instance method — `void OnTick(float dt) {
+  ... }` on a `class X : Component`. Presence is checked once (`ClassDeclaresMethod`, scanning
+  the class's own declared methods, not any base chain — reasonable since Model 2 components
+  only ever extend the zero-method `NyxComponentBase` marker) and invoked via
+  `Interpreter::TryCallInstanceMethod` (already public), which reports "no override" as
+  `std::nullopt` rather than an error — exactly `NyxLifecycleAdapter`'s own "hook not declared"
+  no-op contract, so no per-call re-parsing is needed for this model at all.
+  `BuildClassLifecycleAdapter` (`IrisNyxDriver.cpp`).
+- **Registration/lifetime:** `NyxDriverState` (`IrisNyxDriver.h`) gained a `std::shared_ptr<
+  Umbra::IWidgetLifecycle> Lifecycle` field — the adapter lives exactly as long as the
+  `ComponentInstance::DriverState` slot that already keeps `RenderScope`/`ClassInstance` alive,
+  same "opaque extension slot the backend never outlives" pattern that field already
+  established. `ComponentInstance::Lifecycle` (a raw, non-owning pointer) is set from
+  `NyxDriverState::Lifecycle.get()` at all four mount/reload sites in `IrisNyxDriver.cpp`
+  (`InvokeComponent`'s Model 1 mount and reload branches, `InvokeClassComponent`'s Model 2 mount
+  and reload branches). Rebuilt fresh on every reload rather than carried forward — Model 1's own
+  `RenderScope` is a genuinely new `NyxScope` object each reload (the old adapter's `Invoker_`
+  closure held a raw reference into the *old* one, which would otherwise dangle); Model 2's own
+  live `NyxObject` instance is unchanged across a reload, but rebuilding still picks up a hook
+  added/removed by the just-reloaded source, same as `CompareEnvironments`'s own tier derivation
+  being re-computed fresh each time rather than cached.
+- A considered, rejected alternative: a `@lifecycle`-style decorator on a method/function
+  declaration, mirroring `@signal`. Checked against nyx-proto's real source
+  (`runtime/decorator-descriptor.hpp`) before implementing, per this entry's own instruction not
+  to guess: `DecoratorTarget::Method`/`Function` exist in the enum, but `DecoratorDescriptor`
+  only carries `onApplyField`/`onApplyVariable` — "`MethodDecl` has no decorator field at all,
+  and `FunctionDecl`/`ClassDecl`'s `decorators` vectors exist but nothing populates them yet" is
+  the enum's own doc comment. This is a real, separate nyx-proto gap (decorators on
+  method/function declarations have no dispatch wired at all), but the reserved-name design
+  above needed none of it, so no ask was filed against nyx-proto for this entry — the
+  cross-repo coordination path (`spin-up-fleet`) was not invoked, since nothing here ended up
+  blocked on another repo.
+- Covered by 6 new `tests/IrisNyxDriverTests.cpp` cases: Model 1 `OnTick` accumulating across a
+  real `Instance->Lifecycle->OnTick(TickInfo)` call, observed through a real `<Slot>` re-render;
+  Model 1 `OnMount`/`OnUnmount` firing independently; a plain component (neither model) declaring
+  none of the three hooks leaves `Instance->Lifecycle == nullptr` (the no-cost-when-unused
+  guarantee); the Model 2 counterparts of the OnTick and no-hooks-declared cases; and a reload
+  regression test proving `Instance->Lifecycle` keeps working (not left dangling into a freed
+  pre-reload `RenderScope`) after `ReloadRoot` — the exact bug class AddressSanitizer is run
+  against this suite to catch. Full suite (250/250, was 244) passes, clean under
+  AddressSanitizer + UndefinedBehaviorSanitizer.
+
+### What this unblocks
+
+`pharos-proto` can now have a `.irisx`-authored panel component own its own per-frame update
+logic (via `auto OnTick = ...` or a Model 2 `OnTick` method) instead of routing every panel's
+per-frame sync through `main.cpp`'s own C++ `PanelTickLifecycle` stand-in — the concrete gap
+this entry's own "What unblocks" section originally named.
+
+### Explicitly not requested
+
+- No change to the Codegen (`.iris` → C++) path's own use of `iris::RegisterLifecycle` — it
+  already works as designed there; this entry was about the interpreted path only.
+- No nyx-proto interpreter change — see "What landed" above for the decorator-based alternative
+  that was considered and found unnecessary for this first cut. The `DecoratorTarget::Method`/
+  `Function` dispatch gap that alternative would have needed is real but unfiled, since nothing
+  in this entry's own resolution depends on it; a future ask wanting method/function decorators
+  specifically (as opposed to a reserved method/lambda name) would need to file it fresh against
+  nyx-proto's own `docs/next_steps.md`.
+- Calling `OnMount`/`OnUnmount`/`OnTick` from a real frame loop — that's `penumbra-ui-backend`'s
+  own `UmbraLifecycleBridge`/`RegisterLifecycleIfPresent` (already landed, per the
+  `iris::RegisterLifecycle` entry above) and `Penumbra::Application::Tick()`'s own fan-out
+  (`penumbra-proto`) — both pre-existing and untouched by this entry, exercised here only via
+  direct `Instance->Lifecycle->OnTick(...)` calls in tests, matching this repo's own
+  backend-agnostic boundary (it never drives a real frame loop itself).
