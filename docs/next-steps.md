@@ -16,124 +16,25 @@ both since removed) plus one gap identified directly against `docs/iris_core_spe
 
 ---
 
-## A plain Nyx-declared class instance's fields read back empty when passed as a component-invocation prop through a `<Slot>`+`.Map()`, into a *different file's* child component (2026-08-18, cross-repo ask from pharos-proto)
+## A plain Nyx-declared class instance's fields read back empty when passed as a component-invocation prop through a `<Slot>`+`.Map()`, into a *different file's* child component — cross-reference only, not an Iris action item (2026-08-18, cross-repo ask from pharos-proto)
 
-**Real, minimally-reproduced bug — not a script-authoring mistake, and not the `WriteTarget`
-bug already fixed in `nyx-proto` (that one was write-path-only; nothing here writes to a
-field, only reads).** Found in the same `pharos-proto` session as the crash entry above, while
-de-duplicating `InspectorPanel.irisx`'s row markup: an outer-scope `Array<InspectorRowSpec>`
-(a plain Nyx class, not a `HostObject`), `.Map()`'d through a `<Slot>` into
-`<InspectorRowPair spec={spec} />` (a *different* `.irisx` file), had every field of `spec`
-read back empty inside `InspectorRowPair`'s own `render{}`.
-
-**Isolated with a minimal, standalone repro against this repo's own `IrisNyxDriver`
-directly** (real `TempProject`-backed `.irisx` files on disk, real `IrisNyxDriver::MountRoot`
-— no `nyx-proto`-app-level involvement needed; a throwaway `IT()` added to
-`tests/IrisNyxDriverTests.cpp` locally, then reverted — not committed here; worth re-adding as
-a permanent regression test as part of the fix):
-
-```cpp
-// Card.irisx
-void Card(CardProps props) {
-    render { <Frame class={props.spec.label} /> }
-}
-
-// Parent.irisx
-import Card
-
-class RowSpec {
-    string label;
-    RowSpec(string labelIn) { this.label = labelIn; }
-}
-
-void Parent() {
-    Array<RowSpec> rows = [new RowSpec("Ann"), new RowSpec("Bo")];
-    render {
-        <Frame class="parent">
-            <Slot>
-                !{() -> rows.Map((RowSpec spec) -> <Card spec={spec} />)}
-            </Slot>
-        </Frame>
-    }
-}
-```
-
-```cpp
-IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
-const Component Root = Driver.MountRoot(ParentPath, "Parent");
-REQUIRE_TRUE(Driver.Errors().empty());                       // passes -- no visible error anywhere
-const std::vector<Component> Output =
-    std::get<std::function<std::vector<Component>()>>(Root.Children[0].SlotCallable->Callable)();
-REQUIRE_EQUAL(Output.size(), static_cast<std::size_t>(2));   // passes -- the list itself is right
-ASSERT_TRUE(std::get<std::string>(Output[0].Props.at("class")) == "Ann"); // FAILS -- reads ""
-ASSERT_TRUE(std::get<std::string>(Output[1].Props.at("class")) == "Bo"); // FAILS -- reads ""
-```
-
-**Bracketing that narrowed it, in order** (each a real, run test):
-- The same `.Map()`-over-an-outer-scope-array shape, but with `Array<string>` and a **Core**
-  `<Frame class={item} />` (no child-component invocation at all) — **works** (this repo's own
-  existing `tests/IrisNyxEvaluatorTests.cpp` "a `<Slot>` `.Map()` with a single-parameter lambda
-  renders one Card per element" test already proves `.Map()` itself works when the array is
-  declared *inside* the escape hatch; a variant declaring the array as an ordinary body
-  statement of the *enclosing component function* — the real shape — also passes when the
-  callback's own JSX is a Core primitive, not a component invocation).
-- The full repro above, but with `Card`/`RowSpec`/`Parent` attempted in **one file** (no
-  `import`, direct same-file invocation) — **not constructible**: this architecture routes
-  every non-Core-tag component invocation through `import` resolution regardless of source
-  location (confirmed via a real driver error, `"Card" is not imported and is not a Core
-  primitive`, when omitting `import Card` even with `Card` declared in the same file) — so
-  "same interpreter, cross-name invocation" isn't a scenario this language surface can express
-  at all except via self-recursion (`ExplorerRowNode.irisx`'s own `import ExplorerRowNode`
-  precedent). This means **every** non-recursive child-component invocation inherently crosses
-  an interpreter boundary (see hypothesis below) — there's no same-file control case to compare
-  against.
-
-**Strongly-evidenced hypothesis, not yet confirmed by stepping through with a debugger** (the
-next thing whoever picks this up should do, before trusting this over rereading the source
-fresh): `IrisNyxDriver::GetFileScope` builds one **separate `nyx::host::NyxRuntime::NyxScope`
-(and therefore one separate `nyx::interpreter::Interpreter`) per resolved file path** — `Card`
-and `Parent` above are necessarily two different interpreters. `nyx-proto`'s
-`Interpreter::fieldNames_` (`src/interpreter/interpreter.hpp:285`) is a **plain, non-shared
-member** — each `Interpreter` instance interns field names into its own, independent
-`FieldNameTable`, starting empty, purely in whatever order that file's own parsing/resolution
-happens to encounter them. `ClassFieldSchema::slotOfFieldId`
-(`src/runtime/class-field-schema.hpp:39-46`) maps a `FieldNameTable` id *straight* to a slot
-index, and its own doc comment already half-anticipates the danger without naming it: *"-1, or
-an id past the end (the table grew after this schema was built, from an unrelated file's field
-never declared on this type), both mean 'this type has no such field.'"* — this phrasing reads
-as if `FieldNameTable` were meant to be **shared and monotonically growing across every file**,
-but nothing in `nyx-proto` actually shares one across `Interpreter` instances today. If
-`RowSpec.label`'s `ClassFieldSchema` (built by `Parent.irisx`'s own interpreter, using *its*
-`fieldNames_` numbering for `"label"`) is read via `Card.irisx`'s own, *different* interpreter's
-`fieldNameId` for the identical string `"label"` — interned independently, quite possibly to a
-different integer — `NyxObject::FindFieldById` (`src/runtime/value.cpp:36`) would look up the
-wrong slot (or, per the schema's own "-1/past-the-end" handling, correctly conclude "no such
-field" and `throw RuntimeError("'RowSpec' has no field 'label'")` from `EvalMemberAccess`). That
-exception would **not surface visibly anywhere**: `nyx::host::NyxRuntime::EvaluateInScope`
-(`src/host/nyx-runtime.hpp:384-397`, `Runtime.EvaluateInScope`, what
-`IrisNyxEvaluator.cpp`'s `Eval.EvaluateProp`/`InvokeAsLambda` call for every escape-hatch
-expression) catches every `RuntimeError` and converts it to an `Error::Unknown` **Value**, not a
-re-thrown exception or a `driver.Errors()` entry — and `IrisNyxEvaluator.cpp`'s own
-`EvaluateProp` (for a `ref`/plain-string-typed prop, `IrisNyxEvaluator.cpp:314`) pipes that
-result through `ValueToPropValue`, which — per its own doc comment elsewhere in this file —
-*silently drops* any non-primitive-kind `Value` (Object/Array/HostObject), including an
-`Error::Unknown` object. Two silent-swallow layers stacked on top of a real, precisely-located
-field-ID mismatch would produce exactly the observed symptom: no crash, no visible error
-anywhere, every field just reads back empty.
-
-**If this hypothesis holds, the real design question is which of these should give**: either
-(a) `FieldNameTable` genuinely needs to become shared across every `Interpreter` sharing one
-`nyx::host::NyxRuntime` (matching what the schema's own doc comment already seems to assume),
-so a class declared in one file and consumed in another resolves consistently; or (b) a
-`NyxObject`'s `FindFieldById` fast path needs a same-schema-origin check before trusting a
-foreign interpreter's `fieldNameId`, falling back to `FindFieldByName` (slower, but always
-correct) whenever the ID didn't originate from *this object's own* schema-building interpreter.
-Either fix should also make `EvaluateInScope`'s/`ValueToPropValue`'s silent-swallow behavior
-less dangerous as a side effect worth checking — a genuine engine-level `RuntimeError` (as
-opposed to a Nyx-level `throw`, which already has its own, deliberate, visible propagation path
-per `error-handling.md` §18.2) disappearing into a *default-valued, successfully-typed* prop
-with zero trace anywhere is a sharp edge independent of this specific bug's own root cause,
-and is exactly what let this go unnoticed until a real field read silently produced wrong data.
+> **Status:** Root cause confirmed (2026-08-18) against real `nyx-proto` source, exactly as
+> this entry's own original hypothesis described — see the full grounded write-up now moved
+> to `nyx-proto`'s own `docs/nyx-scripting-language/next_steps.md` ("A class instance's
+> fields read back empty when read from a *different* `Interpreter` than the one that built
+> its schema"). The fix belongs entirely in `nyx-proto` (a non-shared, per-`Interpreter`
+> `FieldNameTable`) — no `iris-proto`-side code change is needed or proposed; this repo's own
+> `IrisNyxDriver`/`IrisNyxEvaluator.cpp` correctly hand a fresh escape-hatch expression to
+> whichever scope's `Interpreter` owns it, exactly as designed, and require no change for
+> either candidate fix direction nyx-proto's entry lays out. Kept here only as a
+> cross-reference, matching this doc's own established convention (see the Lustre
+> gradient-fill and Penumbra popup/z-order entries below) for a real gap that was found here
+> but is owned by a different repo. One smaller, related sharp edge —
+> `EvaluateInScope`'s/`ValueToPropValue`'s silent-swallow of a genuine engine-level
+> `RuntimeError` into a default-valued prop — was flagged as possibly worth its own separate
+> `iris-proto`-side ask (surfacing it into `IrisNyxDriver::Errors()`) but deliberately left
+> unfiled per this investigation's own brief; see nyx-proto's entry for the judgment recorded
+> there.
 
 ---
 
