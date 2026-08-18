@@ -16,6 +16,220 @@ both since removed) plus one gap identified directly against `docs/iris_core_spe
 
 ---
 
+## `ResolveSlotsRecursive` crashes when a `<Slot>` has an ordinary sibling *after* it that has its own nested children (2026-08-18, cross-repo ask from pharos-proto)
+
+**Real, minimally-reproduced crash — not a script-authoring mistake.** Found in
+`pharos-proto`'s `pharos_nyx_bootstrap`: adding a `<Slot>` as a non-last child of a `<Frame>`
+whose *later* sibling itself has nested children (e.g. a big static row grid) segfaults inside
+`ResolveSlotsRecursive` (`src/Iris/SlotResolution.cpp:42`) —
+`std::unique_ptr<Umbra::IWidget>::get()` on a null pointer, reached via
+`Widget.GetChildAt(RealIndex)` returning null.
+
+**Isolated with a minimal, standalone repro against this repo's own `SlotResolution.cpp`
+directly** (a throwaway `IT()` added to `tests/SlotResolutionTests.cpp` locally, then reverted
+— not committed here; worth re-adding as a permanent regression test as part of the fix):
+
+```cpp
+IT("a Slot followed by a sibling with its own nested children doesn't crash", {
+    iris::MountFn Mount = TestMounter();
+    Iris::Component RootNode = MakeFrame({
+        MakeText("before"),
+        MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component { return MakeText("slot-content"); })),
+        MakeFrame({MakeText("nested-child")}), // ordinary sibling AFTER the slot, with its OWN child
+    });
+    std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
+    auto Slots = iris::ResolveSlots(*Root, RootNode, Mount); // <-- crashes
+    ...
+});
+```
+
+This crashes with the exact same backtrace as the real app's own crash — `ResolveSlotsRecursive`
+→ `MockWidget::GetChildAt(0)` → null dereference — proving the bug lives entirely in
+`SlotResolution.cpp`, with no `pharos-proto`/`nyx-proto` involvement needed to reproduce it.
+
+The **existing** test "a Slot between two static siblings mounts at the correct index"
+(`SlotResolutionTests.cpp`) does *not* catch this, because its own trailing sibling
+(`MakeText("after")`) is a leaf with zero children of its own — `ResolveSlotsRecursive`'s
+recursive descent into it (`ResolveSlotsRecursive(*Widget.GetChildAt(RealIndex), Child, Mount,
+Out)`) walks `Child.Children` (empty for a leaf) and does nothing, so the call never actually
+needs `Widget.GetChildAt(RealIndex)` to have returned the *correct* widget — only for the call
+not to crash, which it doesn't when there's nothing to recurse into either way. A sibling with
+real nested children is what turns "returned the wrong widget" into "crashes."
+
+**Root cause** (`ResolveSlotsRecursive`, `src/Iris/SlotResolution.cpp:10-45`):
+
+```cpp
+void ResolveSlotsRecursive(Umbra::IWidget& Widget, const Iris::Component& Node, const MountFn& Mount,
+                            std::vector<std::unique_ptr<SlotState>>& Out) {
+    auto Group = std::make_shared<SlotSiblingGroup>();
+    std::size_t RealIndex = 0;
+    for (const Iris::Component& Child : Node.Children) {
+        if (Child.Tag == Iris::IrisElementTag::None) { continue; }
+        if (Child.Tag == Iris::IrisElementTag::Slot) {
+            auto Slot = std::make_unique<SlotState>(Child.SlotCallable, Mount);
+            Group->AddEntry(RealIndex, Slot.get());
+            const std::size_t GroupIndex = Group->EntryCount() - 1;
+            Slot->AttachToGroup(&Widget, Group, GroupIndex);
+            Slot->Reconcile(); // <-- inserts real widget(s) into Widget's children HERE
+            Out.push_back(std::move(Slot));
+            continue; // <-- RealIndex is NOT bumped by however many widgets were just inserted
+        }
+        ResolveSlotsRecursive(*Widget.GetChildAt(RealIndex), Child, Mount, Out); // <-- reads the WRONG index
+        ++RealIndex;
+    }
+}
+```
+
+`Slot->Reconcile()` (line 34) **inserts real widget(s) into `Widget`'s own children list**, at
+`Group->AbsoluteIndexOf(GroupIndex)` — for a `<Slot>` that isn't the last child, this happens
+*before* the loop continues to the next (ordinary) sibling, shifting every subsequent index in
+`Widget`'s real children by however many widgets the slot just added (1, for a
+single-`Component`-returning callable; 0..N for a list-returning one). But `RealIndex` is never
+adjusted to account for this — it's only ever incremented by exactly 1 per *ordinary* child
+(line 44), never by however many real widgets a preceding `<Slot>` contributed. So the very next
+ordinary sibling's own `Widget.GetChildAt(RealIndex)` call reads from a **stale, now-wrong
+index** — for a single-`Component` slot it reads the just-inserted slot content itself instead
+of the real next sibling; for the real pharos-proto repro (a slot whose callable hadn't even run
+successfully — see the entry below — contributing 0 widgets in that case, but the *general*
+off-by-N bug is independent of that) the same wrong-index mechanism applies whenever any slot
+contributes ≥1 widget with an ordinary sibling after it. `ResolveSlotsRecursive` then recurses
+into the *wrong* widget (one with fewer/no real children of its own) while still trying to walk
+the *correct* Component node's own (real) children list against it — `GetChildAt` on that wrong,
+child-poor widget returns null, and the crash follows.
+
+**A concrete fix needs `SlotState`/`SlotSiblingGroup` to expose how many real widgets a slot
+just contributed** (or `RealIndex` needs to be re-derived from `Widget.GetChildCount()`'s own
+running delta rather than hand-incremented) so the loop can correctly advance past however many
+widgets a `<Slot>` inserted before continuing to the next ordinary sibling — deliberately not
+attempted here: this file's own invariants (`SlotSiblingGroup::AbsoluteIndexOf`'s dynamic
+per-reconcile recomputation, `StaticPrefixCount` bookkeeping) aren't something a
+first-time reader should touch without downside-checking every existing
+`SlotResolutionTests.cpp`/`SlotSiblingGroupTests.cpp` case stays green, including the
+list-returning and nested-`<Slot>`-discovery ones.
+
+---
+
+## A plain Nyx-declared class instance's fields read back empty when passed as a component-invocation prop through a `<Slot>`+`.Map()`, into a *different file's* child component (2026-08-18, cross-repo ask from pharos-proto)
+
+**Real, minimally-reproduced bug — not a script-authoring mistake, and not the `WriteTarget`
+bug already fixed in `nyx-proto` (that one was write-path-only; nothing here writes to a
+field, only reads).** Found in the same `pharos-proto` session as the crash entry above, while
+de-duplicating `InspectorPanel.irisx`'s row markup: an outer-scope `Array<InspectorRowSpec>`
+(a plain Nyx class, not a `HostObject`), `.Map()`'d through a `<Slot>` into
+`<InspectorRowPair spec={spec} />` (a *different* `.irisx` file), had every field of `spec`
+read back empty inside `InspectorRowPair`'s own `render{}`.
+
+**Isolated with a minimal, standalone repro against this repo's own `IrisNyxDriver`
+directly** (real `TempProject`-backed `.irisx` files on disk, real `IrisNyxDriver::MountRoot`
+— no `nyx-proto`-app-level involvement needed; a throwaway `IT()` added to
+`tests/IrisNyxDriverTests.cpp` locally, then reverted — not committed here; worth re-adding as
+a permanent regression test as part of the fix):
+
+```cpp
+// Card.irisx
+void Card(CardProps props) {
+    render { <Frame class={props.spec.label} /> }
+}
+
+// Parent.irisx
+import Card
+
+class RowSpec {
+    string label;
+    RowSpec(string labelIn) { this.label = labelIn; }
+}
+
+void Parent() {
+    Array<RowSpec> rows = [new RowSpec("Ann"), new RowSpec("Bo")];
+    render {
+        <Frame class="parent">
+            <Slot>
+                !{() -> rows.Map((RowSpec spec) -> <Card spec={spec} />)}
+            </Slot>
+        </Frame>
+    }
+}
+```
+
+```cpp
+IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+const Component Root = Driver.MountRoot(ParentPath, "Parent");
+REQUIRE_TRUE(Driver.Errors().empty());                       // passes -- no visible error anywhere
+const std::vector<Component> Output =
+    std::get<std::function<std::vector<Component>()>>(Root.Children[0].SlotCallable->Callable)();
+REQUIRE_EQUAL(Output.size(), static_cast<std::size_t>(2));   // passes -- the list itself is right
+ASSERT_TRUE(std::get<std::string>(Output[0].Props.at("class")) == "Ann"); // FAILS -- reads ""
+ASSERT_TRUE(std::get<std::string>(Output[1].Props.at("class")) == "Bo"); // FAILS -- reads ""
+```
+
+**Bracketing that narrowed it, in order** (each a real, run test):
+- The same `.Map()`-over-an-outer-scope-array shape, but with `Array<string>` and a **Core**
+  `<Frame class={item} />` (no child-component invocation at all) — **works** (this repo's own
+  existing `tests/IrisNyxEvaluatorTests.cpp` "a `<Slot>` `.Map()` with a single-parameter lambda
+  renders one Card per element" test already proves `.Map()` itself works when the array is
+  declared *inside* the escape hatch; a variant declaring the array as an ordinary body
+  statement of the *enclosing component function* — the real shape — also passes when the
+  callback's own JSX is a Core primitive, not a component invocation).
+- The full repro above, but with `Card`/`RowSpec`/`Parent` attempted in **one file** (no
+  `import`, direct same-file invocation) — **not constructible**: this architecture routes
+  every non-Core-tag component invocation through `import` resolution regardless of source
+  location (confirmed via a real driver error, `"Card" is not imported and is not a Core
+  primitive`, when omitting `import Card` even with `Card` declared in the same file) — so
+  "same interpreter, cross-name invocation" isn't a scenario this language surface can express
+  at all except via self-recursion (`ExplorerRowNode.irisx`'s own `import ExplorerRowNode`
+  precedent). This means **every** non-recursive child-component invocation inherently crosses
+  an interpreter boundary (see hypothesis below) — there's no same-file control case to compare
+  against.
+
+**Strongly-evidenced hypothesis, not yet confirmed by stepping through with a debugger** (the
+next thing whoever picks this up should do, before trusting this over rereading the source
+fresh): `IrisNyxDriver::GetFileScope` builds one **separate `nyx::host::NyxRuntime::NyxScope`
+(and therefore one separate `nyx::interpreter::Interpreter`) per resolved file path** — `Card`
+and `Parent` above are necessarily two different interpreters. `nyx-proto`'s
+`Interpreter::fieldNames_` (`src/interpreter/interpreter.hpp:285`) is a **plain, non-shared
+member** — each `Interpreter` instance interns field names into its own, independent
+`FieldNameTable`, starting empty, purely in whatever order that file's own parsing/resolution
+happens to encounter them. `ClassFieldSchema::slotOfFieldId`
+(`src/runtime/class-field-schema.hpp:39-46`) maps a `FieldNameTable` id *straight* to a slot
+index, and its own doc comment already half-anticipates the danger without naming it: *"-1, or
+an id past the end (the table grew after this schema was built, from an unrelated file's field
+never declared on this type), both mean 'this type has no such field.'"* — this phrasing reads
+as if `FieldNameTable` were meant to be **shared and monotonically growing across every file**,
+but nothing in `nyx-proto` actually shares one across `Interpreter` instances today. If
+`RowSpec.label`'s `ClassFieldSchema` (built by `Parent.irisx`'s own interpreter, using *its*
+`fieldNames_` numbering for `"label"`) is read via `Card.irisx`'s own, *different* interpreter's
+`fieldNameId` for the identical string `"label"` — interned independently, quite possibly to a
+different integer — `NyxObject::FindFieldById` (`src/runtime/value.cpp:36`) would look up the
+wrong slot (or, per the schema's own "-1/past-the-end" handling, correctly conclude "no such
+field" and `throw RuntimeError("'RowSpec' has no field 'label'")` from `EvalMemberAccess`). That
+exception would **not surface visibly anywhere**: `nyx::host::NyxRuntime::EvaluateInScope`
+(`src/host/nyx-runtime.hpp:384-397`, `Runtime.EvaluateInScope`, what
+`IrisNyxEvaluator.cpp`'s `Eval.EvaluateProp`/`InvokeAsLambda` call for every escape-hatch
+expression) catches every `RuntimeError` and converts it to an `Error::Unknown` **Value**, not a
+re-thrown exception or a `driver.Errors()` entry — and `IrisNyxEvaluator.cpp`'s own
+`EvaluateProp` (for a `ref`/plain-string-typed prop, `IrisNyxEvaluator.cpp:314`) pipes that
+result through `ValueToPropValue`, which — per its own doc comment elsewhere in this file —
+*silently drops* any non-primitive-kind `Value` (Object/Array/HostObject), including an
+`Error::Unknown` object. Two silent-swallow layers stacked on top of a real, precisely-located
+field-ID mismatch would produce exactly the observed symptom: no crash, no visible error
+anywhere, every field just reads back empty.
+
+**If this hypothesis holds, the real design question is which of these should give**: either
+(a) `FieldNameTable` genuinely needs to become shared across every `Interpreter` sharing one
+`nyx::host::NyxRuntime` (matching what the schema's own doc comment already seems to assume),
+so a class declared in one file and consumed in another resolves consistently; or (b) a
+`NyxObject`'s `FindFieldById` fast path needs a same-schema-origin check before trusting a
+foreign interpreter's `fieldNameId`, falling back to `FindFieldByName` (slower, but always
+correct) whenever the ID didn't originate from *this object's own* schema-building interpreter.
+Either fix should also make `EvaluateInScope`'s/`ValueToPropValue`'s silent-swallow behavior
+less dangerous as a side effect worth checking — a genuine engine-level `RuntimeError` (as
+opposed to a Nyx-level `throw`, which already has its own, deliberate, visible propagation path
+per `error-handling.md` §18.2) disappearing into a *default-valued, successfully-typed* prop
+with zero trace anywhere is a sharp edge independent of this specific bug's own root cause,
+and is exactly what let this go unnoticed until a real field read silently produced wrong data.
+
+---
+
 ## `<Native>` doesn't participate in `<Slot>` reconciliation — a signal-driven re-render can't rebuild/swap a live Native-spliced widget (2026-08-17)
 
 > **Status:** Investigated and answered (2026-08-17) — turned out to be case 1 from the
