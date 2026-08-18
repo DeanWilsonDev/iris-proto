@@ -129,6 +129,55 @@ DESCRIBE("SlotResolution", {
         ASSERT_TRUE(dynamic_cast<MockWidget*>(Root->GetChildAt(2))->Text == "after");
     });
 
+    IT("a Slot followed by a sibling with its own nested children doesn't crash", {
+        iris::MountFn Mount = TestMounter();
+
+        Iris::Component RootNode = MakeFrame({
+            MakeText("before"),
+            MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component { return MakeText("slot-content"); })),
+            MakeFrame({MakeText("nested-child")}), // ordinary sibling AFTER the slot, with its OWN child
+        });
+        std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
+        ASSERT_EQUAL(Root->GetChildCount(), static_cast<std::size_t>(2));
+        // the static build produces the two static children only ("before" and the trailing Frame)
+
+        auto Slots = iris::ResolveSlots(*Root, RootNode, Mount); // must not crash
+        ASSERT_EQUAL(Slots.size(), static_cast<std::size_t>(1));
+        ASSERT_EQUAL(Root->GetChildCount(), static_cast<std::size_t>(3));
+        // the slot's content lands between the two static siblings, RealIndex correctly
+        // advanced past it before recursing into the trailing sibling
+        ASSERT_TRUE(dynamic_cast<MockWidget*>(Root->GetChildAt(0))->Text == "before");
+        ASSERT_TRUE(dynamic_cast<MockWidget*>(Root->GetChildAt(1))->Text == "slot-content");
+
+        Umbra::IWidget* TrailingSibling = Root->GetChildAt(2);
+        ASSERT_EQUAL(TrailingSibling->GetChildCount(), static_cast<std::size_t>(1));
+        // and the trailing sibling's own nested child was reached correctly, not a
+        // wrong/stale widget with no real children of its own
+        ASSERT_TRUE(dynamic_cast<MockWidget*>(TrailingSibling->GetChildAt(0))->Text == "nested-child");
+    });
+
+    IT("a list-returning Slot followed by a sibling with its own nested children doesn't crash", {
+        iris::MountFn Mount = TestMounter();
+
+        Iris::Component RootNode = MakeFrame({
+            MakeSlot(Iris::MakeSlotCallable(
+                []() -> std::vector<Iris::Component> { return {MakeText("a"), MakeText("b")}; })),
+            MakeFrame({MakeText("nested-child")}), // ordinary sibling AFTER a multi-item slot
+        });
+        std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
+
+        auto Slots = iris::ResolveSlots(*Root, RootNode, Mount); // must not crash
+        ASSERT_EQUAL(Root->GetChildCount(), static_cast<std::size_t>(3));
+        // two list items plus the trailing static sibling
+        ASSERT_TRUE(dynamic_cast<MockWidget*>(Root->GetChildAt(0))->Text == "a");
+        ASSERT_TRUE(dynamic_cast<MockWidget*>(Root->GetChildAt(1))->Text == "b");
+
+        Umbra::IWidget* TrailingSibling = Root->GetChildAt(2);
+        ASSERT_EQUAL(TrailingSibling->GetChildCount(), static_cast<std::size_t>(1));
+        // RealIndex correctly advanced past both list items before recursing into this sibling
+        ASSERT_TRUE(dynamic_cast<MockWidget*>(TrailingSibling->GetChildAt(0))->Text == "nested-child");
+    });
+
     IT("a Slot returning None contributes nothing", {
         iris::MountFn Mount = TestMounter();
 

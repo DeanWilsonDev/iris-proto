@@ -12,6 +12,114 @@
 
 ---
 
+## `ResolveSlotsRecursive` crashes when a `<Slot>` has an ordinary sibling *after* it that has its own nested children (2026-08-18, cross-repo ask from pharos-proto)
+
+> **Status: RESOLVED (2026-08-18).** Fixed by splitting the single conflated `RealIndex`
+> counter into two: `StaticCount` (ordinary children only, passed to `Group->AddEntry` as
+> `StaticPrefixCount` — unchanged by any `<Slot>`'s own contribution, since
+> `SlotSiblingGroup::AbsoluteIndexOf` already separately sums every earlier sibling slot's
+> own live `CurrentRealChildCount()` on top of it) and `RealIndex` (the actual position
+> within `Widget`'s real children, advanced by `Slot->CurrentRealChildCount()` after every
+> `<Slot>`'s own `Reconcile()` call, in addition to the ordinary +1 per static child). The
+> first attempt at this fix conflated the two counters and caused a *different* real
+> regression (a second, list-returning `<Slot>` sibling's own absolute index getting
+> double-counted, an out-of-bounds `InsertChildAt`) — caught before landing, by testing
+> against a second, list-returning-slot variant of the repro, now also a permanent test.
+> Two regression tests added to `tests/SlotResolutionTests.cpp` (the single-`Component`
+> case from this entry's own repro, plus a list-returning-slot variant); full `test_iris`
+> suite (253 tests) passes clean.
+
+**Real, minimally-reproduced crash — not a script-authoring mistake.** Found in
+`pharos-proto`'s `pharos_nyx_bootstrap`: adding a `<Slot>` as a non-last child of a `<Frame>`
+whose *later* sibling itself has nested children (e.g. a big static row grid) segfaults inside
+`ResolveSlotsRecursive` (`src/Iris/SlotResolution.cpp:42`) —
+`std::unique_ptr<Umbra::IWidget>::get()` on a null pointer, reached via
+`Widget.GetChildAt(RealIndex)` returning null.
+
+**Isolated with a minimal, standalone repro against this repo's own `SlotResolution.cpp`
+directly** (a throwaway `IT()` added to `tests/SlotResolutionTests.cpp` locally, then reverted
+— not committed here; worth re-adding as a permanent regression test as part of the fix):
+
+```cpp
+IT("a Slot followed by a sibling with its own nested children doesn't crash", {
+    iris::MountFn Mount = TestMounter();
+    Iris::Component RootNode = MakeFrame({
+        MakeText("before"),
+        MakeSlot(Iris::MakeSlotCallable([]() -> Iris::Component { return MakeText("slot-content"); })),
+        MakeFrame({MakeText("nested-child")}), // ordinary sibling AFTER the slot, with its OWN child
+    });
+    std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
+    auto Slots = iris::ResolveSlots(*Root, RootNode, Mount); // <-- crashes
+    ...
+});
+```
+
+This crashes with the exact same backtrace as the real app's own crash — `ResolveSlotsRecursive`
+→ `MockWidget::GetChildAt(0)` → null dereference — proving the bug lives entirely in
+`SlotResolution.cpp`, with no `pharos-proto`/`nyx-proto` involvement needed to reproduce it.
+
+The **existing** test "a Slot between two static siblings mounts at the correct index"
+(`SlotResolutionTests.cpp`) does *not* catch this, because its own trailing sibling
+(`MakeText("after")`) is a leaf with zero children of its own — `ResolveSlotsRecursive`'s
+recursive descent into it (`ResolveSlotsRecursive(*Widget.GetChildAt(RealIndex), Child, Mount,
+Out)`) walks `Child.Children` (empty for a leaf) and does nothing, so the call never actually
+needs `Widget.GetChildAt(RealIndex)` to have returned the *correct* widget — only for the call
+not to crash, which it doesn't when there's nothing to recurse into either way. A sibling with
+real nested children is what turns "returned the wrong widget" into "crashes."
+
+**Root cause** (`ResolveSlotsRecursive`, `src/Iris/SlotResolution.cpp:10-45`):
+
+```cpp
+void ResolveSlotsRecursive(Umbra::IWidget& Widget, const Iris::Component& Node, const MountFn& Mount,
+                            std::vector<std::unique_ptr<SlotState>>& Out) {
+    auto Group = std::make_shared<SlotSiblingGroup>();
+    std::size_t RealIndex = 0;
+    for (const Iris::Component& Child : Node.Children) {
+        if (Child.Tag == Iris::IrisElementTag::None) { continue; }
+        if (Child.Tag == Iris::IrisElementTag::Slot) {
+            auto Slot = std::make_unique<SlotState>(Child.SlotCallable, Mount);
+            Group->AddEntry(RealIndex, Slot.get());
+            const std::size_t GroupIndex = Group->EntryCount() - 1;
+            Slot->AttachToGroup(&Widget, Group, GroupIndex);
+            Slot->Reconcile(); // <-- inserts real widget(s) into Widget's children HERE
+            Out.push_back(std::move(Slot));
+            continue; // <-- RealIndex is NOT bumped by however many widgets were just inserted
+        }
+        ResolveSlotsRecursive(*Widget.GetChildAt(RealIndex), Child, Mount, Out); // <-- reads the WRONG index
+        ++RealIndex;
+    }
+}
+```
+
+`Slot->Reconcile()` (line 34) **inserts real widget(s) into `Widget`'s own children list**, at
+`Group->AbsoluteIndexOf(GroupIndex)` — for a `<Slot>` that isn't the last child, this happens
+*before* the loop continues to the next (ordinary) sibling, shifting every subsequent index in
+`Widget`'s real children by however many widgets the slot just added (1, for a
+single-`Component`-returning callable; 0..N for a list-returning one). But `RealIndex` is never
+adjusted to account for this — it's only ever incremented by exactly 1 per *ordinary* child
+(line 44), never by however many real widgets a preceding `<Slot>` contributed. So the very next
+ordinary sibling's own `Widget.GetChildAt(RealIndex)` call reads from a **stale, now-wrong
+index** — for a single-`Component` slot it reads the just-inserted slot content itself instead
+of the real next sibling; for the real pharos-proto repro (a slot whose callable hadn't even run
+successfully — see the entry below — contributing 0 widgets in that case, but the *general*
+off-by-N bug is independent of that) the same wrong-index mechanism applies whenever any slot
+contributes ≥1 widget with an ordinary sibling after it. `ResolveSlotsRecursive` then recurses
+into the *wrong* widget (one with fewer/no real children of its own) while still trying to walk
+the *correct* Component node's own (real) children list against it — `GetChildAt` on that wrong,
+child-poor widget returns null, and the crash follows.
+
+**A concrete fix needs `SlotState`/`SlotSiblingGroup` to expose how many real widgets a slot
+just contributed** (or `RealIndex` needs to be re-derived from `Widget.GetChildCount()`'s own
+running delta rather than hand-incremented) so the loop can correctly advance past however many
+widgets a `<Slot>` inserted before continuing to the next ordinary sibling — deliberately not
+attempted here: this file's own invariants (`SlotSiblingGroup::AbsoluteIndexOf`'s dynamic
+per-reconcile recomputation, `StaticPrefixCount` bookkeeping) aren't something a
+first-time reader should touch without downside-checking every existing
+`SlotResolutionTests.cpp`/`SlotSiblingGroupTests.cpp` case stays green, including the
+list-returning and nested-`<Slot>`-discovery ones.
+
+---
+
 ## `NyxTokenizer` (IHostLanguageTokenizer for `.irisx`) — RESOLVED for the compile path; `@signal` authoring still open (2026-08-05)
 
 > **Status:** The tokenizer adapter landed, and — as a same-day follow-up, prompted by
