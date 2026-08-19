@@ -389,11 +389,14 @@ DESCRIBE("IrisNyxEvaluator", {
         auto Invocation = Runtime.InvokeComponent(FileScope, "App", {});
 
         std::vector<IrisIrRuntimeError> Errors;
-        NativeBuilderLookup             Lookup = [](const std::string& Name) -> std::function<std::unique_ptr<Umbra::IWidget>()> {
+        NativeBuilderLookup             Lookup =
+            [](const std::string& Name) -> std::function<std::unique_ptr<Umbra::IWidget>(const nyx::runtime::Value&)> {
             if (Name != "stub") {
                 return nullptr;
             }
-            return []() -> std::unique_ptr<Umbra::IWidget> { return std::make_unique<StubWidget>(); };
+            return [](const nyx::runtime::Value&) -> std::unique_ptr<Umbra::IWidget> {
+                return std::make_unique<StubWidget>();
+            };
         };
         NyxEvaluator Eval = MakeNyxEvaluator(Runtime, Invocation, Marker, nullptr, &Errors, Lookup);
 
@@ -402,6 +405,70 @@ DESCRIBE("IrisNyxEvaluator", {
         ASSERT_TRUE(Result.Tag == IrisElementTag::Native);
         REQUIRE_TRUE(Result.NativeBuilder != nullptr);
         std::unique_ptr<Umbra::IWidget> Built = Result.NativeBuilder->Build();
+        ASSERT_TRUE(Built != nullptr);
+    });
+
+    // docs/next-steps.md's "<Native> builders can't receive the invoking element's own props"
+    // entry -- the concrete gap pharos-proto's Explorer panel hit: a <Native> element's own
+    // non-`build` props (here `label`/`depth`, mirroring that entry's `node`/`depth` example)
+    // must reach the registered factory, packed the same way a component invocation's props
+    // already are (an ad hoc NyxObject, readable via FindFieldByName), not silently dropped.
+    IT("<Native>'s own non-build props reach the registered builder via NativeBuilderLookup's "
+       "props-aware factory",
+       {
+        const std::string_view Source =
+            "void App() {\n"
+            "    render {\n"
+            "        <Native build={() -> \"stub\"} label=\"hello\" depth={1 + 1} />\n"
+            "    }\n"
+            "}\n";
+        const IrisIrDocument Document = BuildRealDocument(Source);
+
+        nyx::host::NyxRuntime Runtime;
+        ChaosSlotMarker Marker;
+        auto FileScope = Runtime.CreateScope(ReconstructNyxSource(Document), "test.irisx");
+        auto Invocation = Runtime.InvokeComponent(FileScope, "App", {});
+
+        std::vector<IrisIrRuntimeError> Errors;
+        bool                             FactoryCalled = false;
+        NativeBuilderLookup              Lookup =
+            [&FactoryCalled](
+                const std::string& Name) -> std::function<std::unique_ptr<Umbra::IWidget>(const nyx::runtime::Value&)> {
+            if (Name != "stub") {
+                return nullptr;
+            }
+            return [&FactoryCalled](const nyx::runtime::Value& Props) -> std::unique_ptr<Umbra::IWidget> {
+                FactoryCalled = true;
+                ASSERT_TRUE(Props.Kind() == nyx::runtime::ValueKind::Object);
+                const auto* Obj = std::get<std::shared_ptr<nyx::runtime::NyxObject>>(Props.data).get();
+                const nyx::runtime::Value* Label = Obj->FindFieldByName("label");
+                const nyx::runtime::Value* Depth = Obj->FindFieldByName("depth");
+                ASSERT_TRUE(Label != nullptr);
+                ASSERT_TRUE(Depth != nullptr);
+                if (Label != nullptr) {
+                    ASSERT_TRUE(std::get<std::string>(Label->data) == "hello");
+                }
+                if (Depth != nullptr) {
+                    ASSERT_TRUE(std::get<int32_t>(Depth->data) == 2);
+                }
+                // `build` itself must not leak into the props object handed to the factory --
+                // it's consumed by EvaluateNative to resolve the factory, not forwarded again.
+                ASSERT_TRUE(Obj->FindFieldByName("build") == nullptr);
+                return std::make_unique<StubWidget>();
+            };
+        };
+        NyxEvaluator Eval = MakeNyxEvaluator(Runtime, Invocation, Marker, nullptr, &Errors, Lookup);
+
+        const Component Result = ConvertIrElement(OnlyRenderBlock(Document).Root, Eval, &Errors);
+        REQUIRE_TRUE(Errors.empty());
+        REQUIRE_TRUE(Result.NativeBuilder != nullptr);
+
+        // The factory is only invoked lazily, on Build() -- same "not yet built until Build()
+        // is called" contract the zero-argument form already had (Component.h's own
+        // IrisNativeBuilder doc comment).
+        ASSERT_FALSE(FactoryCalled);
+        std::unique_ptr<Umbra::IWidget> Built = Result.NativeBuilder->Build();
+        ASSERT_TRUE(FactoryCalled);
         ASSERT_TRUE(Built != nullptr);
     });
 
@@ -420,7 +487,8 @@ DESCRIBE("IrisNyxEvaluator", {
         auto Invocation = Runtime.InvokeComponent(FileScope, "App", {});
 
         std::vector<IrisIrRuntimeError> Errors;
-        NativeBuilderLookup             Lookup = [](const std::string&) -> std::function<std::unique_ptr<Umbra::IWidget>()> {
+        NativeBuilderLookup             Lookup =
+            [](const std::string&) -> std::function<std::unique_ptr<Umbra::IWidget>(const nyx::runtime::Value&)> {
             return nullptr;
         };
         NyxEvaluator Eval = MakeNyxEvaluator(Runtime, Invocation, Marker, nullptr, &Errors, Lookup);

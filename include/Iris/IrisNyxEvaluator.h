@@ -67,8 +67,26 @@ using ChildComponentInvoker =
 // registered up front (`IrisNyxDriver::RegisterNativeBuilder`), the same "runtime supplies a
 // callback, this code never knows what's on the other side of it" pattern `ChildComponentInvoker`
 // above already uses for component invocation.
-using NativeBuilderLookup =
-    std::function<std::function<std::unique_ptr<Umbra::IWidget>()>(const std::string& Name)>;
+//
+// The returned factory takes the invoking `<Native>` element's own evaluated *non-`build`*
+// props (docs/next-steps.md's "`<Native>` builders can't receive the invoking element's own
+// props" entry, resolved here): `MakeNyxEvaluator`'s `EvaluateNative` packs every other prop
+// declared on the same `<Native ...>` tag -- `<Native build={() -> "BuildTreeRow"}
+// node={props.node} depth={props.depth} />` -- into a fresh ad-hoc `nyx::runtime::NyxObject`
+// (`typeName` set to the resolved builder name) exactly the way `EvaluateComponentInvocation`
+// below already packs a component invocation's own props, including a `HostObject`/`Array`/
+// `Object` value untouched (not narrowed through `ValueToPropValue`, which only knows
+// bool/int/float/string) -- so a marshaled host pointer (e.g. a tree-node handle) survives
+// intact, the concrete case that motivated this. The factory reads it back the same way a
+// component's own `props.someField` access does on the Nyx side, just from C++:
+// `NyxObject::FindFieldByName("node")`. This still leaves `Build()` itself
+// (`Iris::IrisNativeBuilder`, `Component.h`) zero-argument and backend-agnostic -- the
+// resolved `Value` is captured into that zero-arg closure right here, at lookup time, so
+// nothing about `Component.h`'s IR shape (used equally by the compiled `.iris`/Codegen path,
+// which has no such gap: a C++ escape hatch already closes over `props` directly) needs to
+// change.
+using NativeBuilderLookup = std::function<std::function<std::unique_ptr<Umbra::IWidget>(
+    const nyx::runtime::Value& Props)>(const std::string& Name)>;
 
 // Registers the host function a real `EvaluateSlot` implementation (`MakeNyxEvaluator`
 // below) needs to resolve a JSX-transform escape hatch's conditional content --
@@ -146,7 +164,13 @@ private:
 // `EvaluateInScope`, and its result must be a `std::string`. A missing/wrong-typed `build`
 // prop, or a name `FindNativeBuilder` doesn't recognize, reports a specific error and returns
 // `nullptr` (`ConvertNative`, IrisIrRuntime.cpp, turns that into its own error since only it
-// has `Node.Location`); a resolved builder is wrapped via `Iris::MakeNativeBuilder`.
+// has `Node.Location`). Once a factory is resolved, every other prop on the same `<Native>`
+// tag (`Node.Props`, skipping `build`) is evaluated the same way `EvaluateComponentInvocation`
+// evaluates a component invocation's own props -- a literal becomes `Value(string)`, an
+// expression goes through `Runtime.EvaluateInScope` -- and packed into a fresh ad-hoc
+// `NyxObject` (`NativeBuilderLookup`'s own doc comment above); that `Value` is bound into the
+// zero-arg closure `Iris::MakeNativeBuilder` wraps, so the factory sees it the moment `Build()`
+// is actually called.
 //
 // `EvaluateSlot` also resolves `list.Map((item[, index]) -> <Card .../>)` and
 // `list.Reduce((acc, item) -> ..., initial)` -- the sanctioned way to write a dynamic list of

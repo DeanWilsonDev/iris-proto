@@ -347,13 +347,35 @@ NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRunt
             }
 
             const std::string& Name = std::get<std::string>(Result.data);
-            std::function<std::unique_ptr<Umbra::IWidget>()> Factory = FindNativeBuilder(Name);
+            std::function<std::unique_ptr<Umbra::IWidget>(const Value&)> Factory = FindNativeBuilder(Name);
             if (!Factory) {
                 AddError(Errors, "no native builder registered for name '" + Name + "'",
                           BuildProp->Value.Expression.Location);
                 return nullptr;
             }
-            return Iris::MakeNativeBuilder(std::move(Factory));
+
+            // Every prop on this <Native> other than `build` is the invoking element's own
+            // data for the factory -- `<Native build={() -> "BuildTreeRow"} node={props.node}
+            // depth={props.depth} />` (docs/next-steps.md's "<Native> builders can't receive
+            // the invoking element's own props" entry). Packed exactly the way
+            // EvaluateComponentInvocation below packs a component invocation's own props (ad
+            // hoc NyxObject, raw Value preserved -- not narrowed through ValueToPropValue) so a
+            // HostObject/Array/Object prop (e.g. a marshaled tree-node pointer) survives intact,
+            // not just bool/int/float/string.
+            auto Props = std::make_shared<nyx::runtime::NyxObject>();
+            Props->typeName = Name;
+            for (const IrPropNode& P : Node.Props) {
+                if (P.Name == "build") {
+                    continue;
+                }
+                Value PropValue = P.Value.IsLiteral ? Value(P.Value.Literal.Value)
+                                                     : Runtime.EvaluateInScope(Scope, P.Value.Expression.Source());
+                Props->adHocFields.emplace_back(P.Name, std::move(PropValue));
+            }
+            Value PropsValue(Props);
+
+            return Iris::MakeNativeBuilder(
+                [Factory = std::move(Factory), PropsValue = std::move(PropsValue)]() { return Factory(PropsValue); });
         };
     }
 

@@ -173,11 +173,18 @@ IrisNyxDriver::IrisNyxDriver(IrisConfig Config, std::string ProjectRoot)
 nyx::host::NyxRuntime& IrisNyxDriver::Runtime() { return Runtime_; }
 
 void IrisNyxDriver::RegisterNativeBuilder(std::string Name, std::function<std::unique_ptr<Umbra::IWidget>()> Factory) {
+    NativeBuilders_[std::move(Name)] = [Factory = std::move(Factory)](const nyx::runtime::Value&) {
+        return Factory();
+    };
+}
+
+void IrisNyxDriver::RegisterNativeBuilder(
+    std::string Name, std::function<std::unique_ptr<Umbra::IWidget>(const nyx::runtime::Value&)> Factory) {
     NativeBuilders_[std::move(Name)] = std::move(Factory);
 }
 
 NativeBuilderLookup IrisNyxDriver::MakeNativeBuilderLookup() {
-    return [this](const std::string& Name) -> std::function<std::unique_ptr<Umbra::IWidget>()> {
+    return [this](const std::string& Name) -> std::function<std::unique_ptr<Umbra::IWidget>(const nyx::runtime::Value&)> {
         const auto It = NativeBuilders_.find(Name);
         return It != NativeBuilders_.end() ? It->second : nullptr;
     };

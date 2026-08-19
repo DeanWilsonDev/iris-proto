@@ -98,7 +98,27 @@ public:
     // `Runtime()`'s own doc comment already documents for host types/functions. `Factory` is
     // called lazily, exactly once per `Build()` call on the resulting `IrisNativeBuilder` --
     // never eagerly, and never by this driver itself.
+    //
+    // Zero-argument overload -- unchanged from before docs/next-steps.md's "`<Native>` builders
+    // can't receive the invoking element's own props" entry was resolved, kept working exactly
+    // as-is (that entry's own "not requested" section) for a builder with no per-invocation data
+    // need, e.g. pharos-proto's Atlas viewport or a dropdown menu. Internally stored as a
+    // props-taking factory that ignores the props it's handed.
     void RegisterNativeBuilder(std::string Name, std::function<std::unique_ptr<Umbra::IWidget>()> Factory);
+
+    // Props-aware overload (docs/next-steps.md's "`<Native>` builders can't receive the
+    // invoking element's own props" entry, resolved): `Factory` receives the invoking
+    // `<Native ...>` tag's own evaluated non-`build` props, packed into a `nyx::runtime::Value`
+    // exactly the way a component invocation's props already are
+    // (`NativeBuilderLookup`'s own doc comment, IrisNyxEvaluator.h -- read a field back via
+    // `NyxObject::FindFieldByName`). Lets a single registered factory build the right widget
+    // for whichever node/props a given `<Native build={() -> "BuildTreeRow"} node={props.node}
+    // depth={props.depth} />` invocation carries, instead of one uniquely-named zero-argument
+    // builder pre-registered per possible node (the pattern this entry replaces -- see
+    // pharos-proto's own `src/ui/explorer_panel_native.cpp::registerRowBuilders()`, now able to
+    // register one `"BuildTreeRow"` factory instead of walking its whole tree up front).
+    void RegisterNativeBuilder(std::string                                                              Name,
+                                std::function<std::unique_ptr<Umbra::IWidget>(const nyx::runtime::Value&)> Factory);
 
     // Every error accumulated across every `MountRoot`/`ReloadRoot`/`InvokeComponent` call so
     // far -- file-load/import-resolution failures (reported with a default-constructed
@@ -307,7 +327,11 @@ private:
 
     std::unordered_map<std::string, IrisIrDocument>              Documents_;
     std::unordered_map<std::string, nyx::host::NyxRuntime::NyxScope> FileScopes_;
-    std::unordered_map<std::string, std::function<std::unique_ptr<Umbra::IWidget>()>> NativeBuilders_;
+    // Always stored props-aware -- the zero-argument `RegisterNativeBuilder` overload wraps its
+    // `Factory` in a props-ignoring adapter before it lands here, so this map has exactly one
+    // shape regardless of which overload registered a given name.
+    std::unordered_map<std::string, std::function<std::unique_ptr<Umbra::IWidget>(const nyx::runtime::Value&)>>
+        NativeBuilders_;
 
     std::vector<IrisIrRuntimeError> Errors_;
 };

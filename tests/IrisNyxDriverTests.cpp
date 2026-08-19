@@ -623,6 +623,71 @@ DESCRIBE("IrisNyxDriver", {
         ASSERT_TRUE(Root.NativeBuilder->Build() != nullptr);
     });
 
+    // docs/next-steps.md's "<Native> builders can't receive the invoking element's own props"
+    // entry, resolved: pharos-proto's own Explorer panel motivating case -- a single registered
+    // `"BuildTreeRow"` factory receiving the invoking <Native>'s own `node`/`depth` props
+    // (a HostObject included, not just primitive props, the exact reason pharos-proto's
+    // `registerRowBuilders()` previously had to pre-register one uniquely-named builder per
+    // tree node instead) via the new props-aware `RegisterNativeBuilder` overload.
+    IT("<Native>'s own props, HostObject included, reach a builder registered with "
+       "RegisterNativeBuilder's props-aware overload",
+       {
+        TempProject Project;
+        const std::string AppPath = Project.Write(
+            "App.irisx", "void App(TestNode node) {\n"
+                          "    render {\n"
+                          "        <Native build={() -> \"BuildTreeRow\"} node={node} depth={2} />\n"
+                          "    }\n"
+                          "}\n");
+
+        IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+        Driver.Runtime().RegisterType<TestNode>("TestNode").Method("Name", &TestNode::Name);
+        const auto* Descriptor =
+            std::get<std::shared_ptr<nyx::runtime::HostObject>>(Driver.Runtime().Globals().at("TestNode").data)
+                ->descriptor;
+
+        bool FactoryCalled = false;
+        Driver.RegisterNativeBuilder(
+            "BuildTreeRow", [&FactoryCalled](const nyx::runtime::Value& Props) -> std::unique_ptr<Umbra::IWidget> {
+                FactoryCalled = true;
+                ASSERT_TRUE(Props.Kind() == nyx::runtime::ValueKind::Object);
+                const auto*                 Obj        = std::get<std::shared_ptr<nyx::runtime::NyxObject>>(Props.data).get();
+                const nyx::runtime::Value*  NodeField  = Obj->FindFieldByName("node");
+                const nyx::runtime::Value*  DepthField = Obj->FindFieldByName("depth");
+                ASSERT_TRUE(NodeField != nullptr);
+                ASSERT_TRUE(DepthField != nullptr);
+                if (NodeField == nullptr || DepthField == nullptr) {
+                    return std::make_unique<StubWidget>();
+                }
+                ASSERT_TRUE(NodeField->Kind() == nyx::runtime::ValueKind::HostObject);
+                // The same marshaled-pointer shape EvaluateComponentInvocation's own HostObject
+                // regression test above proves for a component-invocation prop -- here read back
+                // by hand (no Nyx-side `.Name()` method call), the way a real C++ native-builder
+                // factory (e.g. pharos-proto's BuildTreeRow) would.
+                auto* HostNode = static_cast<TestNode*>(
+                    std::get<std::shared_ptr<nyx::runtime::HostObject>>(NodeField->data)->instance);
+                ASSERT_TRUE(HostNode != nullptr);
+                if (HostNode == nullptr) {
+                    return std::make_unique<StubWidget>();
+                }
+                const std::string Label = HostNode->name + ":" + std::to_string(std::get<int32_t>(DepthField->data));
+                return std::make_unique<MockWidget>(Label);
+            });
+
+        TestNode Node;
+        Node.name = "vulkan_context.cpp";
+        const Component Root = Driver.MountRoot(AppPath, "App", {nyx::host::ToValue(&Node, Descriptor)});
+
+        REQUIRE_TRUE(Driver.Errors().empty());
+        REQUIRE_TRUE(Root.NativeBuilder != nullptr);
+        // Lazy, exactly like the zero-argument overload above -- not called until Build() runs.
+        ASSERT_FALSE(FactoryCalled);
+        std::unique_ptr<Umbra::IWidget> Built = Root.NativeBuilder->Build();
+        ASSERT_TRUE(FactoryCalled);
+        REQUIRE_TRUE(Built != nullptr);
+        ASSERT_TRUE(dynamic_cast<MockWidget*>(Built.get())->Tag == "vulkan_context.cpp:2");
+    });
+
     // docs/next-steps.md's narrowed nested-reload gap: a statically-nested (non-<Slot>) cross-
     // file component invocation now reloads too, matched via Component::InvocationTag, instead
     // of always mounting fresh -- proven here by firing Header's own onPress before reloading
