@@ -101,6 +101,10 @@ SlotState::~SlotState() {
     // don't depend on it, since we always remove starting at our own base position and
     // this slot's own AttachedCount_ is authoritative for how many are ours.
     if (AttachedParent_ != nullptr && AttachedGroup_ != nullptr) {
+        // Fail loudly here, with an attributable message, rather than dereferencing a
+        // dangling AttachedParent_ below -- see this field's own doc comment
+        // (SlotRuntime.h) and LivenessGuard.h for the real crash this guards against.
+        AttachedParentWatch_.AssertAlive("SlotState::AttachedParent_");
         const std::size_t Base = AttachedGroup_->AbsoluteIndexOf(AttachedGroupIndex_);
         for (std::size_t I = 0; I < AttachedCount_; ++I) {
             AttachedParent_->RemoveChildAt(Base);
@@ -120,6 +124,11 @@ void SlotState::MarkDirty() {
 void SlotState::AttachToGroup(Umbra::IWidget* Parent, std::shared_ptr<SlotSiblingGroup> Group,
                                std::size_t GroupIndex) {
     AttachedParent_ = Parent;
+    if (Parent != nullptr) {
+        AttachedParentWatch_.Reset(Parent->Liveness());
+    } else {
+        AttachedParentWatch_.Reset();
+    }
     AttachedGroup_ = std::move(Group);
     AttachedGroupIndex_ = GroupIndex;
 }

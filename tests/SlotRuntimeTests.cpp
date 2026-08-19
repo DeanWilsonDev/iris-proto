@@ -3,10 +3,18 @@
 #include "Iris/Signal.h"
 #include "Iris/SlotRuntime.h"
 
+#include <csignal>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+// fork()/waitpid()/pipe() -- POSIX-only, needed only by the death test below (see its own
+// comment for why: cimmerian/test.hpp has no death-test primitive of its own, and this
+// repo's own build has no Windows target/CI configured, so a POSIX-only test here matches
+// the rest of this repo's own platform assumptions rather than introducing a new one).
+#include <sys/wait.h>
+#include <unistd.h>
 
 namespace {
 
@@ -342,6 +350,78 @@ DESCRIBE("SlotRuntime", {
            // the real parent's own child at this position is a genuinely different widget
            // object -- not just prop-updated -- exactly what a backend's own reconciler
            // needs to pick up and treat as "the live real widget was replaced".
+       });
+
+    // docs/next-steps.md's "SlotState::AttachedParent_ dangles past its own widget tree's
+    // destruction" entry: reproduces the exact destruction-order mistake that used to crash
+    // via a dangling dynamic_cast inside PenumbraWidget::RemoveChildAt -- AttachedParent_'s
+    // own widget destroyed while this SlotState is still alive, then the SlotState itself
+    // destroyed. Umbra::LivenessGuard (umbra-interfaces, wired into SlotState via
+    // AttachedParentWatch_ -- see that field's own doc comment) should make ~SlotState()
+    // abort with a clear, attributable message right at the AssertAlive() call, instead of
+    // dereferencing the freed parent inside RemoveChildAt.
+    //
+    // Grepped both libs/cimmerian and this repo's own tests/ for any existing death/abort-
+    // expectation primitive (fork, waitpid, SIGABRT, "death") and found none -- cimmerian/
+    // test.hpp has no EXPECT_DEATH-style macro to match. Rather than fabricate a check that
+    // only restates LivenessGuard's own precondition (e.g. just asserting Watch.IsAlive() ==
+    // false, which proves nothing about whether AssertAlive() actually aborts), this uses a
+    // real fork()+waitpid() subprocess -- the same technique gtest's own death tests use
+    // internally -- so the assertions below prove the actual abort happens, not just that
+    // its precondition holds.
+    IT("SlotState::~SlotState() aborts via LivenessGuard, with an attributable message, "
+       "rather than dereferencing an AttachedParent_ destroyed out from under it",
+       {
+           int Pipe[2];
+           REQUIRE_TRUE(pipe(Pipe) == 0);
+
+           const pid_t Pid = fork();
+           if (Pid < 0) {
+               REQUIRE_TRUE(false); // fork() itself failed -- an environment problem, not what this test covers
+           }
+
+           if (Pid == 0) {
+               // ---- Child process only from here down. Must never touch cimmerian's own
+               // shared test-reporting state (a REQUIRE_TRUE/ASSERT_TRUE call here would run
+               // in a second, forked copy of the whole test binary's process image and
+               // corrupt the parent's own test output) -- exits via abort() (the expected,
+               // guarded outcome) or _exit() (the bug regressed and nothing caught it).
+               close(Pipe[0]);
+               dup2(Pipe[1], STDERR_FILENO); // capture AssertAlive()'s own stderr message
+               close(Pipe[1]);
+
+               auto Parent   = std::make_unique<ContainerWidget>();
+               auto Callable = Iris::MakeSlotCallable([]() -> Iris::Component { return MakeFrame("a"); });
+               auto Slot     = std::make_unique<iris::SlotState>(Callable, StubMount(nullptr));
+               auto Group    = std::make_shared<iris::SlotSiblingGroup>();
+               Group->AddEntry(0, Slot.get());
+               Slot->AttachToGroup(Parent.get(), Group, 0);
+               Slot->Reconcile(); // gives AttachedParent_ a real child to (attempt to) remove
+
+               Parent.reset(); // the exact destruction-order mistake LivenessGuard exists for
+               Slot.reset();   // ~SlotState() should AssertAlive()+abort() here, not dereference Parent
+
+               _exit(0); // only reached if the guard failed to catch the dangling pointer
+           }
+
+           // ---- Parent process only from here down (the child above always exits inside
+           // its own branch and never falls through to this point).
+           close(Pipe[1]);
+           std::string Output;
+           char        Buf[256];
+           ssize_t     BytesRead = 0;
+           while ((BytesRead = read(Pipe[0], Buf, sizeof(Buf))) > 0) {
+               Output.append(Buf, static_cast<std::size_t>(BytesRead));
+           }
+           close(Pipe[0]);
+
+           int Status = 0;
+           REQUIRE_TRUE(waitpid(Pid, &Status, 0) == Pid);
+           // Aborted via SIGABRT specifically -- not just "crashed somehow" (a SIGSEGV here
+           // would mean the guard failed to catch it and the old dangling-dereference crash
+           // regressed instead).
+           ASSERT_TRUE(WIFSIGNALED(Status) != 0 && WTERMSIG(Status) == SIGABRT);
+           ASSERT_TRUE(Output.find("AttachedParent_") != std::string::npos);
        });
 
     IT("RegisterRoot/GetRoot hold the whole application's live-widget root", {

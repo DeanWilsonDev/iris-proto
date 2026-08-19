@@ -3,6 +3,7 @@
 #include "Iris/Component.h"
 
 #include "Umbra/IWidget.h"
+#include "Umbra/LivenessGuard.h"
 
 #include <functional>
 #include <memory>
@@ -149,6 +150,15 @@ private:
     bool                                      Dirty_{false};
 
     Umbra::IWidget*                    AttachedParent_{nullptr};
+    // Watches AttachedParent_'s own liveness (Umbra::LivenessGuard.h) -- set alongside
+    // AttachedParent_ in AttachToGroup. ~SlotState() below calls AssertAlive() on this
+    // immediately before RemoveChildAt dereferences AttachedParent_, so a destruction-
+    // order mistake (AttachedParent_'s own widget tree torn down while this SlotState is
+    // still alive -- the exact shape of the real crash this was written against,
+    // docs/next-steps.md) aborts loudly right here instead of a dangling dynamic_cast
+    // inside whatever backend implements RemoveChildAt. A real no-op in a Release
+    // (NDEBUG) build, per LivenessGuard's own design.
+    Umbra::LivenessGuard::Watch         AttachedParentWatch_;
     std::shared_ptr<SlotSiblingGroup>  AttachedGroup_;
     std::size_t                         AttachedGroupIndex_{0};
     std::size_t                         AttachedCount_{0}; // how many real widgets this slot currently owns, when attached
