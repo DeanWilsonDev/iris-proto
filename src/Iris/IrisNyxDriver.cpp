@@ -116,6 +116,29 @@ std::string NumericLiteralText(const nyx::runtime::Value& V) {
     }
 }
 
+// Renders a `NyxScope::error` value (nyx-proto's `NyxRuntime::MakeErrorValue`) into a
+// human-readable message for `Errors_`. `MakeErrorValue` always builds an ad hoc (schema ==
+// nullptr) NyxObject -- see value.hpp's own `NyxObject::adHocFields` doc comment ("the one
+// construction path with no registry entry to build a schema from") -- carrying a "message"
+// field for every variant this repo's own call sites can trigger today
+// (`InvokeComponent`/`ReInvokeComponent`'s catch clauses both build `Error::Unknown` from
+// `RuntimeError::what()`). Falls back to just the type tag if a future error variant ever
+// omits "message", rather than producing an empty string.
+std::string DescribeNyxError(const nyx::runtime::Value& Error) {
+    if (Error.Kind() != nyx::runtime::ValueKind::Object) {
+        return "component invocation failed";
+    }
+    const auto& Obj = std::get<std::shared_ptr<nyx::runtime::NyxObject>>(Error.data);
+    if (Obj == nullptr) {
+        return "component invocation failed";
+    }
+    const nyx::runtime::Value* Message = Obj->FindFieldByName("message");
+    if (Message != nullptr && Message->Kind() == nyx::runtime::ValueKind::String) {
+        return std::get<std::string>(Message->data);
+    }
+    return Obj->typeName;
+}
+
 // Model 1 (free-function component) half of docs/next-steps.md's ".irisx OnTick" entry:
 // `Scope` is this invocation's own captured call-frame Environment (`NyxDriverState::
 // RenderScope`) -- `FindOwn` (already public, `NyxRuntime::ReInvokeComponent`'s own
@@ -362,8 +385,25 @@ Iris::Component IrisNyxDriver::InvokeComponent(const std::string& ResolvedPath, 
             *OutTier = iris::ComponentReloadTier::SignalLayoutChanged; // nothing carried forward
         }
         return iris::MountComponentInstance([&]() -> Iris::Component {
-            auto State = std::make_shared<NyxDriverState>(
-                NyxDriverState{Runtime_.InvokeComponent(FileScope, FunctionName, std::move(Args)), std::nullopt});
+            nyx::host::NyxRuntime::NyxScope Scope = Runtime_.InvokeComponent(FileScope, FunctionName, std::move(Args));
+            if (Scope.error.has_value()) {
+                // Runtime_.InvokeComponent already caught a C++ RuntimeError (typically an
+                // arity mismatch -- every invocation marshals its named attributes into
+                // exactly one Props argument, so a component still declared with the wrong
+                // parameter shape throws here) and handed back `Scope.context` pointing at a
+                // valid but throwaway fresh global scope (NyxScope::error's own doc comment,
+                // nyx-runtime.hpp). Surfacing it here, at the mount site, is the whole point
+                // of this check -- without it, `render{}`'s prop expressions go on to
+                // evaluate against that empty scope and fail confusingly several layers
+                // downstream instead (docs/next-steps.md's "IrisNyxDriver::InvokeComponent
+                // never checks NyxScope::error" entry).
+                Errors_.push_back(IrisIrRuntimeError{
+                    "invoking component '" + FunctionName + "' in '" + ResolvedPath +
+                        "' failed: " + DescribeNyxError(*Scope.error),
+                    IrSourceLocation{ResolvedPath}});
+                return Iris::Component{nullptr};
+            }
+            auto State = std::make_shared<NyxDriverState>(NyxDriverState{std::move(Scope), std::nullopt});
             State->Lifecycle = BuildFreeFunctionLifecycleAdapter(Runtime_, State->RenderScope);
 
             const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, State->RenderScope, Marker_, ChildInvoker, &Errors_, MakeNativeBuilderLookup());
@@ -401,6 +441,19 @@ Iris::Component IrisNyxDriver::InvokeComponent(const std::string& ResolvedPath, 
     {
         iris::Detail::ScopedComponentInstance Guard(Previous->Instance.get());
         NewScope = Runtime_.ReInvokeComponent(PriorState->RenderScope, ReconstructNyxSource(*Document), FunctionName, Args);
+    }
+    if (NewScope.error.has_value()) {
+        // Same reasoning as the fresh-mount branch above: Runtime_.ReInvokeComponent (which
+        // itself just calls back into InvokeComponent, host/nyx-runtime.hpp) caught a C++
+        // RuntimeError and handed back a throwaway scope rather than a real reconciled one.
+        // Bail out here without touching `Previous->Instance`'s existing DriverState/Lifecycle
+        // -- better to leave the last known-good render in place than reconcile against (or
+        // silently replace it with) an empty scope.
+        Errors_.push_back(IrisIrRuntimeError{
+            "reloading component '" + FunctionName + "' in '" + ResolvedPath + "' failed: " +
+                DescribeNyxError(*NewScope.error),
+            IrSourceLocation{ResolvedPath}});
+        return Iris::Component{nullptr};
     }
     const iris::ComponentReloadTier Tier =
         CompareEnvironments(*PriorState->RenderScope.context.env, *NewScope.context.env);

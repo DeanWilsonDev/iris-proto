@@ -390,6 +390,84 @@ DESCRIBE("IrisNyxDriver", {
         ASSERT_FALSE(Driver.Errors().empty());
     });
 
+    // docs/next-steps.md's "IrisNyxDriver::InvokeComponent never checks NyxScope::error" entry
+    // (2026-08-19, cross-repo ask from pharos-proto): every component invocation marshals its
+    // named attributes into exactly one Props argument, so a component still declared with the
+    // wrong parameter shape for how it's now invoked (here, zero params) throws a C++
+    // RuntimeError arity mismatch inside Runtime_.InvokeComponent -- which nyx-proto's own
+    // NyxRuntime::InvokeComponent already catches and reports via NyxScope::error, but this
+    // repo's fresh-mount branch previously never checked it, silently proceeding to build
+    // Card's render{} body against a throwaway empty scope instead. Reproduces pharos-proto's
+    // own repeated finding (Toolbar/JsonPathField/LoadButton's Props-parameter migration, and
+    // before that InspectorPanel's "Bug 3") at the exact call site, rather than re-deriving the
+    // downstream confusing type error it used to surface as.
+    IT("an arity-mismatched Model 1 component invocation reports a real error at the mount site "
+       "instead of silently proceeding against a throwaway empty scope",
+       {
+           TempProject Project;
+           Project.Write("Card.irisx",
+                          "void Card() {\n"
+                          "    render {\n"
+                          "        <Frame class=\"card\" />\n"
+                          "    }\n"
+                          "}\n");
+           const std::string ParentPath = Project.Write("Parent.irisx",
+                                                          "import Card\n"
+                                                          "\n"
+                                                          "void Parent() {\n"
+                                                          "    render {\n"
+                                                          "        <Frame class=\"parent\">\n"
+                                                          "            <Card label=\"hi\" />\n"
+                                                          "        </Frame>\n"
+                                                          "    }\n"
+                                                          "}\n");
+
+           IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+           const Component Root = Driver.MountRoot(ParentPath, "Parent");
+
+           // Before this fix, Driver.Errors() stayed empty here -- the arity mismatch was
+           // swallowed and Card "mounted" against an empty scope with no observable failure at
+           // all (its render{} body has no prop reference, so nothing downstream even looked
+           // wrong -- exactly why the real pharos-proto failures surfaced several confusing
+           // layers away instead of here).
+           REQUIRE_TRUE(!Driver.Errors().empty());
+           ASSERT_TRUE(Driver.Errors().back().Message.find("Card") != std::string::npos);
+           REQUIRE_EQUAL(Root.Children.size(), static_cast<std::size_t>(1));
+           ASSERT_TRUE(Root.Children[0].Tag == Iris::IrisElementTag::None); // failed mount, not a real Card widget
+       });
+
+    IT("an arity-mismatched Model 1 component reload reports a real error and leaves the prior "
+       "mounted render in place",
+       {
+           TempProject Project;
+           const std::string EntryPath =
+               Project.Write("Counter.irisx", "void Counter() {\n    render { <Frame class=\"v1\" /> }\n}\n");
+
+           IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+           const Component Root = Driver.MountRoot(EntryPath, "Counter");
+           REQUIRE_TRUE(Driver.Errors().empty());
+
+           // Rewrite Counter to require a parameter with no default, but reload with the same
+           // (empty) InitialArgs the original MountRoot used -- ReInvokeComponent's own
+           // InvokeComponent call now throws "missing required argument", caught by nyx-proto
+           // and surfaced via NyxScope::error, same mechanism as the fresh-mount case above.
+           Project.Write("Counter.irisx",
+                         "void Counter(int seed) {\n"
+                         "    render { <Frame class=\"v2\" /> }\n"
+                         "}\n");
+
+           const std::size_t ErrorsBefore = Driver.Errors().size();
+           const IrisNyxReloadResult Reloaded = Driver.ReloadRoot(EntryPath, "Counter", {}, Root);
+
+           ASSERT_TRUE(Driver.Errors().size() > ErrorsBefore);
+           ASSERT_TRUE(Driver.Errors().back().Message.find("Counter") != std::string::npos);
+           // The failed reload's own returned Component is a bare failure marker (Iris::
+           // Component{nullptr}) -- callers that want the still-mounted prior render keep using
+           // `Root` (whose real widget tree was never touched by the failed reload), the same
+           // "don't clobber a good render with a bad one" contract the fix's own comment states.
+           ASSERT_TRUE(Reloaded.Root.Tag == Iris::IrisElementTag::None);
+       });
+
     // nyx-scripting-language/decision-log.md §9.2 / docs/archive/iris_nyx_slot_loop_and_reload_gap_resolved.md
     // §2: ReloadRoot re-renders a free-function component via Runtime_.ReInvokeComponent,
     // preserving @signal state by name and reusing the same ComponentInstance -- exercised end
