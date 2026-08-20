@@ -21,6 +21,29 @@ void AddError(std::vector<IrisIrRuntimeError>* Errors, std::string Message, IrSo
     }
 }
 
+// Renders an error Value (nyx-proto's `NyxRuntime::MakeErrorValue`, what
+// `Runtime.EvaluateInScope`/`InvokeAsLambda` return in place of throwing once a `RuntimeError`
+// is caught at that embedding boundary -- see nyx-runtime.hpp's own `EvaluateInScope` doc
+// comment) into a human-readable message for `AddError`. Mirrors `IrisNyxDriver.cpp`'s own
+// `DescribeNyxError` (kept as a separate anonymous-namespace copy rather than shared, same as
+// every other small helper in this file -- there's no third caller yet to justify a shared
+// header). Falls back to just the type tag if a future error variant ever omits "message",
+// rather than producing an empty string.
+std::string DescribeNyxError(const Value& Error) {
+    if (Error.Kind() != ValueKind::Object) {
+        return "Nyx evaluation failed";
+    }
+    const auto& Obj = std::get<std::shared_ptr<nyx::runtime::NyxObject>>(Error.data);
+    if (Obj == nullptr) {
+        return "Nyx evaluation failed";
+    }
+    const Value* Message = Obj->FindFieldByName("message");
+    if (Message != nullptr && Message->Kind() == ValueKind::String) {
+        return std::get<std::string>(Message->data);
+    }
+    return Obj->typeName;
+}
+
 // Plain-value conversion only -- never called for a Callable Value (event-handler props are
 // special-cased in EvaluateProp below, before any evaluation happens, since nyx-proto has no
 // public "call this already-evaluated Value" primitive to build a reusable std::function
@@ -296,7 +319,7 @@ NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRunt
                                  NativeBuilderLookup FindNativeBuilder) {
     NyxEvaluator Eval;
 
-    Eval.EvaluateProp = [&Runtime, &Scope](const IrNyxExpressionNode& Node,
+    Eval.EvaluateProp = [&Runtime, &Scope, Errors](const IrNyxExpressionNode& Node,
                                              const std::string& ExpectedTypeName) -> Iris::IrisPropValue {
         if (ExpectedTypeName == "std::function<void()>") {
             std::string Source = Node.Source();
@@ -311,7 +334,12 @@ NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRunt
                     InvokeAsLambda(Runtime, Scope, Source, {QuoteNyxStringLiteral(Arg)});
                 })};
         }
-        return ValueToPropValue(Runtime.EvaluateInScope(Scope, Node.Source()));
+        const Value Result = Runtime.EvaluateInScope(Scope, Node.Source());
+        if (Scope.interpreter->IsErrorValue(Result)) {
+            AddError(Errors, DescribeNyxError(Result), Node.Location);
+            return Iris::IrisPropValue{std::string{}};
+        }
+        return ValueToPropValue(Result);
     };
 
     Eval.EvaluateText = [&Runtime, &Scope](const IrNyxExpressionNode& Node) {
@@ -370,6 +398,10 @@ NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRunt
                 }
                 Value PropValue = P.Value.IsLiteral ? Value(P.Value.Literal.Value)
                                                      : Runtime.EvaluateInScope(Scope, P.Value.Expression.Source());
+                if (!P.Value.IsLiteral && Scope.interpreter->IsErrorValue(PropValue)) {
+                    AddError(Errors, DescribeNyxError(PropValue), P.Value.Expression.Location);
+                    continue;
+                }
                 Props->adHocFields.emplace_back(P.Name, std::move(PropValue));
             }
             Value PropsValue(Props);
@@ -419,7 +451,11 @@ NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRunt
         }
 
         Marker.Selected_->clear();
-        InvokeAsLambda(Runtime, Scope, Reconstructed, {});
+        const Value SlotResult = InvokeAsLambda(Runtime, Scope, Reconstructed, {});
+        if (Scope.interpreter->IsErrorValue(SlotResult)) {
+            AddError(Errors, DescribeNyxError(SlotResult), Node.Location);
+            return std::vector<Iris::Component>{};
+        }
         std::vector<ChaosSlotPick> Picked = *Marker.Selected_;
 
         // Discards the previous call's per-pick scopes -- safe once this call's own picks are

@@ -88,6 +88,44 @@ DESCRIBE("IrisNyxEvaluator", {
         ASSERT_TRUE(std::get<float>(Result.Props.at("wheelStep")) == 42.0f);
     });
 
+    // docs/next-steps.md's "EvaluateProp/EvaluateNative/EvaluateSlot never check
+    // Runtime.EvaluateInScope's result for an error value" entry: a prop expression that
+    // throws a real nyx-proto RuntimeError (here, a field access on an object that doesn't
+    // declare it -- the same shape as pharos-proto's own `props.node.id` failure) must be
+    // caught and surfaced through Errors, not silently degraded to an empty-string prop value
+    // via ValueToPropValue's `default:` branch with nothing ever reported.
+    IT("EvaluateProp's fallback reports a real error, instead of silently degrading to an "
+       "empty string, when the prop expression throws",
+       {
+        const std::string_view Source =
+            "class Thing {\n"
+            "    string name = \"x\";\n"
+            "}\n"
+            "void Frame1() {\n"
+            "    Thing t = new Thing();\n"
+            "    render { <Scroll wheelStep={t.missingField} /> }\n"
+            "}\n";
+        const IrisIrDocument Document = BuildRealDocument(Source);
+
+        nyx::host::NyxRuntime Runtime;
+        auto FileScope = Runtime.CreateScope(ReconstructNyxSource(Document), "test.irisx");
+        auto Invocation = Runtime.InvokeComponent(FileScope, "Frame1", {});
+
+        ChaosSlotMarker Marker;
+        std::vector<IrisIrRuntimeError> Errors;
+        NyxEvaluator Eval = MakeNyxEvaluator(Runtime, Invocation, Marker, nullptr, &Errors);
+
+        const Component Result = ConvertIrElement(OnlyRenderBlock(Document).Root, Eval, &Errors);
+        ASSERT_FALSE(Errors.empty());
+        if (!Errors.empty()) {
+            ASSERT_TRUE(Errors[0].Message.find("missingField") != std::string::npos);
+        }
+        // Doesn't crash trying to read the prop back -- degrades to the same "no usable value"
+        // empty string ValueToPropValue's own default branch already produced, just now paired
+        // with a real diagnostic instead of silence.
+        ASSERT_TRUE(std::get<std::string>(Result.Props.at("wheelStep")).empty());
+    });
+
     // chaos-ir-spec.md §4's own worked example, end to end: a JSX-transform ternary inside
     // a <Slot>, evaluated against real per-invocation state via nyx-proto's
     // CreateScope/InvokeComponent/EvaluateInScope -- docs/iris_nyx_evaluator_scope_gap.md's
@@ -374,6 +412,56 @@ DESCRIBE("IrisNyxEvaluator", {
         ASSERT_TRUE(std::get<std::string>(Output[1].Props.at("class")) == "Bo");
     });
 
+    // Same docs/next-steps.md entry as the EvaluateProp test above, for EvaluateSlot's own
+    // InvokeAsLambda call: before this fix, a throw partway through the reconstructed
+    // `.Map()`/`.Reduce()` source (here, a field access on an object that doesn't declare it)
+    // meant `Marker.Selected_` simply never got any picks pushed into it -- the exact
+    // pharos-proto symptom, a <Slot> that should render N rows rendering zero with no error
+    // anywhere. The fix must surface a real error in Errors AND still return cleanly (an empty
+    // Component list, not a crash) rather than reading a partially-populated Marker.
+    IT("a <Slot> whose reconstructed source throws reports a real error, instead of silently "
+       "rendering zero rows",
+       {
+        // `t.missingField` throws (a field access on an object that doesn't declare it, same
+        // shape as the other two tests in this entry) before `.Map()` -- and its embedded
+        // <Frame> callback -- ever runs, so this exercises InvokeAsLambda's own return value
+        // specifically, not a per-pick EvaluateProp failure (already covered above).
+        const std::string_view Source =
+            "class Thing {\n"
+            "    string name = \"x\";\n"
+            "}\n"
+            "void CardList() {\n"
+            "    Thing t = new Thing();\n"
+            "    render {\n"
+            "        <Slot>\n"
+            "            !{() -> t.missingField.Map((string item) -> <Frame class={item} />)}\n"
+            "        </Slot>\n"
+            "    }\n"
+            "}\n";
+        const IrisIrDocument Document = BuildRealDocument(Source);
+
+        nyx::host::NyxRuntime Runtime;
+        iris::RegisterSignalDecorator(Runtime);
+        ChaosSlotMarker Marker;
+        Marker.RegisterOn(Runtime);
+        auto FileScope = Runtime.CreateScope(ReconstructNyxSource(Document), "test.irisx");
+        auto Invocation = Runtime.InvokeComponent(FileScope, "CardList", {});
+
+        std::vector<IrisIrRuntimeError> Errors;
+        NyxEvaluator Eval = MakeNyxEvaluator(Runtime, Invocation, Marker, nullptr, &Errors);
+        const Component Result = ConvertIrElement(OnlyRenderBlock(Document).Root, Eval, &Errors);
+        REQUIRE_TRUE(Errors.empty()); // nothing has evaluated the Nyx body yet -- ConvertIrElement
+                                        // only builds the lazy IrisSlotCallable at this point
+        REQUIRE_TRUE(Result.SlotCallable != nullptr);
+
+        // The error only surfaces once the callable is actually invoked -- EvaluateSlot's own
+        // lambda body (holding the InvokeAsLambda call this test targets) doesn't run until then.
+        const std::vector<Component> Output =
+            std::get<std::function<std::vector<Component>()>>(Result.SlotCallable->Callable)();
+        ASSERT_FALSE(Errors.empty());
+        ASSERT_TRUE(Output.empty());
+    });
+
     IT("<Native> resolves its build prop's name against a registered builder", {
         const std::string_view Source =
             "void App() {\n"
@@ -518,5 +606,51 @@ DESCRIBE("IrisNyxEvaluator", {
         const Component Result = ConvertIrElement(OnlyRenderBlock(Document).Root, Eval, &Errors);
         ASSERT_FALSE(Errors.empty());
         ASSERT_TRUE(Result.NativeBuilder == nullptr);
+    });
+
+    // Same docs/next-steps.md entry as the two tests above, for EvaluateNative's own per-prop
+    // loop: before this fix, a prop expression that throws got stored into Props->adHocFields
+    // as if the error Value were the real field value, with nothing ever reported to Errors.
+    IT("<Native>'s per-prop loop reports a real error, instead of silently storing an error "
+       "Value as the field, when a non-build prop expression throws",
+       {
+        const std::string_view Source =
+            "class Thing {\n"
+            "    string name = \"x\";\n"
+            "}\n"
+            "void App() {\n"
+            "    Thing t = new Thing();\n"
+            "    render { <Native build={() -> \"stub\"} depth={t.missingField} /> }\n"
+            "}\n";
+        const IrisIrDocument Document = BuildRealDocument(Source);
+
+        nyx::host::NyxRuntime Runtime;
+        ChaosSlotMarker Marker;
+        auto FileScope = Runtime.CreateScope(ReconstructNyxSource(Document), "test.irisx");
+        auto Invocation = Runtime.InvokeComponent(FileScope, "App", {});
+
+        std::vector<IrisIrRuntimeError> Errors;
+        NativeBuilderLookup             Lookup =
+            [](const std::string& Name) -> std::function<std::unique_ptr<Umbra::IWidget>(const nyx::runtime::Value&)> {
+            if (Name != "stub") {
+                return nullptr;
+            }
+            return [](const nyx::runtime::Value&) -> std::unique_ptr<Umbra::IWidget> {
+                return std::make_unique<StubWidget>();
+            };
+        };
+        NyxEvaluator Eval = MakeNyxEvaluator(Runtime, Invocation, Marker, nullptr, &Errors, Lookup);
+
+        const Component Result = ConvertIrElement(OnlyRenderBlock(Document).Root, Eval, &Errors);
+        ASSERT_FALSE(Errors.empty());
+        if (!Errors.empty()) {
+            ASSERT_TRUE(Errors[0].Message.find("missingField") != std::string::npos);
+        }
+        REQUIRE_TRUE(Result.NativeBuilder != nullptr);
+
+        // The erroring prop is skipped rather than stored as an error Value masquerading as
+        // real data -- the factory still builds (build resolution itself didn't fail).
+        std::unique_ptr<Umbra::IWidget> Built = Result.NativeBuilder->Build();
+        ASSERT_TRUE(Built != nullptr);
     });
 });
