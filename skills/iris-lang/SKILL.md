@@ -199,11 +199,22 @@ block/escape hatch.
 
 ## Things that will bite an agent generating Iris code
 
-- **Staged roadmap** — Stages 0–3 (spec, preprocessor, Penumbra backend,
-  reactive runtime) are done. **Stage 4 (Lustre-lite styling integration)
-  isn't scoped yet, Stage 5 (first real consumer) hasn't started, Stage 6
-  (Umbra Engine/Nyx backend, `.irisx`) is deliberately deferred** — don't
-  assume `.irisx`/Nyx-specific behavior exists.
+- **Staged roadmap (corrected 2026-09-14 — this bullet was stale and actively
+  misleading)**: Stages 0–5 are all done and in production, not "in progress" or
+  "not started": 0 (spec), 1 (preprocessor front end — both `CppTokenizer` for
+  `.iris`/C++23 *and* `NyxTokenizer` for `.irisx`/Nyx, wrapping nyx-proto's own
+  `Lexer` — `include/Iris/NyxTokenizer.h`, `IrisNyxDriver.h`, `IrisNyxEvaluator.h`),
+  2 (Penumbra backend, in `penumbra-ui-backend`), 3 (reactive runtime — `Signal`,
+  reconciler, `<Slot>`), 4 (Lustre styling — `penumbra-ui-backend`'s
+  `Lustre/StyleApplier.cpp`/`StyleResolution.cpp`/`StylesheetLoader.cpp`), 5 (first
+  real consumer — `pharos-proto`'s whole production panel tree,
+  `src/ui/nyx/*.irisx` + `src/ui/iris/*.lustre`, mounted via
+  `Iris::IrisNyxDriver::MountRoot`). **`.irisx`/Nyx-hosted components are real and
+  working today** — do not tell an agent not to assume this; verify against actual
+  source (or `pharos-proto`) if still in doubt, don't trust a "deferred" claim at
+  face value. Only Stage 6 (a *second rendering backend*, Umbra Engine — an
+  unrelated axis from Nyx-as-host-language) is still genuinely just a plan; see
+  `docs/iris_handoff.md` §6.
 - `<Grid>` has no real grid layout — don't expect columns/rows/gap props to
   do anything yet.
 - `IRIS_SIGNAL` is mandatory; the direct-declaration form is unsound even
