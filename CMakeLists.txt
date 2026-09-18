@@ -34,13 +34,20 @@ add_subdirectory(libs/umbra-interfaces)
 # ---------------------------------------------------------------------------
 # Cimmerian — the ecosystem's own BDD-style test framework
 # (docs/iris_stage2_decision_doc.md §7), vendored the same way as Amanuensis
-# and umbra-interfaces. Forced to CIMMERIAN_VISUAL_PLATFORM=None *before*
-# add_subdirectory: Cimmerian's own CMakeLists only sets that cache variable
-# if it isn't already set, and its default on Linux is X11, which pulls in
-# find_package(X11 REQUIRED) + libXtst — a new system dependency Iris's own
-# tests have no need for (no screenshot/visual-regression testing here).
+# and umbra-interfaces. No CIMMERIAN_VISUAL_PLATFORM/CIMMERIAN_ENABLE_*
+# override needed here (an earlier commit forced CIMMERIAN_VISUAL_PLATFORM to
+# "None" before this add_subdirectory, working around an older vendored
+# Cimmerian that built its visual/snapshot sources unconditionally, defaulting
+# to X11 on Linux and so pulling in find_package(X11 REQUIRED) + libXtst for a
+# capability Iris's own tests never used): the vendored commit now bumped
+# gates all of that behind CIMMERIAN_ENABLE_VISUAL_TESTING/
+# CIMMERIAN_ENABLE_SNAPSHOT_TESTING, each defaulting to
+# CIMMERIAN_IS_ROOT_PROJECT (false here, since this add_subdirectory makes
+# Iris the consumer, not Cimmerian's own root build) -- so both already
+# default off with nothing set. A consumer fetching Iris that wants visual/
+# snapshot testing for its own tests (Cairn, e.g.) sets
+# CIMMERIAN_ENABLE_VISUAL_TESTING itself, before its own FetchContent of Iris.
 # ---------------------------------------------------------------------------
-set(CIMMERIAN_VISUAL_PLATFORM "None" CACHE STRING "" FORCE)
 add_subdirectory(libs/cimmerian)
 
 # ---------------------------------------------------------------------------
