@@ -23,6 +23,15 @@ const std::unordered_map<std::string, std::string>& PrimitivePropTypeNames() {
         {"icon", "std::string"},
         {"size", "float"},
         {"wheelStep", "float"},
+        // <Scroll>'s own axis-selection props (give-code-blocks-their-own-horizontally-
+        // scrollable-non-wrapping-frame-in-the-card-modal, Cairn), mirroring
+        // Penumbra::Widgets::ScrollablePanel::ScrollDirection -- `direction` is a plain
+        // string ("vertical" (default) | "horizontal") rather than a new bool/enum
+        // IrisPropValue kind, the same treatment <Split>'s own `axis` string already
+        // gets. horizontalWheelStep is wheelStep's own Direction=="horizontal"
+        // counterpart, mapping onto HorizontalWheelStepLogical.
+        {"direction", "std::string"},
+        {"horizontalWheelStep", "float"},
         // <Split>'s own dedicated props (docs/archive/iris_next_steps_resolved.md, "No
         // layout-container primitive beyond Frame's three stack modes"), mirroring
         // Penumbra::Widgets::SplitPanel's real fields (Axis/SplitRatio/
