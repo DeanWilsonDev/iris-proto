@@ -196,6 +196,35 @@ DESCRIBE("SlotResolution", {
         // the two static siblings sit directly adjacent
     });
 
+    IT("a list-shaped Slot whose only entry is None contributes nothing (not a crash)", {
+        // Regression test: a Nyx-authored <Slot> is ALWAYS list-shaped (IrisNyxEvaluator's
+        // own EvaluateSlot), even for a bare ternary with no .Map()/.Reduce() -- so "pick a
+        // real component, or nothing" (e.g. `cond ? <Foo/> : null`) previously produced a
+        // one-element list containing a None-tagged Component, which this list branch had no
+        // filtering for (unlike the single-Component branch just above, which already does
+        // `NewOutput.Tag != None ? {NewOutput} : {}`). ReconcileChildrenAt/InsertChildAt then
+        // had no choice but to try to Mount() that None entry, and Mount() correctly returns
+        // nullptr for a None node the same way BuildWidgetTreeInternal always has -- but
+        // every list-reconciliation caller up to here assumed that could never happen for a
+        // list entry specifically, so a real caller (Cairn's own BodyBlock.irisx, mounting a
+        // single-line-text-or-nothing/codeblock-or-nothing <Slot> per FlatBodyBlock) crashed
+        // with EXC_BAD_ACCESS inserting a null child. Found while attempting the
+        // once-wrap-lands-...-list-template migration task.
+        iris::MountFn Mount = TestMounter();
+
+        Iris::Component RootNode = MakeFrame({
+            MakeText("before"),
+            MakeSlot(Iris::MakeSlotCallable([]() -> std::vector<Iris::Component> { return {Iris::Component(nullptr)}; })),
+            MakeText("after"),
+        });
+        std::unique_ptr<Umbra::IWidget> Root = Mount(RootNode);
+        auto                             Slots = iris::ResolveSlots(*Root, RootNode, Mount);
+
+        ASSERT_EQUAL(Root->GetChildCount(), static_cast<std::size_t>(2));
+        ASSERT_TRUE(dynamic_cast<MockWidget*>(Root->GetChildAt(0))->Text == "before" &&
+                    dynamic_cast<MockWidget*>(Root->GetChildAt(1))->Text == "after");
+    });
+
     IT("a Slot driven by a signal updates the real tree on Tick()", {
         iris::MountFn Mount = TestMounter();
 

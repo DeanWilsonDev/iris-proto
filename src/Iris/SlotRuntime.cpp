@@ -194,6 +194,25 @@ void SlotState::Reconcile() {
             std::get<std::function<std::vector<Iris::Component>()>>(Callable_->Callable)();
         IrisRuntime::Instance().PopActiveSlot();
 
+        // Drop every None-tagged entry -- the single-Component branch above already gives
+        // its own output this same treatment (`NewOutput.Tag != None ? {NewOutput} : {}`)
+        // before ever reaching ReconcileWidget/ReconcileChildrenAt, but a Nyx-authored
+        // `<Slot>` is *always* list-shaped regardless of whether its own callable is a
+        // ternary or a real .Map()/.Reduce() (IrisNyxEvaluator.cpp's own EvaluateSlot),
+        // so a ternary picking "a real component, or nothing" (the same "present or
+        // absent as a whole" pattern this codebase already documents as safe elsewhere,
+        // e.g. KanbanCard.irisx's own doc comment) previously reached this branch
+        // instead, with no equivalent filter -- a None entry survived into NewOutput,
+        // ReconcileChildrenAt/ReconcileList had no choice but to try to Mount() it, and
+        // Mount() correctly reports "no widget for a None node" the same way it already
+        // does everywhere else, which every caller up to here assumed could never happen
+        // for a *list* entry specifically (main-cpp-reduction-move-orchestration-onto-
+        // iris-nyx kanban epic's own once-wrap-lands-...-list-template task, found while
+        // building CardModal.irisx's own per-Kind BodyBlock.irisx component).
+        NewOutput.erase(std::remove_if(NewOutput.begin(), NewOutput.end(),
+                                        [](const Iris::Component& C) { return C.Tag == Iris::IrisElementTag::None; }),
+                        NewOutput.end());
+
         if (AttachedParent_ != nullptr) {
             const std::size_t Base = AttachedGroup_->AbsoluteIndexOf(AttachedGroupIndex_);
 
