@@ -107,6 +107,9 @@ public:
     // what Iris itself requires.
     nyx::host::NyxRuntime& Runtime();
 
+    const IrisConfig&  Config() const { return Config_; }
+    const std::string& ProjectRoot() const { return ProjectRoot_; }
+
     // Registers a named `<Native>` widget builder (`NyxEvaluator::EvaluateNative`,
     // IrisIrRuntime.h / `NativeBuilderLookup`, IrisNyxEvaluator.h) -- called by the host
     // application before the first `MountRoot`/`ReloadRoot` call that mounts a `.irisx` file
