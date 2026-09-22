@@ -4,7 +4,7 @@
 #include "Iris/ImportResolver.h"
 #include "Iris/RenderBlockParser.h"
 
-#include <amanuensis/value.hpp>
+#include <amanuensis/json-value.hpp>
 
 #include <string>
 #include <string_view>
@@ -16,7 +16,7 @@ namespace Iris {
 // rule: `.chaos`/"Chaos IR" is Iris's own *future* rename, not adopted for concrete
 // artifacts this repo produces today) for what docs/iris_nyx_emission_decision.md and
 // chaos-ir-spec.md §3 both specify as the schema for one already-parsed `.irisx` file's
-// output -- as an Amanuensis::Value ready for Amanuensis::Writer::WriteToString, the
+// output -- as an Amanuensis::JsonValue ready for Amanuensis::Writer::WriteToString, the
 // Nyx-target sibling to GenerateComponentExpression (Codegen.h), producing data instead of
 // a spliced C++23 expression string. Every value this function reads (Imports,
 // ResolvedImportsList, ParseResult) is something Driver::CompileFile already computes for
@@ -28,7 +28,7 @@ namespace Iris {
 // into a JSON field instead of spliced output. `ResolvedImportsList` must already have every
 // entry of `Imports` resolved -- same precondition Driver::CompileFile's own `.iris` path
 // has (an unresolved import is a diagnostic that returns before either path runs).
-Amanuensis::Value BuildIrisIr(std::string_view Source, const std::string& FilePath,
+Amanuensis::JsonValue BuildIrisIr(std::string_view Source, const std::string& FilePath,
                                const std::vector<ImportStatement>& Imports,
                                const std::vector<ResolvedImport>& ResolvedImportsList,
                                const RenderBlockParser::Result& ParseResult);

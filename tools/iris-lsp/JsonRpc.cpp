@@ -26,7 +26,7 @@ std::optional<std::string> ReadHeaderLine(std::FILE* In) {
 
 } // namespace
 
-std::optional<Amanuensis::Value> JsonRpc::ReadMessage(std::FILE* In) {
+std::optional<Amanuensis::JsonValue> JsonRpc::ReadMessage(std::FILE* In) {
     std::size_t ContentLength = 0;
     bool        SawContentLength = false;
 
@@ -60,14 +60,14 @@ std::optional<Amanuensis::Value> JsonRpc::ReadMessage(std::FILE* In) {
         return std::nullopt; // short read — stream closed mid-frame
     }
 
-    const Amanuensis::ParseResult Parsed = Amanuensis::Reader::ParseString(Body);
+    const Amanuensis::JsonParseResult Parsed = Amanuensis::Reader::ParseString(Body);
     if (!Parsed.succeeded) {
         return std::nullopt;
     }
     return Parsed.value;
 }
 
-void JsonRpc::WriteMessage(std::FILE* Out, const Amanuensis::Value& Message) {
+void JsonRpc::WriteMessage(std::FILE* Out, const Amanuensis::JsonValue& Message) {
     Amanuensis::WriterOptions Options;
     Options.pretty = false;
     Options.trailingNewline = false;

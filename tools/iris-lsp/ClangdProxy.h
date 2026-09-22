@@ -42,9 +42,9 @@ private:
     // Sends a request over ChildStdin_ (write side is mutex-guarded -- ReaderLoop_ never
     // writes except its own auto-replies to server->client requests, which take the same
     // lock) and blocks on PendingCv_ until ReaderLoop_ has filled in PendingResults_[Id].
-    Amanuensis::Value SendRequest(const std::string& Method, Amanuensis::Value Params);
-    void              SendNotification(const std::string& Method, Amanuensis::Value Params);
-    void              WriteLocked(const Amanuensis::Value& Message);
+    Amanuensis::JsonValue SendRequest(const std::string& Method, Amanuensis::JsonValue Params);
+    void              SendNotification(const std::string& Method, Amanuensis::JsonValue Params);
+    void              WriteLocked(const Amanuensis::JsonValue& Message);
 
     // The one thread that ever calls JsonRpc::ReadMessage(ChildStdout_). Dispatches each
     // message read: a reply to one of our own requests goes into PendingResults_ (and
@@ -65,7 +65,7 @@ private:
     std::mutex               WriteMutex_; // guards ChildStdin_ writes from any thread
     std::mutex               PendingMutex_;
     std::condition_variable  PendingCv_;
-    std::unordered_map<int, Amanuensis::Value> PendingResults_;
+    std::unordered_map<int, Amanuensis::JsonValue> PendingResults_;
     bool                     Stopping_{false};
 
     ProxyDiagnosticsCallback DiagnosticsCallback_;

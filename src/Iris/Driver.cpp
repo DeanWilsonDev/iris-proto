@@ -139,7 +139,7 @@ DriverResult CompileFile(std::string_view Source, std::string FilePath, const Ir
     // Every import resolved successfully by this point — an unresolved one is a
     // Diagnostics entry above, which already returned early.
     if (IsNyx) {
-        const Amanuensis::Value IrisIrDoc =
+        const Amanuensis::JsonValue IrisIrDoc =
             BuildIrisIr(Source, FilePath, Imports, ResolvedImports.Resolved, ParseResult);
         Result.Output = Amanuensis::Writer::WriteToString(IrisIrDoc);
         return Result;

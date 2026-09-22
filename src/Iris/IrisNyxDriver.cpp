@@ -275,7 +275,7 @@ const IrisIrDocument* IrisNyxDriver::LoadDocument(const std::string& ResolvedPat
         return nullptr;
     }
 
-    const Amanuensis::ParseResult Parsed = Amanuensis::Reader::ParseString(Compiled.Output);
+    const Amanuensis::JsonParseResult Parsed = Amanuensis::Reader::ParseString(Compiled.Output);
     if (!Parsed.succeeded) {
         Errors_.push_back(
             IrisIrRuntimeError{"'" + ResolvedPath + "' compiled to invalid IR JSON", IrSourceLocation{ResolvedPath}});

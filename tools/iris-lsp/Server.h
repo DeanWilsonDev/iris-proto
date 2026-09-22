@@ -48,18 +48,18 @@ private:
         std::unique_ptr<VirtualDocument> Virtual;
     };
 
-    void HandleMessage(const Amanuensis::Value& Message);
-    void Reply(const Amanuensis::Value& Id, Amanuensis::Value Result);
-    void ReplyError(const Amanuensis::Value& Id, int Code, const std::string& Message);
-    void Notify(const std::string& Method, Amanuensis::Value Params);
+    void HandleMessage(const Amanuensis::JsonValue& Message);
+    void Reply(const Amanuensis::JsonValue& Id, Amanuensis::JsonValue Result);
+    void ReplyError(const Amanuensis::JsonValue& Id, int Code, const std::string& Message);
+    void Notify(const std::string& Method, Amanuensis::JsonValue Params);
 
-    void HandleInitialize(const Amanuensis::Value& Id, const Amanuensis::Value& Params);
-    void HandleDidOpen(const Amanuensis::Value& Params);
-    void HandleDidChange(const Amanuensis::Value& Params);
-    void HandleDidClose(const Amanuensis::Value& Params);
-    void HandleCompletion(const Amanuensis::Value& Id, const Amanuensis::Value& Params);
-    void HandleDefinition(const Amanuensis::Value& Id, const Amanuensis::Value& Params);
-    void HandleSemanticTokensFull(const Amanuensis::Value& Id, const Amanuensis::Value& Params);
+    void HandleInitialize(const Amanuensis::JsonValue& Id, const Amanuensis::JsonValue& Params);
+    void HandleDidOpen(const Amanuensis::JsonValue& Params);
+    void HandleDidChange(const Amanuensis::JsonValue& Params);
+    void HandleDidClose(const Amanuensis::JsonValue& Params);
+    void HandleCompletion(const Amanuensis::JsonValue& Id, const Amanuensis::JsonValue& Params);
+    void HandleDefinition(const Amanuensis::JsonValue& Id, const Amanuensis::JsonValue& Params);
+    void HandleSemanticTokensFull(const Amanuensis::JsonValue& Id, const Amanuensis::JsonValue& Params);
 
     // Rebuilds Documents_[Uri]'s VirtualDocument from Text and publishes fresh
     // diagnostics -- the one path both didOpen and didChange funnel through. Locks
@@ -70,7 +70,7 @@ private:
     // immediately-after-rebuild publish (clangd hasn't replied yet) and the merged
     // republish HandleClangdDiagnostics does once it has. Caller must hold
     // DocumentsMutex_ already (Doc is a reference into Documents_).
-    Amanuensis::Value BuildIrisDiagnosticsArray(const OpenDocument& Doc) const;
+    Amanuensis::JsonValue BuildIrisDiagnosticsArray(const OpenDocument& Doc) const;
     void              PublishDiagnostics(const std::string& Uri, const OpenDocument& Doc);
 
     // ProxyDiagnosticsCallback target -- see Server.h's own class comment on the

@@ -21,7 +21,7 @@ using namespace Iris;
 // dispatches on to pick NyxTokenizer) is used as the fake FilePath throughout.
 IrisIrDocument BuildRealDocument(std::string_view Source) {
     RenderBlockParser::Result ParseResult = RenderBlockParser(Source, "test.irisx").Parse();
-    Amanuensis::Value          Json = BuildIrisIr(Source, "test.irisx", {}, {}, ParseResult);
+    Amanuensis::JsonValue          Json = BuildIrisIr(Source, "test.irisx", {}, {}, ParseResult);
     IrisIrDocumentParseResult   Parsed = ParseIrisIrDocument(Json);
     return std::move(*Parsed.Document);
 }

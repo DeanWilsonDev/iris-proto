@@ -34,46 +34,46 @@ private:
 
 std::string Uri(const std::string& Path) { return "file://" + Path; }
 
-Amanuensis::Value MakeMessage(std::string Method, Amanuensis::Value Params) {
-    Amanuensis::Value Message = Amanuensis::Json::MakeObject();
-    Amanuensis::Json::Insert(Message, "jsonrpc", Amanuensis::Value("2.0"));
-    Amanuensis::Json::Insert(Message, "method", Amanuensis::Value(std::move(Method)));
+Amanuensis::JsonValue MakeMessage(std::string Method, Amanuensis::JsonValue Params) {
+    Amanuensis::JsonValue Message = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(Message, "jsonrpc", Amanuensis::JsonValue("2.0"));
+    Amanuensis::Json::Insert(Message, "method", Amanuensis::JsonValue(std::move(Method)));
     Amanuensis::Json::Insert(Message, "params", std::move(Params));
     return Message;
 }
 
-Amanuensis::Value MakeRequest(int Id, std::string Method, Amanuensis::Value Params) {
-    Amanuensis::Value Message = MakeMessage(std::move(Method), std::move(Params));
-    Amanuensis::Json::Insert(Message, "id", Amanuensis::Value(static_cast<long long>(Id)));
+Amanuensis::JsonValue MakeRequest(int Id, std::string Method, Amanuensis::JsonValue Params) {
+    Amanuensis::JsonValue Message = MakeMessage(std::move(Method), std::move(Params));
+    Amanuensis::Json::Insert(Message, "id", Amanuensis::JsonValue(static_cast<long long>(Id)));
     return Message;
 }
 
-Amanuensis::Value MakeTextDocument(const std::string& FileUri, const std::string& Text) {
-    Amanuensis::Value TextDocument = Amanuensis::Json::MakeObject();
-    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::Value(FileUri));
-    Amanuensis::Json::Insert(TextDocument, "languageId", Amanuensis::Value("cpp"));
-    Amanuensis::Json::Insert(TextDocument, "version", Amanuensis::Value(static_cast<long long>(1)));
-    Amanuensis::Json::Insert(TextDocument, "text", Amanuensis::Value(Text));
-    Amanuensis::Value Params = Amanuensis::Json::MakeObject();
+Amanuensis::JsonValue MakeTextDocument(const std::string& FileUri, const std::string& Text) {
+    Amanuensis::JsonValue TextDocument = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::JsonValue(FileUri));
+    Amanuensis::Json::Insert(TextDocument, "languageId", Amanuensis::JsonValue("cpp"));
+    Amanuensis::Json::Insert(TextDocument, "version", Amanuensis::JsonValue(static_cast<long long>(1)));
+    Amanuensis::Json::Insert(TextDocument, "text", Amanuensis::JsonValue(Text));
+    Amanuensis::JsonValue Params = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Params, "textDocument", std::move(TextDocument));
     return Params;
 }
 
-Amanuensis::Value MakeTextDocumentParams(const std::string& FileUri) {
-    Amanuensis::Value TextDocument = Amanuensis::Json::MakeObject();
-    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::Value(FileUri));
-    Amanuensis::Value Params = Amanuensis::Json::MakeObject();
+Amanuensis::JsonValue MakeTextDocumentParams(const std::string& FileUri) {
+    Amanuensis::JsonValue TextDocument = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::JsonValue(FileUri));
+    Amanuensis::JsonValue Params = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Params, "textDocument", std::move(TextDocument));
     return Params;
 }
 
-Amanuensis::Value MakePositionParams(const std::string& FileUri, std::uint32_t Line0, std::uint32_t Char0) {
-    Amanuensis::Value TextDocument = Amanuensis::Json::MakeObject();
-    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::Value(FileUri));
-    Amanuensis::Value Position = Amanuensis::Json::MakeObject();
-    Amanuensis::Json::Insert(Position, "line", Amanuensis::Value(static_cast<long long>(Line0)));
-    Amanuensis::Json::Insert(Position, "character", Amanuensis::Value(static_cast<long long>(Char0)));
-    Amanuensis::Value Params = Amanuensis::Json::MakeObject();
+Amanuensis::JsonValue MakePositionParams(const std::string& FileUri, std::uint32_t Line0, std::uint32_t Char0) {
+    Amanuensis::JsonValue TextDocument = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::JsonValue(FileUri));
+    Amanuensis::JsonValue Position = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(Position, "line", Amanuensis::JsonValue(static_cast<long long>(Line0)));
+    Amanuensis::Json::Insert(Position, "character", Amanuensis::JsonValue(static_cast<long long>(Char0)));
+    Amanuensis::JsonValue Params = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Params, "textDocument", std::move(TextDocument));
     Amanuensis::Json::Insert(Params, "position", std::move(Position));
     return Params;
@@ -83,11 +83,11 @@ Amanuensis::Value MakePositionParams(const std::string& FileUri, std::uint32_t L
 // disables proxy creation first (tools/iris-lsp/tests/ has no dependency on clangd
 // being installed -- see docs/iris_lsp_decision.md §7), and returns every message the
 // server wrote to its "client" in order.
-std::vector<Amanuensis::Value> RunServer(const std::vector<Amanuensis::Value>& Inputs) {
+std::vector<Amanuensis::JsonValue> RunServer(const std::vector<Amanuensis::JsonValue>& Inputs) {
     std::FILE* In = std::tmpfile();
     std::FILE* Out = std::tmpfile();
 
-    for (const Amanuensis::Value& Message : Inputs) {
+    for (const Amanuensis::JsonValue& Message : Inputs) {
         IrisLsp::JsonRpc::WriteMessage(In, Message);
     }
     std::rewind(In);
@@ -97,7 +97,7 @@ std::vector<Amanuensis::Value> RunServer(const std::vector<Amanuensis::Value>& I
     Server.Run(In, Out);
 
     std::rewind(Out);
-    std::vector<Amanuensis::Value> Outputs;
+    std::vector<Amanuensis::JsonValue> Outputs;
     for (;;) {
         auto Message = IrisLsp::JsonRpc::ReadMessage(Out);
         if (!Message) {
@@ -110,8 +110,8 @@ std::vector<Amanuensis::Value> RunServer(const std::vector<Amanuensis::Value>& I
     return Outputs;
 }
 
-const Amanuensis::Value* FindByMethod(const std::vector<Amanuensis::Value>& Messages, const std::string& Method) {
-    for (const Amanuensis::Value& Message : Messages) {
+const Amanuensis::JsonValue* FindByMethod(const std::vector<Amanuensis::JsonValue>& Messages, const std::string& Method) {
+    for (const Amanuensis::JsonValue& Message : Messages) {
         if (Amanuensis::Json::Contains(Message, "method") &&
             Amanuensis::Json::AsString(Amanuensis::Json::Get(Message, "method")) == Method) {
             return &Message;
@@ -120,8 +120,8 @@ const Amanuensis::Value* FindByMethod(const std::vector<Amanuensis::Value>& Mess
     return nullptr;
 }
 
-const Amanuensis::Value* FindReplyToId(const std::vector<Amanuensis::Value>& Messages, int Id) {
-    for (const Amanuensis::Value& Message : Messages) {
+const Amanuensis::JsonValue* FindReplyToId(const std::vector<Amanuensis::JsonValue>& Messages, int Id) {
+    for (const Amanuensis::JsonValue& Message : Messages) {
         if (Amanuensis::Json::Contains(Message, "id") &&
             Amanuensis::Json::IsInteger(Amanuensis::Json::Get(Message, "id")) &&
             Amanuensis::Json::AsInteger(Amanuensis::Json::Get(Message, "id")) == Id) {
@@ -156,11 +156,11 @@ DESCRIBE("Server.diagnostics", {
             RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
                        MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
-                       MakeRequest(2, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+                       MakeRequest(2, "shutdown", Amanuensis::JsonValue()), MakeMessage("exit", Amanuensis::JsonValue())});
 
-        const Amanuensis::Value* Diagnostics = FindByMethod(Outputs, "textDocument/publishDiagnostics");
+        const Amanuensis::JsonValue* Diagnostics = FindByMethod(Outputs, "textDocument/publishDiagnostics");
         REQUIRE_TRUE(Diagnostics != nullptr);
-        const Amanuensis::Value& List =
+        const Amanuensis::JsonValue& List =
             Amanuensis::Json::Get(Amanuensis::Json::Get(*Diagnostics, "params"), "diagnostics");
         REQUIRE_TRUE(Amanuensis::Json::Size(List) == 1);
         ASSERT_TRUE(Contains(Amanuensis::Json::AsString(Amanuensis::Json::Get(Amanuensis::Json::At(List, 0), "message")),
@@ -173,9 +173,9 @@ DESCRIBE("Server.diagnostics", {
             RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
                        MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, SimpleComponentSource)),
-                       MakeRequest(2, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+                       MakeRequest(2, "shutdown", Amanuensis::JsonValue()), MakeMessage("exit", Amanuensis::JsonValue())});
 
-        const Amanuensis::Value* Diagnostics = FindByMethod(Outputs, "textDocument/publishDiagnostics");
+        const Amanuensis::JsonValue* Diagnostics = FindByMethod(Outputs, "textDocument/publishDiagnostics");
         REQUIRE_TRUE(Diagnostics != nullptr);
         ASSERT_TRUE(Amanuensis::Json::Size(Amanuensis::Json::Get(Amanuensis::Json::Get(*Diagnostics, "params"),
                                                                    "diagnostics")) == 0);
@@ -192,11 +192,11 @@ DESCRIBE("Server.completion", {
                        MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, SimpleComponentSource)),
                        MakeRequest(2, "textDocument/completion", MakePositionParams(FileUri, 5, 13)),
-                       MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+                       MakeRequest(3, "shutdown", Amanuensis::JsonValue()), MakeMessage("exit", Amanuensis::JsonValue())});
 
-        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
+        const Amanuensis::JsonValue* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& Items = Amanuensis::Json::Get(Amanuensis::Json::Get(*Reply, "result"), "items");
+        const Amanuensis::JsonValue& Items = Amanuensis::Json::Get(Amanuensis::Json::Get(*Reply, "result"), "items");
         bool                       FoundFrame = false;
         for (std::size_t Index = 0; Index < Amanuensis::Json::Size(Items); ++Index) {
             if (Amanuensis::Json::AsString(Amanuensis::Json::Get(Amanuensis::Json::At(Items, Index), "label")) ==
@@ -216,11 +216,11 @@ DESCRIBE("Server.completion", {
                        MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, SimpleComponentSource)),
                        MakeRequest(2, "textDocument/completion", MakePositionParams(FileUri, 4, 15)),
-                       MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+                       MakeRequest(3, "shutdown", Amanuensis::JsonValue()), MakeMessage("exit", Amanuensis::JsonValue())});
 
-        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
+        const Amanuensis::JsonValue* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& Items = Amanuensis::Json::Get(Amanuensis::Json::Get(*Reply, "result"), "items");
+        const Amanuensis::JsonValue& Items = Amanuensis::Json::Get(Amanuensis::Json::Get(*Reply, "result"), "items");
         bool                       FoundClass = false;
         for (std::size_t Index = 0; Index < Amanuensis::Json::Size(Items); ++Index) {
             if (Amanuensis::Json::AsString(Amanuensis::Json::Get(Amanuensis::Json::At(Items, Index), "label")) ==
@@ -255,11 +255,11 @@ DESCRIBE("Server.definition", {
                        MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
                        MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 1, 7)),
-                       MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+                       MakeRequest(3, "shutdown", Amanuensis::JsonValue()), MakeMessage("exit", Amanuensis::JsonValue())});
 
-        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
+        const Amanuensis::JsonValue* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& Location = Amanuensis::Json::Get(*Reply, "result");
+        const Amanuensis::JsonValue& Location = Amanuensis::Json::Get(*Reply, "result");
         ASSERT_TRUE(Contains(Amanuensis::Json::AsString(Amanuensis::Json::Get(Location, "uri")), "Button.iris"));
         ASSERT_TRUE(Amanuensis::Json::AsInteger(Amanuensis::Json::Get(
                         Amanuensis::Json::Get(Amanuensis::Json::Get(Location, "range"), "start"), "line")) ==
@@ -288,11 +288,11 @@ DESCRIBE("Server.definition", {
                        MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
                        MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 4, 16)),
-                       MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+                       MakeRequest(3, "shutdown", Amanuensis::JsonValue()), MakeMessage("exit", Amanuensis::JsonValue())});
 
-        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
+        const Amanuensis::JsonValue* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& Location = Amanuensis::Json::Get(*Reply, "result");
+        const Amanuensis::JsonValue& Location = Amanuensis::Json::Get(*Reply, "result");
         ASSERT_TRUE(Contains(Amanuensis::Json::AsString(Amanuensis::Json::Get(Location, "uri")), "Button.iris"));
         ASSERT_TRUE(Amanuensis::Json::AsInteger(Amanuensis::Json::Get(
                         Amanuensis::Json::Get(Amanuensis::Json::Get(Location, "range"), "start"), "line")) == 2);
@@ -307,9 +307,9 @@ DESCRIBE("Server.definition", {
                        MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, SimpleComponentSource)),
                        MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 5, 14)),
-                       MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+                       MakeRequest(3, "shutdown", Amanuensis::JsonValue()), MakeMessage("exit", Amanuensis::JsonValue())});
 
-        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
+        const Amanuensis::JsonValue* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
         ASSERT_TRUE(Amanuensis::Json::IsNull(Amanuensis::Json::Get(*Reply, "result")));
     });
@@ -331,11 +331,11 @@ DESCRIBE("Server.definition", {
                        MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
                        MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 3, 28)),
-                       MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+                       MakeRequest(3, "shutdown", Amanuensis::JsonValue()), MakeMessage("exit", Amanuensis::JsonValue())});
 
-        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
+        const Amanuensis::JsonValue* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& Location = Amanuensis::Json::Get(*Reply, "result");
+        const Amanuensis::JsonValue& Location = Amanuensis::Json::Get(*Reply, "result");
         ASSERT_TRUE(Contains(Amanuensis::Json::AsString(Amanuensis::Json::Get(Location, "uri")), "Foo.lustre"));
         ASSERT_TRUE(Amanuensis::Json::AsInteger(Amanuensis::Json::Get(
                         Amanuensis::Json::Get(Amanuensis::Json::Get(Location, "range"), "start"), "line")) ==
@@ -358,11 +358,11 @@ DESCRIBE("Server.definition", {
                        MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
                        MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 3, 28)),
-                       MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+                       MakeRequest(3, "shutdown", Amanuensis::JsonValue()), MakeMessage("exit", Amanuensis::JsonValue())});
 
-        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
+        const Amanuensis::JsonValue* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& Location = Amanuensis::Json::Get(*Reply, "result");
+        const Amanuensis::JsonValue& Location = Amanuensis::Json::Get(*Reply, "result");
         ASSERT_TRUE(Contains(Amanuensis::Json::AsString(Amanuensis::Json::Get(Location, "uri")), "global.lustre"));
         ASSERT_TRUE(Amanuensis::Json::AsInteger(Amanuensis::Json::Get(
                         Amanuensis::Json::Get(Amanuensis::Json::Get(Location, "range"), "start"), "line")) ==
@@ -384,9 +384,9 @@ DESCRIBE("Server.definition", {
                        MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, Source)),
                        MakeRequest(2, "textDocument/definition", MakePositionParams(FileUri, 3, 28)),
-                       MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+                       MakeRequest(3, "shutdown", Amanuensis::JsonValue()), MakeMessage("exit", Amanuensis::JsonValue())});
 
-        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
+        const Amanuensis::JsonValue* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
         ASSERT_TRUE(Amanuensis::Json::IsNull(Amanuensis::Json::Get(*Reply, "result")));
     });
@@ -400,11 +400,11 @@ DESCRIBE("Server.semanticTokens", {
                        MakeMessage("initialized", Amanuensis::Json::MakeObject()),
                        MakeMessage("textDocument/didOpen", MakeTextDocument(FileUri, SimpleComponentSource)),
                        MakeRequest(2, "textDocument/semanticTokens/full", MakeTextDocumentParams(FileUri)),
-                       MakeRequest(3, "shutdown", Amanuensis::Value()), MakeMessage("exit", Amanuensis::Value())});
+                       MakeRequest(3, "shutdown", Amanuensis::JsonValue()), MakeMessage("exit", Amanuensis::JsonValue())});
 
-        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 2);
+        const Amanuensis::JsonValue* Reply = FindReplyToId(Outputs, 2);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& Data = Amanuensis::Json::Get(Amanuensis::Json::Get(*Reply, "result"), "data");
+        const Amanuensis::JsonValue& Data = Amanuensis::Json::Get(Amanuensis::Json::Get(*Reply, "result"), "data");
         // SimpleComponentSource has one outer <Frame class="a">...</Frame> (opening tag,
         // prop, string, closing tag) wrapping one inner self-closing <Frame /> (opening
         // tag only, no closing tag) -- 5 tokens, 5 wire-format integers each.
@@ -418,11 +418,11 @@ DESCRIBE("Server.semanticTokens", {
 
     IT("declares its legend during initialize", {
         const auto Outputs = RunServer({MakeRequest(1, "initialize", Amanuensis::Json::MakeObject()),
-                                         MakeRequest(2, "shutdown", Amanuensis::Value()),
-                                         MakeMessage("exit", Amanuensis::Value())});
-        const Amanuensis::Value* Reply = FindReplyToId(Outputs, 1);
+                                         MakeRequest(2, "shutdown", Amanuensis::JsonValue()),
+                                         MakeMessage("exit", Amanuensis::JsonValue())});
+        const Amanuensis::JsonValue* Reply = FindReplyToId(Outputs, 1);
         REQUIRE_TRUE(Reply != nullptr);
-        const Amanuensis::Value& TokenTypes = Amanuensis::Json::Get(
+        const Amanuensis::JsonValue& TokenTypes = Amanuensis::Json::Get(
             Amanuensis::Json::Get(
                 Amanuensis::Json::Get(
                     Amanuensis::Json::Get(Amanuensis::Json::Get(*Reply, "result"), "capabilities"),

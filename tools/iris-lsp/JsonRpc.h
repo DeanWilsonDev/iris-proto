@@ -20,11 +20,11 @@ public:
     // Blocks until one full frame has been read, or returns std::nullopt on EOF/a
     // malformed header (a real client never sends the latter; treated as "connection is
     // over" rather than a recoverable per-message error, same as EOF).
-    static std::optional<Amanuensis::Value> ReadMessage(std::FILE* In);
+    static std::optional<Amanuensis::JsonValue> ReadMessage(std::FILE* In);
 
     // Writes one frame and flushes — LSP has no batching/pipelining requirement, and a
     // buffered-but-unflushed stdout would hang a client waiting on a response.
-    static void WriteMessage(std::FILE* Out, const Amanuensis::Value& Message);
+    static void WriteMessage(std::FILE* Out, const Amanuensis::JsonValue& Message);
 };
 
 } // namespace IrisLsp

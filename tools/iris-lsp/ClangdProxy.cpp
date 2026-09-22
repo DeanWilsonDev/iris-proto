@@ -23,18 +23,18 @@ std::string FileUriToPath(const std::string& Uri) {
     return Uri;
 }
 
-Amanuensis::Value MakePosition(std::uint32_t Line, std::uint32_t Column) {
+Amanuensis::JsonValue MakePosition(std::uint32_t Line, std::uint32_t Column) {
     // LSP positions are 0-based; every position in this codebase (Iris::SourceLocation,
     // VirtualDocument) is 1-based, so every crossing into clangd's own wire format
     // subtracts one, and every crossing back adds one -- this function and
     // PositionFromValue below are the only two places that conversion happens.
-    Amanuensis::Value Position = Amanuensis::Json::MakeObject();
-    Amanuensis::Json::Insert(Position, "line", Amanuensis::Value(static_cast<long long>(Line - 1)));
-    Amanuensis::Json::Insert(Position, "character", Amanuensis::Value(static_cast<long long>(Column - 1)));
+    Amanuensis::JsonValue Position = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(Position, "line", Amanuensis::JsonValue(static_cast<long long>(Line - 1)));
+    Amanuensis::Json::Insert(Position, "character", Amanuensis::JsonValue(static_cast<long long>(Column - 1)));
     return Position;
 }
 
-std::pair<std::uint32_t, std::uint32_t> PositionFromValue(const Amanuensis::Value& Position) {
+std::pair<std::uint32_t, std::uint32_t> PositionFromValue(const Amanuensis::JsonValue& Position) {
     return {static_cast<std::uint32_t>(Amanuensis::Json::AsInteger(Amanuensis::Json::Get(Position, "line"))) + 1,
             static_cast<std::uint32_t>(Amanuensis::Json::AsInteger(Amanuensis::Json::Get(Position, "character"))) + 1};
 }
@@ -105,11 +105,11 @@ bool ClangdProxy::Start(const std::string& ProjectRoot) {
     // it -- started here, ahead of the initialize handshake below.
     ReaderThread_ = std::thread(&ClangdProxy::ReaderLoop, this);
 
-    Amanuensis::Value Params = Amanuensis::Json::MakeObject();
-    Amanuensis::Json::Insert(Params, "processId", Amanuensis::Value());
-    Amanuensis::Json::Insert(Params, "rootUri", Amanuensis::Value(PathToFileUri(ProjectRoot)));
+    Amanuensis::JsonValue Params = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(Params, "processId", Amanuensis::JsonValue());
+    Amanuensis::Json::Insert(Params, "rootUri", Amanuensis::JsonValue(PathToFileUri(ProjectRoot)));
     Amanuensis::Json::Insert(Params, "capabilities", Amanuensis::Json::MakeObject());
-    const Amanuensis::Value InitResult = SendRequest("initialize", std::move(Params));
+    const Amanuensis::JsonValue InitResult = SendRequest("initialize", std::move(Params));
     // clangd exiting/failing to start surfaces here as a read failure -- SendRequest
     // returns a null Value in that case (see ReaderLoop_'s own EOF handling), which
     // IsNull() catches without needing a separate "did the process actually start" check.
@@ -133,33 +133,33 @@ void ClangdProxy::SyncGeneratedDocument(const std::string& GeneratedPath, const 
         OpenedDocuments_.insert(GeneratedPath);
         DocumentVersions_[GeneratedPath] = 1;
 
-        Amanuensis::Value TextDocument = Amanuensis::Json::MakeObject();
-        Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::Value(Uri));
-        Amanuensis::Json::Insert(TextDocument, "languageId", Amanuensis::Value("cpp"));
-        Amanuensis::Json::Insert(TextDocument, "version", Amanuensis::Value(static_cast<long long>(1)));
-        Amanuensis::Json::Insert(TextDocument, "text", Amanuensis::Value(GeneratedText));
+        Amanuensis::JsonValue TextDocument = Amanuensis::Json::MakeObject();
+        Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::JsonValue(Uri));
+        Amanuensis::Json::Insert(TextDocument, "languageId", Amanuensis::JsonValue("cpp"));
+        Amanuensis::Json::Insert(TextDocument, "version", Amanuensis::JsonValue(static_cast<long long>(1)));
+        Amanuensis::Json::Insert(TextDocument, "text", Amanuensis::JsonValue(GeneratedText));
 
-        Amanuensis::Value Params = Amanuensis::Json::MakeObject();
+        Amanuensis::JsonValue Params = Amanuensis::Json::MakeObject();
         Amanuensis::Json::Insert(Params, "textDocument", std::move(TextDocument));
         SendNotification("textDocument/didOpen", std::move(Params));
         return;
     }
 
     const int NewVersion = ++DocumentVersions_[GeneratedPath];
-    Amanuensis::Value TextDocument = Amanuensis::Json::MakeObject();
-    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::Value(Uri));
-    Amanuensis::Json::Insert(TextDocument, "version", Amanuensis::Value(static_cast<long long>(NewVersion)));
+    Amanuensis::JsonValue TextDocument = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::JsonValue(Uri));
+    Amanuensis::Json::Insert(TextDocument, "version", Amanuensis::JsonValue(static_cast<long long>(NewVersion)));
 
     // Full-document sync (one change covering the whole text, no `range`) -- simplest
     // correct option, and cheap enough at the sizes a single `.iris` file reaches; an
     // incremental-sync optimisation is a pure performance follow-up, not a correctness
     // one, if a file ever gets large enough for it to matter.
-    Amanuensis::Value Change = Amanuensis::Json::MakeObject();
-    Amanuensis::Json::Insert(Change, "text", Amanuensis::Value(GeneratedText));
-    Amanuensis::Value Changes = Amanuensis::Json::MakeArray();
+    Amanuensis::JsonValue Change = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(Change, "text", Amanuensis::JsonValue(GeneratedText));
+    Amanuensis::JsonValue Changes = Amanuensis::Json::MakeArray();
     Amanuensis::Json::PushBack(Changes, std::move(Change));
 
-    Amanuensis::Value Params = Amanuensis::Json::MakeObject();
+    Amanuensis::JsonValue Params = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Params, "textDocument", std::move(TextDocument));
     Amanuensis::Json::Insert(Params, "contentChanges", std::move(Changes));
     SendNotification("textDocument/didChange", std::move(Params));
@@ -172,18 +172,18 @@ std::vector<ProxyCompletionItem> ClangdProxy::Completion(const std::string& Gene
         return Items;
     }
 
-    Amanuensis::Value TextDocument = Amanuensis::Json::MakeObject();
-    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::Value(PathToFileUri(GeneratedPath)));
+    Amanuensis::JsonValue TextDocument = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::JsonValue(PathToFileUri(GeneratedPath)));
 
-    Amanuensis::Value Params = Amanuensis::Json::MakeObject();
+    Amanuensis::JsonValue Params = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Params, "textDocument", std::move(TextDocument));
     Amanuensis::Json::Insert(Params, "position", MakePosition(Line, Column));
 
-    const Amanuensis::Value Result = SendRequest("textDocument/completion", std::move(Params));
+    const Amanuensis::JsonValue Result = SendRequest("textDocument/completion", std::move(Params));
     // The result is either a bare CompletionItem[] or a CompletionList {isIncomplete,
     // items} -- both branches handled since clangd's response shape depends on whether
     // the list is complete, not on anything this caller controls.
-    const Amanuensis::Value* ItemArray = &Result;
+    const Amanuensis::JsonValue* ItemArray = &Result;
     if (Amanuensis::Json::IsObject(Result) && Amanuensis::Json::Contains(Result, "items")) {
         ItemArray = &Amanuensis::Json::Get(Result, "items");
     }
@@ -191,7 +191,7 @@ std::vector<ProxyCompletionItem> ClangdProxy::Completion(const std::string& Gene
         return Items;
     }
     for (std::size_t Index = 0; Index < Amanuensis::Json::Size(*ItemArray); ++Index) {
-        const Amanuensis::Value& Item = Amanuensis::Json::At(*ItemArray, Index);
+        const Amanuensis::JsonValue& Item = Amanuensis::Json::At(*ItemArray, Index);
         ProxyCompletionItem      Mapped;
         Mapped.Label = Amanuensis::Json::Contains(Item, "label")
                            ? Amanuensis::Json::AsString(Amanuensis::Json::Get(Item, "label"))
@@ -213,19 +213,19 @@ std::optional<ProxyLocation> ClangdProxy::Definition(const std::string& Generate
         return std::nullopt;
     }
 
-    Amanuensis::Value TextDocument = Amanuensis::Json::MakeObject();
-    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::Value(PathToFileUri(GeneratedPath)));
+    Amanuensis::JsonValue TextDocument = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(TextDocument, "uri", Amanuensis::JsonValue(PathToFileUri(GeneratedPath)));
 
-    Amanuensis::Value Params = Amanuensis::Json::MakeObject();
+    Amanuensis::JsonValue Params = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Params, "textDocument", std::move(TextDocument));
     Amanuensis::Json::Insert(Params, "position", MakePosition(Line, Column));
 
-    const Amanuensis::Value Result = SendRequest("textDocument/definition", std::move(Params));
+    const Amanuensis::JsonValue Result = SendRequest("textDocument/definition", std::move(Params));
     // Either a single Location, a Location[], or LocationLink[] -- only the first two are
     // handled for v1 (LocationLink is clangd's richer form when the client advertises
     // support for it; this proxy's own initialize capabilities don't, so clangd shouldn't
     // send it, but a future capability bump would need a third branch here).
-    const Amanuensis::Value* Loc = &Result;
+    const Amanuensis::JsonValue* Loc = &Result;
     if (Amanuensis::Json::IsArray(Result)) {
         if (Amanuensis::Json::Size(Result) == 0) {
             return std::nullopt;
@@ -243,42 +243,42 @@ std::optional<ProxyLocation> ClangdProxy::Definition(const std::string& Generate
                           Column1};
 }
 
-void ClangdProxy::WriteLocked(const Amanuensis::Value& Message) {
+void ClangdProxy::WriteLocked(const Amanuensis::JsonValue& Message) {
     std::lock_guard<std::mutex> Lock(WriteMutex_);
     JsonRpc::WriteMessage(ChildStdin_, Message);
 }
 
-Amanuensis::Value ClangdProxy::SendRequest(const std::string& Method, Amanuensis::Value Params) {
+Amanuensis::JsonValue ClangdProxy::SendRequest(const std::string& Method, Amanuensis::JsonValue Params) {
     const int Id = NextId_++;
 
-    Amanuensis::Value Message = Amanuensis::Json::MakeObject();
-    Amanuensis::Json::Insert(Message, "jsonrpc", Amanuensis::Value("2.0"));
-    Amanuensis::Json::Insert(Message, "id", Amanuensis::Value(static_cast<long long>(Id)));
-    Amanuensis::Json::Insert(Message, "method", Amanuensis::Value(Method));
+    Amanuensis::JsonValue Message = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(Message, "jsonrpc", Amanuensis::JsonValue("2.0"));
+    Amanuensis::Json::Insert(Message, "id", Amanuensis::JsonValue(static_cast<long long>(Id)));
+    Amanuensis::Json::Insert(Message, "method", Amanuensis::JsonValue(Method));
     Amanuensis::Json::Insert(Message, "params", std::move(Params));
     WriteLocked(Message);
 
     std::unique_lock<std::mutex> Lock(PendingMutex_);
     PendingCv_.wait(Lock, [&] { return Stopping_ || PendingResults_.count(Id) != 0; });
     if (PendingResults_.count(Id) == 0) {
-        return Amanuensis::Value(); // Stopping_ became true (clangd exited) before a reply arrived
+        return Amanuensis::JsonValue(); // Stopping_ became true (clangd exited) before a reply arrived
     }
-    Amanuensis::Value Result = std::move(PendingResults_[Id]);
+    Amanuensis::JsonValue Result = std::move(PendingResults_[Id]);
     PendingResults_.erase(Id);
     return Result;
 }
 
-void ClangdProxy::SendNotification(const std::string& Method, Amanuensis::Value Params) {
-    Amanuensis::Value Message = Amanuensis::Json::MakeObject();
-    Amanuensis::Json::Insert(Message, "jsonrpc", Amanuensis::Value("2.0"));
-    Amanuensis::Json::Insert(Message, "method", Amanuensis::Value(Method));
+void ClangdProxy::SendNotification(const std::string& Method, Amanuensis::JsonValue Params) {
+    Amanuensis::JsonValue Message = Amanuensis::Json::MakeObject();
+    Amanuensis::Json::Insert(Message, "jsonrpc", Amanuensis::JsonValue("2.0"));
+    Amanuensis::Json::Insert(Message, "method", Amanuensis::JsonValue(Method));
     Amanuensis::Json::Insert(Message, "params", std::move(Params));
     WriteLocked(Message);
 }
 
 void ClangdProxy::ReaderLoop() {
     for (;;) {
-        const std::optional<Amanuensis::Value> Message = JsonRpc::ReadMessage(ChildStdout_);
+        const std::optional<Amanuensis::JsonValue> Message = JsonRpc::ReadMessage(ChildStdout_);
         if (!Message) {
             std::lock_guard<std::mutex> Lock(PendingMutex_);
             Stopping_ = true;
@@ -296,9 +296,9 @@ void ClangdProxy::ReaderLoop() {
             // A reply to one of our own requests.
             if (Amanuensis::Json::IsInteger(Amanuensis::Json::Get(*Message, "id"))) {
                 const int Id = static_cast<int>(Amanuensis::Json::AsInteger(Amanuensis::Json::Get(*Message, "id")));
-                Amanuensis::Value Result = Amanuensis::Json::Contains(*Message, "result")
+                Amanuensis::JsonValue Result = Amanuensis::Json::Contains(*Message, "result")
                                                 ? Amanuensis::Json::Get(*Message, "result")
-                                                : Amanuensis::Value();
+                                                : Amanuensis::JsonValue();
                 {
                     std::lock_guard<std::mutex> Lock(PendingMutex_);
                     PendingResults_[Id] = std::move(Result);
@@ -312,15 +312,15 @@ void ClangdProxy::ReaderLoop() {
             const std::string MethodName = Amanuensis::Json::AsString(Amanuensis::Json::Get(*Message, "method"));
             if (MethodName == "textDocument/publishDiagnostics" && DiagnosticsCallback_ &&
                 Amanuensis::Json::Contains(*Message, "params")) {
-                const Amanuensis::Value& Params = Amanuensis::Json::Get(*Message, "params");
+                const Amanuensis::JsonValue& Params = Amanuensis::Json::Get(*Message, "params");
                 const std::string GeneratedPath =
                     FileUriToPath(Amanuensis::Json::AsString(Amanuensis::Json::Get(Params, "uri")));
                 std::vector<ProxyDiagnostic> Diagnostics;
                 if (Amanuensis::Json::Contains(Params, "diagnostics") &&
                     Amanuensis::Json::IsArray(Amanuensis::Json::Get(Params, "diagnostics"))) {
-                    const Amanuensis::Value& RawList = Amanuensis::Json::Get(Params, "diagnostics");
+                    const Amanuensis::JsonValue& RawList = Amanuensis::Json::Get(Params, "diagnostics");
                     for (std::size_t Index = 0; Index < Amanuensis::Json::Size(RawList); ++Index) {
-                        const Amanuensis::Value& Raw = Amanuensis::Json::At(RawList, Index);
+                        const Amanuensis::JsonValue& Raw = Amanuensis::Json::At(RawList, Index);
                         if (!Amanuensis::Json::IsObject(Raw) || !Amanuensis::Json::Contains(Raw, "range") ||
                             !Amanuensis::Json::Contains(Raw, "message")) {
                             continue;
@@ -348,10 +348,10 @@ void ClangdProxy::ReaderLoop() {
                 // A server->client *request* -- clangd is waiting on a reply. Not
                 // implementing e.g. workspace/configuration properly would otherwise
                 // stall it indefinitely; a generic empty result unblocks it instead.
-                Amanuensis::Value Reply = Amanuensis::Json::MakeObject();
-                Amanuensis::Json::Insert(Reply, "jsonrpc", Amanuensis::Value("2.0"));
+                Amanuensis::JsonValue Reply = Amanuensis::Json::MakeObject();
+                Amanuensis::Json::Insert(Reply, "jsonrpc", Amanuensis::JsonValue("2.0"));
                 Amanuensis::Json::Insert(Reply, "id", Amanuensis::Json::Get(*Message, "id"));
-                Amanuensis::Json::Insert(Reply, "result", Amanuensis::Value());
+                Amanuensis::Json::Insert(Reply, "result", Amanuensis::JsonValue());
                 WriteLocked(Reply);
             }
         }

@@ -61,9 +61,9 @@ SourceLocation AdvanceLocation(std::string_view Source, const SourceLocation& St
     return SourceLocation{Start.FilePath, Line, Column};
 }
 
-Amanuensis::Value StringValue(std::string Text) { return Amanuensis::Value{std::move(Text)}; }
+Amanuensis::JsonValue StringValue(std::string Text) { return Amanuensis::JsonValue{std::move(Text)}; }
 
-Amanuensis::Value IntValue(std::size_t N) { return Amanuensis::Value{static_cast<long long>(N)}; }
+Amanuensis::JsonValue IntValue(std::size_t N) { return Amanuensis::JsonValue{static_cast<long long>(N)}; }
 
 // chaos-ir-spec.md §2: every IR node carries a SourceLocation with an explicit byte
 // `length`, which `Iris::SourceLocation` itself doesn't track (it only ever needed
@@ -73,8 +73,8 @@ Amanuensis::Value IntValue(std::size_t N) { return Amanuensis::Value{static_cast
 // PropNode's full `name=value`, a literal's surrounding quotes, an escape hatch's
 // surrounding braces), Length is a documented best-effort approximation, not a byte-exact
 // scan of the original source -- see each call site below.
-Amanuensis::Value LocationValue(const SourceLocation& Loc, std::size_t Length) {
-    Amanuensis::Value Node = Amanuensis::Json::MakeObject();
+Amanuensis::JsonValue LocationValue(const SourceLocation& Loc, std::size_t Length) {
+    Amanuensis::JsonValue Node = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Node, "file", StringValue(Loc.FilePath));
     Amanuensis::Json::Insert(Node, "line", IntValue(Loc.Line));
     Amanuensis::Json::Insert(Node, "column", IntValue(Loc.Column));
@@ -86,8 +86,8 @@ Amanuensis::Value LocationValue(const SourceLocation& Loc, std::size_t Length) {
 // value, §3.5) whose Kind is StringLiteral. Its Text has its surrounding quotes already
 // stripped (ElementNode.h's own doc comment), so Length pads them back in as a documented
 // approximation, not a byte-exact scan.
-Amanuensis::Value LiteralValue(const std::string& Text, const SourceLocation& Location) {
-    Amanuensis::Value Node = Amanuensis::Json::MakeObject();
+Amanuensis::JsonValue LiteralValue(const std::string& Text, const SourceLocation& Location) {
+    Amanuensis::JsonValue Node = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Node, "kind", StringValue("literal"));
     Amanuensis::Json::Insert(Node, "value", StringValue(Text));
     Amanuensis::Json::Insert(Node, "location", LocationValue(Location, Text.size() + 2));
@@ -98,18 +98,18 @@ Amanuensis::Value LiteralValue(const std::string& Text, const SourceLocation& Lo
 // </Text>`'s `Hello`) -- a child *position*, distinct from a PropNode's own "literal" value
 // (LiteralValue above). `Location` is that text run's own real start position, with no
 // surrounding-quote padding (a text child has none in source).
-Amanuensis::Value TextNodeValue(const std::string& Text, const SourceLocation& Location) {
-    Amanuensis::Value Node = Amanuensis::Json::MakeObject();
+Amanuensis::JsonValue TextNodeValue(const std::string& Text, const SourceLocation& Location) {
+    Amanuensis::JsonValue Node = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Node, "kind", StringValue("text"));
     Amanuensis::Json::Insert(Node, "value", StringValue(Text));
     Amanuensis::Json::Insert(Node, "location", LocationValue(Location, Text.size()));
     return Node;
 }
 
-Amanuensis::Value SerializeElement(const ElementNode& Node);
+Amanuensis::JsonValue SerializeElement(const ElementNode& Node);
 
-Amanuensis::Value TextSegmentValue(const std::string& Text) {
-    Amanuensis::Value Seg = Amanuensis::Json::MakeObject();
+Amanuensis::JsonValue TextSegmentValue(const std::string& Text) {
+    Amanuensis::JsonValue Seg = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Seg, "kind", StringValue("text"));
     Amanuensis::Json::Insert(Seg, "value", StringValue(Text));
     return Seg;
@@ -127,12 +127,12 @@ Amanuensis::Value TextSegmentValue(const std::string& Text) {
 // element / `:` / element), breaking real `<Slot>` evaluation for exactly the
 // conditional-rendering pattern chaos-ir-spec.md's own worked example uses -- see
 // docs/iris_nyx_evaluator_scope_gap.md.
-Amanuensis::Value SerializePropValue(const PropValue& Value) {
+Amanuensis::JsonValue SerializePropValue(const PropValue& Value) {
     if (Value.Kind == PropValueKind::StringLiteral) {
         return LiteralValue(Value.Text, Value.Location);
     }
 
-    Amanuensis::Value Segments = Amanuensis::Json::MakeArray();
+    Amanuensis::JsonValue Segments = Amanuensis::Json::MakeArray();
     std::size_t         TextLength = 0; // for the location-length approximation below
     if (Value.Kind == PropValueKind::JsxEscapeHatch) {
         for (const JsxSegment& Segment : Value.JsxSegments) {
@@ -148,7 +148,7 @@ Amanuensis::Value SerializePropValue(const PropValue& Value) {
         Amanuensis::Json::PushBack(Segments, TextSegmentValue(Value.Text));
     }
 
-    Amanuensis::Value Node = Amanuensis::Json::MakeObject();
+    Amanuensis::JsonValue Node = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Node, "kind", StringValue("nyx_expression"));
     Amanuensis::Json::Insert(Node, "segments", std::move(Segments));
     // +2: the surrounding `{ }` (or `!{ }`, undercounted by one for the JSX-transform
@@ -163,8 +163,8 @@ Amanuensis::Value SerializePropValue(const PropValue& Value) {
 // `class="button"`) -- RenderBlockParser doesn't track that wider span today (only where
 // the name and the value each individually start), so Length here is Name's own length
 // only, a documented approximation rather than a byte-exact source scan.
-Amanuensis::Value SerializeProp(const Prop& P) {
-    Amanuensis::Value Node = Amanuensis::Json::MakeObject();
+Amanuensis::JsonValue SerializeProp(const Prop& P) {
+    Amanuensis::JsonValue Node = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Node, "kind", StringValue("prop"));
     Amanuensis::Json::Insert(Node, "name", StringValue(P.Name));
     Amanuensis::Json::Insert(Node, "value", SerializePropValue(P.Value));
@@ -177,7 +177,7 @@ Amanuensis::Value SerializeProp(const Prop& P) {
 // ElementChildKind. `Child.Location` is that text run's own real start position
 // (ElementNode.h's `ElementChild::Location`, threaded through by
 // `RenderBlockParser::ParseChildren`).
-Amanuensis::Value SerializeElementChild(const ElementChild& Child) {
+Amanuensis::JsonValue SerializeElementChild(const ElementChild& Child) {
     switch (Child.Kind) {
         case ElementChildKind::Element:
             return SerializeElement(*Child.Element);
@@ -196,8 +196,8 @@ Amanuensis::Value SerializeElementChild(const ElementChild& Child) {
 // (§3.5) are each a dedicated field sharing PropNode's own value shape (SerializePropValue,
 // since either can be a dynamic Nyx expression, not just a string literal) -- omitted
 // entirely, not written as `null`, when the element carries no key/ref.
-Amanuensis::Value SerializeElement(const ElementNode& Node) {
-    Amanuensis::Value Obj = Amanuensis::Json::MakeObject();
+Amanuensis::JsonValue SerializeElement(const ElementNode& Node) {
+    Amanuensis::JsonValue Obj = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Obj, "kind", StringValue("element"));
     Amanuensis::Json::Insert(Obj, "tag", StringValue(Node.Tag));
     if (Node.Key.has_value()) {
@@ -207,13 +207,13 @@ Amanuensis::Value SerializeElement(const ElementNode& Node) {
         Amanuensis::Json::Insert(Obj, "ref", SerializePropValue(*Node.Ref));
     }
 
-    Amanuensis::Value Props = Amanuensis::Json::MakeArray();
+    Amanuensis::JsonValue Props = Amanuensis::Json::MakeArray();
     for (const Prop& P : Node.Props) {
         Amanuensis::Json::PushBack(Props, SerializeProp(P));
     }
     Amanuensis::Json::Insert(Obj, "props", std::move(Props));
 
-    Amanuensis::Value Children = Amanuensis::Json::MakeArray();
+    Amanuensis::JsonValue Children = Amanuensis::Json::MakeArray();
     for (const ElementChild& Child : Node.Children) {
         Amanuensis::Json::PushBack(Children, SerializeElementChild(Child));
     }
@@ -226,8 +226,8 @@ Amanuensis::Value SerializeElement(const ElementNode& Node) {
 // chaos-ir-spec.md §3.4's "render_block" node. `render` and the closing `}` are each a
 // fixed, known-length token -- 6 and 1 bytes respectively -- so Length needs no
 // approximation here, unlike most other node kinds above.
-Amanuensis::Value SerializeRenderBlock(const RenderBlockParser::ParsedBlock& Block) {
-    Amanuensis::Value Node = Amanuensis::Json::MakeObject();
+Amanuensis::JsonValue SerializeRenderBlock(const RenderBlockParser::ParsedBlock& Block) {
+    Amanuensis::JsonValue Node = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Node, "kind", StringValue("render_block"));
     Amanuensis::Json::Insert(Node, "root", SerializeElement(Block.Root));
     Amanuensis::Json::Insert(Node, "location", LocationValue(Block.Location, 6));    // strlen("render")
@@ -238,12 +238,12 @@ Amanuensis::Value SerializeRenderBlock(const RenderBlockParser::ParsedBlock& Blo
 // chaos-ir-spec.md §3.2's "import" node. Both offsets (and therefore Length) are exact --
 // the same ImportStatementEndOffset logic Driver.cpp's own `.iris` splicing path already
 // uses to know precisely where an `import Name` statement ends.
-Amanuensis::Value SerializeImport(const ImportStatement& Import, const std::string& ResolvedPath,
+Amanuensis::JsonValue SerializeImport(const ImportStatement& Import, const std::string& ResolvedPath,
                                    std::string_view Source) {
     const std::size_t StartOffset = LocationToOffset(Source, Import.Location);
     const std::size_t EndOffset = ImportStatementEndOffset(Source, StartOffset, Import.Name);
 
-    Amanuensis::Value Node = Amanuensis::Json::MakeObject();
+    Amanuensis::JsonValue Node = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Node, "kind", StringValue("import"));
     Amanuensis::Json::Insert(Node, "name", StringValue(Import.Name));
     Amanuensis::Json::Insert(Node, "resolvedPath", StringValue(ResolvedPath));
@@ -267,7 +267,7 @@ struct Cut {
 
 } // namespace
 
-Amanuensis::Value BuildIrisIr(std::string_view Source, const std::string& FilePath,
+Amanuensis::JsonValue BuildIrisIr(std::string_view Source, const std::string& FilePath,
                                 const std::vector<ImportStatement>& Imports,
                                 const std::vector<ResolvedImport>& ResolvedImportsList,
                                 const RenderBlockParser::Result& ParseResult) {
@@ -293,7 +293,7 @@ Amanuensis::Value BuildIrisIr(std::string_view Source, const std::string& FilePa
     }
     std::sort(Cuts.begin(), Cuts.end(), [](const Cut& A, const Cut& B) { return A.StartOffset < B.StartOffset; });
 
-    Amanuensis::Value Body = Amanuensis::Json::MakeArray();
+    Amanuensis::JsonValue Body = Amanuensis::Json::MakeArray();
     std::size_t         CursorOffset = 0;
     SourceLocation       CursorLocation{FilePath, 1, 1};
 
@@ -302,7 +302,7 @@ Amanuensis::Value BuildIrisIr(std::string_view Source, const std::string& FilePa
             return;
         }
         std::string GapText(Source.substr(CursorOffset, UpToOffset - CursorOffset));
-        Amanuensis::Value Node = Amanuensis::Json::MakeObject();
+        Amanuensis::JsonValue Node = Amanuensis::Json::MakeObject();
         Amanuensis::Json::Insert(Node, "kind", StringValue("nyx_source"));
         Amanuensis::Json::Insert(Node, "source", StringValue(GapText));
         Amanuensis::Json::Insert(Node, "location", LocationValue(CursorLocation, GapText.size()));
@@ -321,12 +321,12 @@ Amanuensis::Value BuildIrisIr(std::string_view Source, const std::string& FilePa
     }
     EmitGapUpTo(Source.size());
 
-    Amanuensis::Value ImportNodes = Amanuensis::Json::MakeArray();
+    Amanuensis::JsonValue ImportNodes = Amanuensis::Json::MakeArray();
     for (const ImportStatement& Import : Imports) {
         Amanuensis::Json::PushBack(ImportNodes, SerializeImport(Import, ResolvedPathByName.at(Import.Name), Source));
     }
 
-    Amanuensis::Value Doc = Amanuensis::Json::MakeObject();
+    Amanuensis::JsonValue Doc = Amanuensis::Json::MakeObject();
     Amanuensis::Json::Insert(Doc, "version", StringValue("1.0"));
     Amanuensis::Json::Insert(Doc, "sourceFile", StringValue(FilePath));
     Amanuensis::Json::Insert(Doc, "hostLanguage", StringValue("nyx"));

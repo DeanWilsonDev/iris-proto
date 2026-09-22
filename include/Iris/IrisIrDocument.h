@@ -9,13 +9,13 @@
 #include <vector>
 
 namespace Amanuensis {
-struct Value;
+struct JsonValue;
 } // namespace Amanuensis
 
 namespace Iris {
 
 // The read-side counterpart of `IrisIr.cpp`'s `BuildIrisIr` -- deserializes an already-parsed
-// `.iris.ir` JSON document (`Amanuensis::Value`, e.g. from `Amanuensis::Reader::ParseFile`)
+// `.iris.ir` JSON document (`Amanuensis::JsonValue`, e.g. from `Amanuensis::Reader::ParseFile`)
 // back into a typed C++ tree matching chaos-ir-spec.md §3's schema exactly, field for field.
 // This is the Iris IR runtime's own parser AST, analogous to `ElementNode.h`'s role for the
 // `.iris`/`.irisx` *source* grammar -- but built from JSON, not lexed from source text, since
@@ -191,6 +191,6 @@ struct IrisIrDocumentParseResult {
 // populated even when `Errors` is non-empty, on a best-effort basis (a malformed sub-node is
 // skipped/defaulted rather than aborting the whole parse) -- matching `RenderBlockParser::
 // Result`'s own "partial result plus errors" shape.
-IrisIrDocumentParseResult ParseIrisIrDocument(const Amanuensis::Value& Root);
+IrisIrDocumentParseResult ParseIrisIrDocument(const Amanuensis::JsonValue& Root);
 
 } // namespace Iris

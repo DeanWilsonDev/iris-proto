@@ -185,15 +185,15 @@ Component PartyScreen(PartyScreenProps props) {
         ASSERT_FALSE(Contains(Result.Output, "#pragma once"));
         // .irisx output isn't a self-contained header the way .iris output is
 
-        const Amanuensis::ParseResult Parsed = Amanuensis::Reader::ParseString(Result.Output);
+        const Amanuensis::JsonParseResult Parsed = Amanuensis::Reader::ParseString(Result.Output);
         ASSERT_TRUE(Parsed.succeeded); // Output is valid JSON
         ASSERT_TRUE(Amanuensis::Json::AsString(Amanuensis::Json::Get(Parsed.value, "hostLanguage")) == "nyx");
         ASSERT_TRUE(Amanuensis::Json::AsString(Amanuensis::Json::Get(Parsed.value, "sourceFile")) == "test.irisx");
-        const Amanuensis::Value& Body = Amanuensis::Json::Get(Parsed.value, "body");
+        const Amanuensis::JsonValue& Body = Amanuensis::Json::Get(Parsed.value, "body");
         REQUIRE_TRUE(Amanuensis::Json::Size(Body) >= 1);
         bool FoundRenderBlock = false;
         for (std::size_t Index = 0; Index < Amanuensis::Json::Size(Body); ++Index) {
-            const Amanuensis::Value& Node = Amanuensis::Json::At(Body, Index);
+            const Amanuensis::JsonValue& Node = Amanuensis::Json::At(Body, Index);
             if (Amanuensis::Json::AsString(Amanuensis::Json::Get(Node, "kind")) == "render_block") {
                 FoundRenderBlock = true;
                 ASSERT_TRUE(Amanuensis::Json::AsString(Amanuensis::Json::Get(

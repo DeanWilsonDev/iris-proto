@@ -14,8 +14,8 @@ public:
     // than throwing: a malformed IR file (stale schema version, hand-edited, truncated) is
     // an ordinary reportable condition here, not a programmer error to assert on. ---
 
-    std::string GetString(const Amanuensis::Value& Obj, const std::string& Key, const char* NodeKind) {
-        const Amanuensis::Value* Field = Amanuensis::Json::Find(Obj, Key);
+    std::string GetString(const Amanuensis::JsonValue& Obj, const std::string& Key, const char* NodeKind) {
+        const Amanuensis::JsonValue* Field = Amanuensis::Json::Find(Obj, Key);
         if (Field == nullptr || !Amanuensis::Json::IsString(*Field)) {
             AddError(std::string(NodeKind) + " node missing required string field '" + Key + "'");
             return {};
@@ -23,8 +23,8 @@ public:
         return Amanuensis::Json::AsString(*Field);
     }
 
-    std::size_t GetSize(const Amanuensis::Value& Obj, const std::string& Key, const char* NodeKind) {
-        const Amanuensis::Value* Field = Amanuensis::Json::Find(Obj, Key);
+    std::size_t GetSize(const Amanuensis::JsonValue& Obj, const std::string& Key, const char* NodeKind) {
+        const Amanuensis::JsonValue* Field = Amanuensis::Json::Find(Obj, Key);
         if (Field == nullptr || !Amanuensis::Json::IsNumber(*Field)) {
             AddError(std::string(NodeKind) + " node missing required numeric field '" + Key + "'");
             return 0;
@@ -32,8 +32,8 @@ public:
         return static_cast<std::size_t>(Amanuensis::Json::AsInteger(*Field));
     }
 
-    const Amanuensis::Value* GetObject(const Amanuensis::Value& Obj, const std::string& Key, const char* NodeKind) {
-        const Amanuensis::Value* Field = Amanuensis::Json::Find(Obj, Key);
+    const Amanuensis::JsonValue* GetObject(const Amanuensis::JsonValue& Obj, const std::string& Key, const char* NodeKind) {
+        const Amanuensis::JsonValue* Field = Amanuensis::Json::Find(Obj, Key);
         if (Field == nullptr || !Amanuensis::Json::IsObject(*Field)) {
             AddError(std::string(NodeKind) + " node missing required object field '" + Key + "'");
             return nullptr;
@@ -41,8 +41,8 @@ public:
         return Field;
     }
 
-    const Amanuensis::Value* GetArray(const Amanuensis::Value& Obj, const std::string& Key, const char* NodeKind) {
-        const Amanuensis::Value* Field = Amanuensis::Json::Find(Obj, Key);
+    const Amanuensis::JsonValue* GetArray(const Amanuensis::JsonValue& Obj, const std::string& Key, const char* NodeKind) {
+        const Amanuensis::JsonValue* Field = Amanuensis::Json::Find(Obj, Key);
         if (Field == nullptr || !Amanuensis::Json::IsArray(*Field)) {
             AddError(std::string(NodeKind) + " node missing required array field '" + Key + "'");
             return nullptr;
@@ -50,8 +50,8 @@ public:
         return Field;
     }
 
-    IrSourceLocation ParseLocation(const Amanuensis::Value& Obj) {
-        const Amanuensis::Value* Loc = GetObject(Obj, "location", "node");
+    IrSourceLocation ParseLocation(const Amanuensis::JsonValue& Obj) {
+        const Amanuensis::JsonValue* Loc = GetObject(Obj, "location", "node");
         IrSourceLocation         Result;
         if (Loc == nullptr) {
             return Result;
@@ -63,8 +63,8 @@ public:
         return Result;
     }
 
-    std::string GetKind(const Amanuensis::Value& Obj) {
-        const Amanuensis::Value* Field = Amanuensis::Json::Find(Obj, "kind");
+    std::string GetKind(const Amanuensis::JsonValue& Obj) {
+        const Amanuensis::JsonValue* Field = Amanuensis::Json::Find(Obj, "kind");
         if (Field == nullptr || !Amanuensis::Json::IsString(*Field)) {
             AddError("node missing required string field 'kind'");
             return {};
@@ -74,7 +74,7 @@ public:
 
     // chaos-ir-spec.md §3.6/§3.7: a "literal" or "nyx_expression" value node -- shared shape
     // for PropNode.value, ElementNode.key, and ElementNode.ref.
-    IrPropValue ParsePropValue(const Amanuensis::Value& Obj) {
+    IrPropValue ParsePropValue(const Amanuensis::JsonValue& Obj) {
         const std::string Kind = GetKind(Obj);
         IrPropValue        Result;
         if (Kind == "literal") {
@@ -90,15 +90,15 @@ public:
         return Result;
     }
 
-    IrNyxExpressionNode ParseNyxExpression(const Amanuensis::Value& Obj) {
+    IrNyxExpressionNode ParseNyxExpression(const Amanuensis::JsonValue& Obj) {
         IrNyxExpressionNode Result;
         Result.Location = ParseLocation(Obj);
-        const Amanuensis::Value* Segments = GetArray(Obj, "segments", "nyx_expression");
+        const Amanuensis::JsonValue* Segments = GetArray(Obj, "segments", "nyx_expression");
         if (Segments != nullptr) {
             const std::size_t Count = Amanuensis::Json::Size(*Segments);
             Result.Segments.reserve(Count);
             for (std::size_t Index = 0; Index < Count; ++Index) {
-                const Amanuensis::Value& SegObj = Amanuensis::Json::At(*Segments, Index);
+                const Amanuensis::JsonValue& SegObj = Amanuensis::Json::At(*Segments, Index);
                 const std::string        SegKind = GetKind(SegObj);
                 IrNyxExpressionSegment    Seg;
                 if (SegKind == "text") {
@@ -117,18 +117,18 @@ public:
         return Result;
     }
 
-    IrTextNode ParseTextNode(const Amanuensis::Value& Obj) {
+    IrTextNode ParseTextNode(const Amanuensis::JsonValue& Obj) {
         IrTextNode Result;
         Result.Value = GetString(Obj, "value", "text");
         Result.Location = ParseLocation(Obj);
         return Result;
     }
 
-    IrPropNode ParseProp(const Amanuensis::Value& Obj) {
+    IrPropNode ParseProp(const Amanuensis::JsonValue& Obj) {
         IrPropNode Result;
         Result.Name = GetString(Obj, "name", "prop");
         Result.Location = ParseLocation(Obj);
-        const Amanuensis::Value* Value = GetObject(Obj, "value", "prop");
+        const Amanuensis::JsonValue* Value = GetObject(Obj, "value", "prop");
         if (Value != nullptr) {
             Result.Value = ParsePropValue(*Value);
         }
@@ -137,7 +137,7 @@ public:
 
     // chaos-ir-spec.md §3.5's children union: an "element", a "nyx_expression", or a "text"
     // node, dispatched on `kind`.
-    IrElementChild ParseElementChild(const Amanuensis::Value& Obj) {
+    IrElementChild ParseElementChild(const Amanuensis::JsonValue& Obj) {
         const std::string Kind = GetKind(Obj);
         IrElementChild     Result;
         if (Kind == "element") {
@@ -155,19 +155,19 @@ public:
         return Result;
     }
 
-    IrElementNode ParseElement(const Amanuensis::Value& Obj) {
+    IrElementNode ParseElement(const Amanuensis::JsonValue& Obj) {
         IrElementNode Result;
         Result.Tag = GetString(Obj, "tag", "element");
         Result.Location = ParseLocation(Obj);
 
-        if (const Amanuensis::Value* Key = Amanuensis::Json::Find(Obj, "key"); Key != nullptr) {
+        if (const Amanuensis::JsonValue* Key = Amanuensis::Json::Find(Obj, "key"); Key != nullptr) {
             Result.Key = ParsePropValue(*Key);
         }
-        if (const Amanuensis::Value* Ref = Amanuensis::Json::Find(Obj, "ref"); Ref != nullptr) {
+        if (const Amanuensis::JsonValue* Ref = Amanuensis::Json::Find(Obj, "ref"); Ref != nullptr) {
             Result.Ref = ParsePropValue(*Ref);
         }
 
-        if (const Amanuensis::Value* Props = GetArray(Obj, "props", "element"); Props != nullptr) {
+        if (const Amanuensis::JsonValue* Props = GetArray(Obj, "props", "element"); Props != nullptr) {
             const std::size_t Count = Amanuensis::Json::Size(*Props);
             Result.Props.reserve(Count);
             for (std::size_t Index = 0; Index < Count; ++Index) {
@@ -175,7 +175,7 @@ public:
             }
         }
 
-        if (const Amanuensis::Value* Children = GetArray(Obj, "children", "element"); Children != nullptr) {
+        if (const Amanuensis::JsonValue* Children = GetArray(Obj, "children", "element"); Children != nullptr) {
             const std::size_t Count = Amanuensis::Json::Size(*Children);
             Result.Children.reserve(Count);
             for (std::size_t Index = 0; Index < Count; ++Index) {
@@ -186,14 +186,14 @@ public:
         return Result;
     }
 
-    IrRenderBlockNode ParseRenderBlock(const Amanuensis::Value& Obj) {
+    IrRenderBlockNode ParseRenderBlock(const Amanuensis::JsonValue& Obj) {
         IrRenderBlockNode Result;
         Result.Location = ParseLocation(Obj);
-        const Amanuensis::Value* Root = GetObject(Obj, "root", "render_block");
+        const Amanuensis::JsonValue* Root = GetObject(Obj, "root", "render_block");
         if (Root != nullptr) {
             Result.Root = ParseElement(*Root);
         }
-        if (const Amanuensis::Value* End = GetObject(Obj, "endLocation", "render_block"); End != nullptr) {
+        if (const Amanuensis::JsonValue* End = GetObject(Obj, "endLocation", "render_block"); End != nullptr) {
             // endLocation is itself a SourceLocation object, not a nested "location" field --
             // reuse the same {file, line, column, length} extraction ParseLocation does for the
             // ordinary "location" field, on this object directly instead of a ".location" child.
@@ -207,14 +207,14 @@ public:
         return Result;
     }
 
-    IrNyxSourceNode ParseNyxSource(const Amanuensis::Value& Obj) {
+    IrNyxSourceNode ParseNyxSource(const Amanuensis::JsonValue& Obj) {
         IrNyxSourceNode Result;
         Result.Source = GetString(Obj, "source", "nyx_source");
         Result.Location = ParseLocation(Obj);
         return Result;
     }
 
-    IrImportNode ParseImport(const Amanuensis::Value& Obj) {
+    IrImportNode ParseImport(const Amanuensis::JsonValue& Obj) {
         IrImportNode Result;
         Result.Name = GetString(Obj, "name", "import");
         Result.ResolvedPath = GetString(Obj, "resolvedPath", "import");
@@ -222,7 +222,7 @@ public:
         return Result;
     }
 
-    std::optional<IrBodyNode> ParseBodyNode(const Amanuensis::Value& Obj) {
+    std::optional<IrBodyNode> ParseBodyNode(const Amanuensis::JsonValue& Obj) {
         const std::string Kind = GetKind(Obj);
         if (Kind == "nyx_source") {
             return IrBodyNode{ParseNyxSource(Obj)};
@@ -234,7 +234,7 @@ public:
         return std::nullopt;
     }
 
-    IrisIrDocument ParseDocument(const Amanuensis::Value& Obj) {
+    IrisIrDocument ParseDocument(const Amanuensis::JsonValue& Obj) {
         IrisIrDocument Result;
         if (!Amanuensis::Json::IsObject(Obj)) {
             AddError("top-level IR document is not a JSON object");
@@ -244,7 +244,7 @@ public:
         Result.SourceFile = GetString(Obj, "sourceFile", "document");
         Result.HostLanguage = GetString(Obj, "hostLanguage", "document");
 
-        if (const Amanuensis::Value* Imports = GetArray(Obj, "imports", "document"); Imports != nullptr) {
+        if (const Amanuensis::JsonValue* Imports = GetArray(Obj, "imports", "document"); Imports != nullptr) {
             const std::size_t Count = Amanuensis::Json::Size(*Imports);
             Result.Imports.reserve(Count);
             for (std::size_t Index = 0; Index < Count; ++Index) {
@@ -252,7 +252,7 @@ public:
             }
         }
 
-        if (const Amanuensis::Value* Body = GetArray(Obj, "body", "document"); Body != nullptr) {
+        if (const Amanuensis::JsonValue* Body = GetArray(Obj, "body", "document"); Body != nullptr) {
             const std::size_t Count = Amanuensis::Json::Size(*Body);
             Result.Body.reserve(Count);
             for (std::size_t Index = 0; Index < Count; ++Index) {
@@ -283,7 +283,7 @@ std::vector<IrElementNode> IrNyxExpressionNode::Elements() const {
     return Result;
 }
 
-IrisIrDocumentParseResult ParseIrisIrDocument(const Amanuensis::Value& Root) {
+IrisIrDocumentParseResult ParseIrisIrDocument(const Amanuensis::JsonValue& Root) {
     IrisIrDocumentParseResult Result;
     DocumentParser             Parser(Result.Errors);
     Result.Document = Parser.ParseDocument(Root);

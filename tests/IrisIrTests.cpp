@@ -20,18 +20,18 @@ RenderBlockParser::Result Parse(std::string_view Source, const std::string& File
 
 // Builds the Iris IR for a source string with no imports — the common case most of these
 // tests exercise. Tests that care about imports call BuildIrisIr directly instead.
-Amanuensis::Value Build(std::string_view Source, const std::string& FilePath = "test.irisx") {
+Amanuensis::JsonValue Build(std::string_view Source, const std::string& FilePath = "test.irisx") {
     const RenderBlockParser::Result ParseResult = Parse(Source, FilePath);
     return BuildIrisIr(Source, FilePath, {}, {}, ParseResult);
 }
 
-const Amanuensis::Value& Field(const Amanuensis::Value& V, const std::string& Key) {
+const Amanuensis::JsonValue& Field(const Amanuensis::JsonValue& V, const std::string& Key) {
     return Amanuensis::Json::Get(V, Key);
 }
 
-const std::string& Str(const Amanuensis::Value& V) { return Amanuensis::Json::AsString(V); }
+const std::string& Str(const Amanuensis::JsonValue& V) { return Amanuensis::Json::AsString(V); }
 
-long long Int(const Amanuensis::Value& V) { return Amanuensis::Json::AsInteger(V); }
+long long Int(const Amanuensis::JsonValue& V) { return Amanuensis::Json::AsInteger(V); }
 
 bool Contains(const std::string& Haystack, std::string_view Needle) {
     return Haystack.find(Needle) != std::string::npos;
@@ -41,17 +41,17 @@ bool Contains(const std::string& Haystack, std::string_view Needle) {
 
 DESCRIBE("IrisIr", {
     IT("the top-level document carries version/sourceFile/hostLanguage", {
-        const Amanuensis::Value Doc = Build("render { <Frame /> }");
+        const Amanuensis::JsonValue Doc = Build("render { <Frame /> }");
         ASSERT_TRUE(Str(Field(Doc, "version")) == "1.0");
         ASSERT_TRUE(Str(Field(Doc, "sourceFile")) == "test.irisx");
         ASSERT_TRUE(Str(Field(Doc, "hostLanguage")) == "nyx");
     });
 
     IT("a render block becomes a render_block body node", {
-        const Amanuensis::Value Doc = Build("render {\n    <Frame />\n}");
-        const Amanuensis::Value& Body = Field(Doc, "body");
+        const Amanuensis::JsonValue Doc = Build("render {\n    <Frame />\n}");
+        const Amanuensis::JsonValue& Body = Field(Doc, "body");
         REQUIRE_TRUE(Amanuensis::Json::Size(Body) == 1); // no trailing nyx_source when the block ends the file
-        const Amanuensis::Value& Node = Amanuensis::Json::At(Body, 0);
+        const Amanuensis::JsonValue& Node = Amanuensis::Json::At(Body, 0);
         ASSERT_TRUE(Str(Field(Node, "kind")) == "render_block");
         ASSERT_TRUE(Int(Field(Field(Node, "location"), "line")) == 1);
         ASSERT_TRUE(Int(Field(Field(Node, "location"), "length")) == 6); // strlen("render")
@@ -60,55 +60,55 @@ DESCRIBE("IrisIr", {
     });
 
     IT("nyx source before and after a render block becomes nyx_source body nodes", {
-        const Amanuensis::Value Doc = Build("PRE render { <Frame /> } POST");
-        const Amanuensis::Value& Body = Field(Doc, "body");
+        const Amanuensis::JsonValue Doc = Build("PRE render { <Frame /> } POST");
+        const Amanuensis::JsonValue& Body = Field(Doc, "body");
         REQUIRE_TRUE(Amanuensis::Json::Size(Body) == 3);
 
-        const Amanuensis::Value& Before = Amanuensis::Json::At(Body, 0);
+        const Amanuensis::JsonValue& Before = Amanuensis::Json::At(Body, 0);
         ASSERT_TRUE(Str(Field(Before, "kind")) == "nyx_source");
         ASSERT_TRUE(Str(Field(Before, "source")) == "PRE ");
         ASSERT_TRUE(Int(Field(Field(Before, "location"), "length")) == 4);
 
         ASSERT_TRUE(Str(Field(Amanuensis::Json::At(Body, 1), "kind")) == "render_block");
 
-        const Amanuensis::Value& After = Amanuensis::Json::At(Body, 2);
+        const Amanuensis::JsonValue& After = Amanuensis::Json::At(Body, 2);
         ASSERT_TRUE(Str(Field(After, "kind")) == "nyx_source");
         ASSERT_TRUE(Str(Field(After, "source")) == " POST");
     });
 
     IT("a string-literal prop becomes a literal value node", {
-        const Amanuensis::Value Doc = Build(R"(render { <Frame class="a" /> })");
-        const Amanuensis::Value& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
-        const Amanuensis::Value& Props = Field(Root, "props");
+        const Amanuensis::JsonValue Doc = Build(R"(render { <Frame class="a" /> })");
+        const Amanuensis::JsonValue& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
+        const Amanuensis::JsonValue& Props = Field(Root, "props");
         REQUIRE_TRUE(Amanuensis::Json::Size(Props) == 1);
-        const Amanuensis::Value& ClassProp = Amanuensis::Json::At(Props, 0);
+        const Amanuensis::JsonValue& ClassProp = Amanuensis::Json::At(Props, 0);
         ASSERT_TRUE(Str(Field(ClassProp, "kind")) == "prop");
         ASSERT_TRUE(Str(Field(ClassProp, "name")) == "class");
-        const Amanuensis::Value& Value = Field(ClassProp, "value");
+        const Amanuensis::JsonValue& Value = Field(ClassProp, "value");
         ASSERT_TRUE(Str(Field(Value, "kind")) == "literal");
         ASSERT_TRUE(Str(Field(Value, "value")) == "a");
     });
 
     IT("an escape-hatch prop becomes a nyx_expression node with a single text segment", {
-        const Amanuensis::Value Doc = Build(R"(render { <Frame onPress={doIt()} /> })");
-        const Amanuensis::Value& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
-        const Amanuensis::Value& Prop = Amanuensis::Json::At(Field(Root, "props"), 0);
-        const Amanuensis::Value& Value = Field(Prop, "value");
+        const Amanuensis::JsonValue Doc = Build(R"(render { <Frame onPress={doIt()} /> })");
+        const Amanuensis::JsonValue& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
+        const Amanuensis::JsonValue& Prop = Amanuensis::Json::At(Field(Root, "props"), 0);
+        const Amanuensis::JsonValue& Value = Field(Prop, "value");
         ASSERT_TRUE(Str(Field(Value, "kind")) == "nyx_expression");
         REQUIRE_TRUE(Amanuensis::Json::Size(Field(Value, "segments")) == 1);
-        const Amanuensis::Value& Seg = Amanuensis::Json::At(Field(Value, "segments"), 0);
+        const Amanuensis::JsonValue& Seg = Amanuensis::Json::At(Field(Value, "segments"), 0);
         ASSERT_TRUE(Str(Field(Seg, "kind")) == "text");
         ASSERT_TRUE(Str(Field(Seg, "value")) == "doIt()");
     });
 
     IT("a Portal and its child are preserved in generated .iris.ir", {
-        const Amanuensis::Value Doc = Build(R"(render {
+        const Amanuensis::JsonValue Doc = Build(R"(render {
             <Portal x={10.0} y={20.0} width={200.0} height={120.0}
                     dismissOnOutsideClick={true} onDismiss={closeMenu}>
                 <Frame class="menu" />
             </Portal>
         })");
-        const Amanuensis::Value& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
+        const Amanuensis::JsonValue& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
         ASSERT_EQUAL(Str(Field(Root, "tag")), "Portal");
         REQUIRE_EQUAL(Amanuensis::Json::Size(Field(Root, "props")), static_cast<std::size_t>(6));
         REQUIRE_EQUAL(Amanuensis::Json::Size(Field(Root, "children")), static_cast<std::size_t>(1));
@@ -116,8 +116,8 @@ DESCRIBE("IrisIr", {
     });
 
     IT("key and ref are preserved as their own ElementNode fields, not dropped", {
-        const Amanuensis::Value Doc = Build(R"(render { <Frame key="row-1" ref="trigger" /> })");
-        const Amanuensis::Value& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
+        const Amanuensis::JsonValue Doc = Build(R"(render { <Frame key="row-1" ref="trigger" /> })");
+        const Amanuensis::JsonValue& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
         // Neither key nor ref leaks into `props` -- chaos-ir-spec.md §3.5 gives each its own
         // dedicated field alongside `tag`/`props`/`children`/`location`.
         ASSERT_TRUE(Amanuensis::Json::Size(Field(Root, "props")) == 0);
@@ -128,8 +128,8 @@ DESCRIBE("IrisIr", {
     });
 
     IT("an element with no key/ref omits both fields entirely", {
-        const Amanuensis::Value Doc = Build("render { <Frame /> }");
-        const Amanuensis::Value& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
+        const Amanuensis::JsonValue Doc = Build("render { <Frame /> }");
+        const Amanuensis::JsonValue& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
         ASSERT_FALSE(Amanuensis::Json::Contains(Root, "key"));
         ASSERT_FALSE(Amanuensis::Json::Contains(Root, "ref"));
     });
@@ -141,41 +141,41 @@ DESCRIBE("IrisIr", {
         // docs/iris_nyx_evaluator_scope_gap.md: an earlier schema flushed text/element runs
         // into two separate fields (source/children), discarding their relative order --
         // `segments` is the fix, one ordered array mirroring JsxSegments directly.
-        const Amanuensis::Value Doc = Build(R"(render {
+        const Amanuensis::JsonValue Doc = Build(R"(render {
             <Slot>
                 !{settingsOpen ? <SettingsPage active="true" /> : <SettingsPage active="false" />}
             </Slot>
         })");
-        const Amanuensis::Value& SlotRoot = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
+        const Amanuensis::JsonValue& SlotRoot = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
         REQUIRE_TRUE(Amanuensis::Json::Size(Field(SlotRoot, "children")) == 1);
-        const Amanuensis::Value& EscapeHatchNode = Amanuensis::Json::At(Field(SlotRoot, "children"), 0);
+        const Amanuensis::JsonValue& EscapeHatchNode = Amanuensis::Json::At(Field(SlotRoot, "children"), 0);
         ASSERT_TRUE(Str(Field(EscapeHatchNode, "kind")) == "nyx_expression");
-        const Amanuensis::Value& Segments = Field(EscapeHatchNode, "segments");
+        const Amanuensis::JsonValue& Segments = Field(EscapeHatchNode, "segments");
         REQUIRE_EQUAL(Amanuensis::Json::Size(Segments), static_cast<std::size_t>(4));
 
-        const Amanuensis::Value& Seg0 = Amanuensis::Json::At(Segments, 0);
+        const Amanuensis::JsonValue& Seg0 = Amanuensis::Json::At(Segments, 0);
         ASSERT_TRUE(Str(Field(Seg0, "kind")) == "text");
         ASSERT_TRUE(Contains(Str(Field(Seg0, "value")), "settingsOpen"));
 
-        const Amanuensis::Value& Seg1 = Amanuensis::Json::At(Segments, 1);
+        const Amanuensis::JsonValue& Seg1 = Amanuensis::Json::At(Segments, 1);
         ASSERT_TRUE(Str(Field(Seg1, "kind")) == "element");
         ASSERT_TRUE(Str(Field(Seg1, "tag")) == "SettingsPage");
 
-        const Amanuensis::Value& Seg2 = Amanuensis::Json::At(Segments, 2);
+        const Amanuensis::JsonValue& Seg2 = Amanuensis::Json::At(Segments, 2);
         ASSERT_TRUE(Str(Field(Seg2, "kind")) == "text");
 
-        const Amanuensis::Value& Seg3 = Amanuensis::Json::At(Segments, 3);
+        const Amanuensis::JsonValue& Seg3 = Amanuensis::Json::At(Segments, 3);
         ASSERT_TRUE(Str(Field(Seg3, "kind")) == "element");
         ASSERT_TRUE(Str(Field(Seg3, "tag")) == "SettingsPage");
     });
 
     IT("a literal text child is preserved as its own text node, not a prop-value literal", {
-        const Amanuensis::Value Doc = Build(R"(render { <Text>Hello</Text> })");
-        const Amanuensis::Value& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
+        const Amanuensis::JsonValue Doc = Build(R"(render { <Text>Hello</Text> })");
+        const Amanuensis::JsonValue& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
         ASSERT_TRUE(Str(Field(Root, "tag")) == "Text");
-        const Amanuensis::Value& Children = Field(Root, "children");
+        const Amanuensis::JsonValue& Children = Field(Root, "children");
         REQUIRE_TRUE(Amanuensis::Json::Size(Children) == 1);
-        const Amanuensis::Value& TextChild = Amanuensis::Json::At(Children, 0);
+        const Amanuensis::JsonValue& TextChild = Amanuensis::Json::At(Children, 0);
         // chaos-ir-spec.md §3.5a's dedicated "text" child-node kind -- distinct from a
         // PropNode's own "literal" value node (§3.6), which is a prop's value, not a tree
         // position.
@@ -191,13 +191,13 @@ DESCRIBE("IrisIr", {
         // location
         // (ElementChild had no SourceLocation of its own), so this would have come back
         // as column 10, not 16.
-        const Amanuensis::Value Doc = Build(R"(render { <Text>Hello</Text> })");
-        const Amanuensis::Value& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
-        const Amanuensis::Value& RootLocation = Field(Root, "location");
+        const Amanuensis::JsonValue Doc = Build(R"(render { <Text>Hello</Text> })");
+        const Amanuensis::JsonValue& Root = Field(Amanuensis::Json::At(Field(Doc, "body"), 0), "root");
+        const Amanuensis::JsonValue& RootLocation = Field(Root, "location");
         REQUIRE_EQUAL(Int(Field(RootLocation, "column")), static_cast<long long>(10));
 
-        const Amanuensis::Value& TextChild = Amanuensis::Json::At(Field(Root, "children"), 0);
-        const Amanuensis::Value& TextLocation = Field(TextChild, "location");
+        const Amanuensis::JsonValue& TextChild = Amanuensis::Json::At(Field(Root, "children"), 0);
+        const Amanuensis::JsonValue& TextLocation = Field(TextChild, "location");
         ASSERT_TRUE(Int(Field(TextLocation, "line")) == 1);
         ASSERT_TRUE(Int(Field(TextLocation, "column")) == 16); // where "Hello" itself starts
         ASSERT_TRUE(Int(Field(TextLocation, "length")) == 5);  // "Hello".size(), no quote padding
@@ -211,19 +211,19 @@ DESCRIBE("IrisIr", {
         const std::vector<ResolvedImport> Resolved({ResolvedImport{"Button", "components/Button.irisx"}});
         const RenderBlockParser::Result   ParseResult = Parse(Source, FilePath);
 
-        const Amanuensis::Value Doc = BuildIrisIr(Source, FilePath, Imports, Resolved, ParseResult);
+        const Amanuensis::JsonValue Doc = BuildIrisIr(Source, FilePath, Imports, Resolved, ParseResult);
 
-        const Amanuensis::Value& ImportNodes = Field(Doc, "imports");
+        const Amanuensis::JsonValue& ImportNodes = Field(Doc, "imports");
         REQUIRE_TRUE(Amanuensis::Json::Size(ImportNodes) == 1);
-        const Amanuensis::Value& ImportNode = Amanuensis::Json::At(ImportNodes, 0);
+        const Amanuensis::JsonValue& ImportNode = Amanuensis::Json::At(ImportNodes, 0);
         ASSERT_TRUE(Str(Field(ImportNode, "kind")) == "import");
         ASSERT_TRUE(Str(Field(ImportNode, "name")) == "Button");
         ASSERT_TRUE(Str(Field(ImportNode, "resolvedPath")) == "components/Button.irisx");
         ASSERT_TRUE(Int(Field(Field(ImportNode, "location"), "length")) == 13); // strlen("import Button")
 
-        const Amanuensis::Value& Body = Field(Doc, "body");
+        const Amanuensis::JsonValue& Body = Field(Doc, "body");
         for (std::size_t Index = 0; Index < Amanuensis::Json::Size(Body); ++Index) {
-            const Amanuensis::Value& Node = Amanuensis::Json::At(Body, Index);
+            const Amanuensis::JsonValue& Node = Amanuensis::Json::At(Body, Index);
             if (Str(Field(Node, "kind")) == "nyx_source") {
                 ASSERT_FALSE(Contains(Str(Field(Node, "source")), "import"));
             }

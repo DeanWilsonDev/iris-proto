@@ -9,10 +9,10 @@ DESCRIBE("JsonRpc", {
         std::FILE* Temp = std::tmpfile();
         REQUIRE_TRUE(Temp != nullptr);
 
-        Amanuensis::Value Message = Amanuensis::Json::MakeObject();
-        Amanuensis::Json::Insert(Message, "jsonrpc", Amanuensis::Value("2.0"));
-        Amanuensis::Json::Insert(Message, "id", Amanuensis::Value(static_cast<long long>(42)));
-        Amanuensis::Json::Insert(Message, "method", Amanuensis::Value("test/echo"));
+        Amanuensis::JsonValue Message = Amanuensis::Json::MakeObject();
+        Amanuensis::Json::Insert(Message, "jsonrpc", Amanuensis::JsonValue("2.0"));
+        Amanuensis::Json::Insert(Message, "id", Amanuensis::JsonValue(static_cast<long long>(42)));
+        Amanuensis::Json::Insert(Message, "method", Amanuensis::JsonValue("test/echo"));
         IrisLsp::JsonRpc::WriteMessage(Temp, Message);
 
         std::rewind(Temp);
@@ -27,10 +27,10 @@ DESCRIBE("JsonRpc", {
         std::FILE* Temp = std::tmpfile();
         REQUIRE_TRUE(Temp != nullptr);
 
-        Amanuensis::Value First = Amanuensis::Json::MakeObject();
-        Amanuensis::Json::Insert(First, "method", Amanuensis::Value("first"));
-        Amanuensis::Value Second = Amanuensis::Json::MakeObject();
-        Amanuensis::Json::Insert(Second, "method", Amanuensis::Value("second"));
+        Amanuensis::JsonValue First = Amanuensis::Json::MakeObject();
+        Amanuensis::Json::Insert(First, "method", Amanuensis::JsonValue("first"));
+        Amanuensis::JsonValue Second = Amanuensis::Json::MakeObject();
+        Amanuensis::Json::Insert(Second, "method", Amanuensis::JsonValue("second"));
         IrisLsp::JsonRpc::WriteMessage(Temp, First);
         IrisLsp::JsonRpc::WriteMessage(Temp, Second);
 

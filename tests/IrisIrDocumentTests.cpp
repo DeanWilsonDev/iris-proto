@@ -20,7 +20,7 @@ using namespace Iris;
 // from BuildIrisIr's real field names/shapes.
 IrisIrDocumentParseResult Roundtrip(std::string_view Source, const std::string& FilePath = "test.irisx") {
     RenderBlockParser::Result Parsed = RenderBlockParser(Source, FilePath).Parse();
-    Amanuensis::Value          Json = BuildIrisIr(Source, FilePath, {}, {}, Parsed);
+    Amanuensis::JsonValue          Json = BuildIrisIr(Source, FilePath, {}, {}, Parsed);
     return ParseIrisIrDocument(Json);
 }
 
@@ -159,7 +159,7 @@ DESCRIBE("IrisIrDocument", {
         REQUIRE_TRUE(Imports.size() == 1);
         const std::vector<ResolvedImport> Resolved({ResolvedImport{"Button", "components/Button.irisx"}});
         const RenderBlockParser::Result   Parsed = RenderBlockParser(Source, FilePath).Parse();
-        const Amanuensis::Value            Json = BuildIrisIr(Source, FilePath, Imports, Resolved, Parsed);
+        const Amanuensis::JsonValue            Json = BuildIrisIr(Source, FilePath, Imports, Resolved, Parsed);
 
         const IrisIrDocumentParseResult Result = ParseIrisIrDocument(Json);
         REQUIRE_TRUE(Result.Document.has_value());
@@ -175,8 +175,8 @@ DESCRIBE("IrisIrDocument", {
     });
 
     IT("a malformed document (missing required field) is reported, not silently defaulted", {
-        Amanuensis::Value Bad = Amanuensis::Json::MakeObject();
-        Amanuensis::Json::Insert(Bad, "version", Amanuensis::Value{std::string("1.0")});
+        Amanuensis::JsonValue Bad = Amanuensis::Json::MakeObject();
+        Amanuensis::Json::Insert(Bad, "version", Amanuensis::JsonValue{std::string("1.0")});
         // sourceFile/hostLanguage/imports/body all deliberately missing.
         const IrisIrDocumentParseResult Result = ParseIrisIrDocument(Bad);
         ASSERT_FALSE(Result.Errors.empty());
