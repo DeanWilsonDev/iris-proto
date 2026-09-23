@@ -213,4 +213,44 @@ Component PartyScreen(PartyScreenProps props) {
         ASSERT_FALSE(Result.Diagnostics.empty()); // an unimported, non-Core-primitive tag is still a diagnostic
         ASSERT_TRUE(Result.Output.empty());       // no IR is produced when there are diagnostics, same as the .iris path
     });
+
+    IT("a .irisx file tolerates an import that never resolves against .irisx, when it's never used as a JSX tag", {
+        Iris::IrisConfig Config;
+        Config.Target = Iris::IrisBuildTarget::UmbraEngine;
+
+        const Iris::DriverResult Result = Iris::CompileFile(
+            "import BoardCardItem\n"
+            "int DoubleIt(int x) { return x * 2; }\n"
+            "Component Foo() {\n    render { <Frame class=\"a\" /> }\n}\n",
+            "test.irisx", Config, "/nonexistent");
+
+        ASSERT_TRUE(Result.Diagnostics.empty());
+        // nyx-proto's own interpreter (IrisNyxDriver::GetFileScope -> ReconstructNyxSource ->
+        // NyxRuntime::CreateScope) resolves a plain `import X` independently, via
+        // NyxRuntime::SetImportSearchPaths -- a completely separate mechanism from this
+        // .irisx-component-mounting lookup, so BoardCardItem not resolving here isn't fatal.
+
+        const Amanuensis::JsonParseResult Parsed = Amanuensis::Reader::ParseString(Result.Output);
+        ASSERT_TRUE(Parsed.succeeded);
+
+        const Amanuensis::JsonValue& Imports = Amanuensis::Json::Get(Parsed.value, "imports");
+        ASSERT_TRUE(Amanuensis::Json::Size(Imports) == 0);
+        // absent from Document.Imports entirely -- using BoardCardItem as a JSX <Tag> would
+        // still fail at that point of use (IrisNyxDriverTests.cpp's own "no matching import"
+        // case already covers that failure path), just not as a whole-file compile error here.
+
+        bool FoundImportText = false;
+        const Amanuensis::JsonValue& Body = Amanuensis::Json::Get(Parsed.value, "body");
+        for (std::size_t Index = 0; Index < Amanuensis::Json::Size(Body); ++Index) {
+            const Amanuensis::JsonValue& Node = Amanuensis::Json::At(Body, Index);
+            if (Amanuensis::Json::AsString(Amanuensis::Json::Get(Node, "kind")) == "nyx_source" &&
+                Contains(Amanuensis::Json::AsString(Amanuensis::Json::Get(Node, "source")), "import BoardCardItem")) {
+                FoundImportText = true;
+            }
+        }
+        ASSERT_TRUE(FoundImportText);
+        // the raw `import BoardCardItem` text survives uncut in the reconstructed nyx_source,
+        // exactly what ReconstructNyxSource needs to hand nyx-proto's own parser for it to
+        // resolve independently.
+    });
 });

@@ -87,10 +87,27 @@ DriverResult CompileFile(std::string_view Source, std::string FilePath, const Ir
                           std::string_view ProjectRoot) {
     DriverResult Result;
 
+    const bool IsNyx = DetermineHostLanguage(FilePath) == HostLanguage::Nyx;
+
     const std::vector<ImportStatement> Imports = ScanImports(Source, FilePath);
     const ImportResolutionResult       ResolvedImports = ResolveImports(Imports, Config, ProjectRoot);
-    for (const ImportError& Err : ResolvedImports.Errors) {
-        Result.Diagnostics.push_back(DriverDiagnostic{Err.Message, Err.Location});
+    // An import that fails this `.irisx`-only lookup isn't necessarily unusable for the Nyx
+    // target: BuildIrisIr (below) only cuts/reports the imports that *did* resolve here,
+    // leaving any others' raw `import X` text untouched in the reconstructed source --
+    // nyx-proto's own Lexer/Parser (IrisNyxDriver::GetFileScope -> ReconstructNyxSource ->
+    // NyxRuntime::CreateScope) resolves a plain `import X` statement independently via
+    // NyxRuntime::SetImportSearchPaths, a completely separate mechanism from this
+    // `.irisx`-component-mounting lookup, so a plain-Nyx-symbol import (a data/logic `.nyx`
+    // file with no render block, never used as a JSX `<Tag>`) still reaches the functions/
+    // classes it declares. An import that *is* later used as a JSX tag but never resolved
+    // here fails at that point of use instead ("<Tag> is not imported by ..." --
+    // InvokeChildComponent), not as an opaque whole-file compile error. The `.iris`/C++
+    // target keeps today's exact behavior -- it genuinely needs every import as a real
+    // #include target to generate valid code, and never reaches BuildIrisIr at all.
+    if (!IsNyx) {
+        for (const ImportError& Err : ResolvedImports.Errors) {
+            Result.Diagnostics.push_back(DriverDiagnostic{Err.Message, Err.Location});
+        }
     }
 
     // Semantic validation only cares which names were *declared* imported, independent of
@@ -112,8 +129,6 @@ DriverResult CompileFile(std::string_view Source, std::string FilePath, const Ir
     // { }` block's escape-hatch content *to* in Nyx, only IR to serialize it as (see
     // Driver.h's own doc comment, docs/iris_nyx_emission_decision.md). `.iris` (cpp) keeps
     // its existing GenerateComponentExpression + textual-splice pipeline, unchanged below.
-    const bool IsNyx = DetermineHostLanguage(FilePath) == HostLanguage::Nyx;
-
     std::vector<std::string> GeneratedPerBlock;
     if (!IsNyx) {
         GeneratedPerBlock.reserve(ParseResult.Blocks.size());

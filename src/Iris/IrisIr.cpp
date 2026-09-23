@@ -280,6 +280,11 @@ Amanuensis::JsonValue BuildIrisIr(std::string_view Source, const std::string& Fi
     Cuts.reserve(Imports.size() + ParseResult.Blocks.size());
     for (std::size_t Index = 0; Index < Imports.size(); ++Index) {
         const ImportStatement& Import = Imports[Index];
+        // No entry here means this import didn't resolve against `.irisx` (CompileFile's own
+        // Nyx-target tolerance for that, Driver.cpp) -- leave its raw `import X` text
+        // uncut, flowing through EmitGapUpTo as ordinary nyx_source below, so
+        // NyxRuntime::CreateScope's own independent import resolution still sees it.
+        if (!ResolvedPathByName.count(Import.Name)) continue;
         const std::size_t      StartOffset = LocationToOffset(Source, Import.Location);
         const std::size_t      EndOffset = ImportStatementEndOffset(Source, StartOffset, Import.Name);
         Cuts.push_back(Cut{StartOffset, EndOffset, AdvanceLocation(Source, Import.Location, StartOffset, EndOffset),
@@ -323,7 +328,12 @@ Amanuensis::JsonValue BuildIrisIr(std::string_view Source, const std::string& Fi
 
     Amanuensis::JsonValue ImportNodes = Amanuensis::Json::MakeArray();
     for (const ImportStatement& Import : Imports) {
-        Amanuensis::Json::PushBack(ImportNodes, SerializeImport(Import, ResolvedPathByName.at(Import.Name), Source));
+        const auto Resolved = ResolvedPathByName.find(Import.Name);
+        // Unresolved (Nyx target only, see the Cuts loop above) -- absent from
+        // Document.Imports entirely, so using it as a JSX <Tag> correctly fails at that
+        // point of use (InvokeChildComponent's "not imported") rather than here.
+        if (Resolved == ResolvedPathByName.end()) continue;
+        Amanuensis::Json::PushBack(ImportNodes, SerializeImport(Import, Resolved->second, Source));
     }
 
     Amanuensis::JsonValue Doc = Amanuensis::Json::MakeObject();
