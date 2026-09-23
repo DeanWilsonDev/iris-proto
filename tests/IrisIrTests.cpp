@@ -203,7 +203,7 @@ DESCRIBE("IrisIr", {
         ASSERT_TRUE(Int(Field(TextLocation, "length")) == 5);  // "Hello".size(), no quote padding
     });
 
-    IT("an import statement is reported in `imports`, not duplicated into a `body` nyx_source node", {
+    IT("an import statement is reported in `imports` and also left in its `body` nyx_source node", {
         const std::string    Source = "import Button\nrender { <Frame /> }\n";
         const std::string    FilePath = "test.irisx";
         const auto            Imports = ScanImports(Source, FilePath);
@@ -222,11 +222,13 @@ DESCRIBE("IrisIr", {
         ASSERT_TRUE(Int(Field(Field(ImportNode, "location"), "length")) == 13); // strlen("import Button")
 
         const Amanuensis::JsonValue& Body = Field(Doc, "body");
+        bool FoundImportText = false;
         for (std::size_t Index = 0; Index < Amanuensis::Json::Size(Body); ++Index) {
             const Amanuensis::JsonValue& Node = Amanuensis::Json::At(Body, Index);
-            if (Str(Field(Node, "kind")) == "nyx_source") {
-                ASSERT_FALSE(Contains(Str(Field(Node, "source")), "import"));
+            if (Str(Field(Node, "kind")) == "nyx_source" && Contains(Str(Field(Node, "source")), "import Button")) {
+                FoundImportText = true;
             }
         }
+        ASSERT_TRUE(FoundImportText);
     });
 });

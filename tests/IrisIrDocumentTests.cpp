@@ -152,7 +152,7 @@ DESCRIBE("IrisIrDocument", {
         ASSERT_EQUAL(Root.Children[0].Text.Location.Column, static_cast<std::uint32_t>(16));
     });
 
-    IT("imports round-trip separately from body, and never leak into a nyx_source region", {
+    IT("imports round-trip separately from body, and also survive in a nyx_source region", {
         const std::string Source = "import Button\nrender { <Frame /> }\n";
         const std::string FilePath = "test.irisx";
         const auto          Imports = ScanImports(Source, FilePath);
@@ -167,11 +167,13 @@ DESCRIBE("IrisIrDocument", {
         ASSERT_TRUE(Result.Document->Imports[0].Name == "Button");
         ASSERT_TRUE(Result.Document->Imports[0].ResolvedPath == "components/Button.irisx");
 
+        bool FoundImportText = false;
         for (const IrBodyNode& Node : Result.Document->Body) {
             if (const IrNyxSourceNode* Source2 = std::get_if<IrNyxSourceNode>(&Node)) {
-                ASSERT_FALSE(Source2->Source.find("import") != std::string::npos);
+                if (Source2->Source.find("import Button") != std::string::npos) FoundImportText = true;
             }
         }
+        ASSERT_TRUE(FoundImportText);
     });
 
     IT("a malformed document (missing required field) is reported, not silently defaulted", {

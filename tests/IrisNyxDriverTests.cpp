@@ -186,6 +186,34 @@ DESCRIBE("IrisNyxDriver", {
         ASSERT_EQUAL(std::get<int32_t>(FirstAgain.data), int32_t{17});
     });
 
+    IT("a .irisx file can call a plain top-level function declared in another .irisx file it imports", {
+        TempProject Project;
+        Project.Write("Helper.irisx",
+                      "string GreetingFor(string name) {\n"
+                      "    return \"Hello, \" + name;\n"
+                      "}\n"
+                      "void Helper() {\n"
+                      "    render {\n"
+                      "        <Frame />\n"
+                      "    }\n"
+                      "}\n");
+        const std::string AppPath = Project.Write("App.irisx",
+                                                   "import Helper\n"
+                                                   "void App() {\n"
+                                                   "    render {\n"
+                                                   "        <Frame class={GreetingFor(\"World\")} />\n"
+                                                   "    }\n"
+                                                   "}\n");
+
+        IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+        const Component RootNode = Driver.MountRoot(AppPath, "App");
+        REQUIRE_TRUE(Driver.Errors().empty());
+
+        iris::MountFn                   Mount = TestMounter();
+        std::unique_ptr<Umbra::IWidget> Root  = Mount(RootNode);
+        ASSERT_TRUE(dynamic_cast<MockWidget*>(Root.get())->ClassName == "Hello, World");
+    });
+
     IT("reports a missing component-local callable binding through Errors and returns null", {
         TempProject Project;
         const std::string AppPath = Project.Write("App.irisx",

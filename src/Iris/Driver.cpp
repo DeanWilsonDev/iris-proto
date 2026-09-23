@@ -91,19 +91,6 @@ DriverResult CompileFile(std::string_view Source, std::string FilePath, const Ir
 
     const std::vector<ImportStatement> Imports = ScanImports(Source, FilePath);
     const ImportResolutionResult       ResolvedImports = ResolveImports(Imports, Config, ProjectRoot);
-    // An import that fails this `.irisx`-only lookup isn't necessarily unusable for the Nyx
-    // target: BuildIrisIr (below) only cuts/reports the imports that *did* resolve here,
-    // leaving any others' raw `import X` text untouched in the reconstructed source --
-    // nyx-proto's own Lexer/Parser (IrisNyxDriver::GetFileScope -> ReconstructNyxSource ->
-    // NyxRuntime::CreateScope) resolves a plain `import X` statement independently via
-    // NyxRuntime::SetImportSearchPaths, a completely separate mechanism from this
-    // `.irisx`-component-mounting lookup, so a plain-Nyx-symbol import (a data/logic `.nyx`
-    // file with no render block, never used as a JSX `<Tag>`) still reaches the functions/
-    // classes it declares. An import that *is* later used as a JSX tag but never resolved
-    // here fails at that point of use instead ("<Tag> is not imported by ..." --
-    // InvokeChildComponent), not as an opaque whole-file compile error. The `.iris`/C++
-    // target keeps today's exact behavior -- it genuinely needs every import as a real
-    // #include target to generate valid code, and never reaches BuildIrisIr at all.
     if (!IsNyx) {
         for (const ImportError& Err : ResolvedImports.Errors) {
             Result.Diagnostics.push_back(DriverDiagnostic{Err.Message, Err.Location});

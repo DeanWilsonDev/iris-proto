@@ -3,6 +3,7 @@
 #include "Iris/Driver.h"
 #include "Iris/NyxLifecycleAdapter.h"
 #include "Iris/NyxSignalDecorator.h"
+#include "Iris/RenderBlockParser.h"
 
 #include "runtime/class-field-schema.hpp"
 #include "runtime/environment.hpp"
@@ -10,6 +11,7 @@
 
 #include <amanuensis/io/reader.hpp>
 
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -28,6 +30,35 @@ NyxDriverState* GetDriverState(const std::shared_ptr<iris::ComponentInstance>& I
         return nullptr;
     }
     return static_cast<NyxDriverState*>(Instance->DriverState.get());
+}
+
+std::size_t LocationToOffset(std::string_view Source, const SourceLocation& Loc) {
+    std::size_t   Offset = 0;
+    std::uint32_t Line = 1;
+    std::uint32_t Column = 1;
+    while (Offset < Source.size() && (Line < Loc.Line || (Line == Loc.Line && Column < Loc.Column))) {
+        if (Source[Offset] == '\n') {
+            ++Line;
+            Column = 1;
+        } else {
+            ++Column;
+        }
+        ++Offset;
+    }
+    return Offset;
+}
+
+std::string StripRenderBlocksForImport(const std::string& Source, const std::string& FilePath) {
+    RenderBlockParser                     Parser(Source, FilePath);
+    const RenderBlockParser::Result Result = Parser.Parse();
+    if (!Result.Errors.empty()) return Source;
+    std::string Stripped = Source;
+    for (auto It = Result.Blocks.rbegin(); It != Result.Blocks.rend(); ++It) {
+        const std::size_t Start = LocationToOffset(Source, It->Location);
+        const std::size_t End = LocationToOffset(Source, It->EndLocation);
+        if (End > Start && End <= Stripped.size()) Stripped.erase(Start, End - Start);
+    }
+    return Stripped;
 }
 
 // Derives a reload tier by comparing which of `Old`'s own directly-declared bindings are
@@ -203,6 +234,13 @@ void IrisNyxDriver::InitializeRuntime() {
     // `class Tooltip : Component { ... }`. See NyxComponentBridge.h for why no `.Override(...)`
     // calls are needed.
     Runtime_.RegisterInheritableType<NyxComponentBase>("Component");
+
+    Runtime_.AddImportFilenameCandidate(
+        [](const std::string& ModuleName) { return ModuleName + ".irisx"; });
+    Runtime_.SetImportSourcePreprocessor(&StripRenderBlocksForImport);
+    for (const std::string& SearchPath : Config_.SearchPaths) {
+        Runtime_.AddImportSearchPath(std::filesystem::path(ProjectRoot_) / SearchPath);
+    }
 }
 
 nyx::host::NyxRuntime& IrisNyxDriver::Runtime() { return Runtime_; }

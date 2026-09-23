@@ -225,19 +225,12 @@ Component PartyScreen(PartyScreenProps props) {
             "test.irisx", Config, "/nonexistent");
 
         ASSERT_TRUE(Result.Diagnostics.empty());
-        // nyx-proto's own interpreter (IrisNyxDriver::GetFileScope -> ReconstructNyxSource ->
-        // NyxRuntime::CreateScope) resolves a plain `import X` independently, via
-        // NyxRuntime::SetImportSearchPaths -- a completely separate mechanism from this
-        // .irisx-component-mounting lookup, so BoardCardItem not resolving here isn't fatal.
 
         const Amanuensis::JsonParseResult Parsed = Amanuensis::Reader::ParseString(Result.Output);
         ASSERT_TRUE(Parsed.succeeded);
 
         const Amanuensis::JsonValue& Imports = Amanuensis::Json::Get(Parsed.value, "imports");
         ASSERT_TRUE(Amanuensis::Json::Size(Imports) == 0);
-        // absent from Document.Imports entirely -- using BoardCardItem as a JSX <Tag> would
-        // still fail at that point of use (IrisNyxDriverTests.cpp's own "no matching import"
-        // case already covers that failure path), just not as a whole-file compile error here.
 
         bool FoundImportText = false;
         const Amanuensis::JsonValue& Body = Amanuensis::Json::Get(Parsed.value, "body");
@@ -249,8 +242,40 @@ Component PartyScreen(PartyScreenProps props) {
             }
         }
         ASSERT_TRUE(FoundImportText);
-        // the raw `import BoardCardItem` text survives uncut in the reconstructed nyx_source,
-        // exactly what ReconstructNyxSource needs to hand nyx-proto's own parser for it to
-        // resolve independently.
+    });
+
+    IT("a resolved .irisx import's raw text also survives uncut, alongside its own Document.Imports entry", {
+        TempProject Project;
+        std::filesystem::create_directories(std::filesystem::path(Project.RootPath()) / "components");
+        std::ofstream(std::filesystem::path(Project.RootPath()) / "components" / "Helper.irisx")
+            << "void Helper() {\n    render { <Frame /> }\n}\n";
+
+        Iris::IrisConfig Config;
+        Config.Target = Iris::IrisBuildTarget::UmbraEngine;
+        Config.SearchPaths = {"components"};
+
+        const Iris::DriverResult Result = Iris::CompileFile(
+            "import Helper\n"
+            "Component Foo() {\n    render { <Frame class=\"a\" /> }\n}\n",
+            "test.irisx", Config, Project.RootPath());
+
+        ASSERT_TRUE(Result.Diagnostics.empty());
+
+        const Amanuensis::JsonParseResult Parsed = Amanuensis::Reader::ParseString(Result.Output);
+        ASSERT_TRUE(Parsed.succeeded);
+
+        const Amanuensis::JsonValue& Imports = Amanuensis::Json::Get(Parsed.value, "imports");
+        ASSERT_TRUE(Amanuensis::Json::Size(Imports) == 1);
+
+        bool FoundImportText = false;
+        const Amanuensis::JsonValue& Body = Amanuensis::Json::Get(Parsed.value, "body");
+        for (std::size_t Index = 0; Index < Amanuensis::Json::Size(Body); ++Index) {
+            const Amanuensis::JsonValue& Node = Amanuensis::Json::At(Body, Index);
+            if (Amanuensis::Json::AsString(Amanuensis::Json::Get(Node, "kind")) == "nyx_source" &&
+                Contains(Amanuensis::Json::AsString(Amanuensis::Json::Get(Node, "source")), "import Helper")) {
+                FoundImportText = true;
+            }
+        }
+        ASSERT_TRUE(FoundImportText);
     });
 });
