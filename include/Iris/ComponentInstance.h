@@ -225,6 +225,8 @@ public:
     // calls `iris::RegisterLifecycle`.
     Umbra::IWidgetLifecycle* Lifecycle{nullptr};
 
+    std::shared_ptr<ComponentInstance> RootChildInstance;
+
 private:
     std::vector<std::unique_ptr<Detail::SignalStorageBase>> Signals_;
     std::vector<std::unique_ptr<nyx::runtime::Value>>       NyxSignals_;
@@ -289,6 +291,11 @@ inline void RegisterLifecycle(Umbra::IWidgetLifecycle* Lifecycle) {
     Instance->Lifecycle = Lifecycle;
 }
 
+inline void AdoptResultInstance(Iris::Component& Result, std::shared_ptr<ComponentInstance> Owner) {
+    Owner->RootChildInstance = Result.Instance != Owner ? std::move(Result.Instance) : nullptr;
+    Result.Instance          = std::move(Owner);
+}
+
 // Wraps a component invocation — what `Codegen.h` emits for every `<Name .../>` — so
 // any `IRIS_SIGNAL` declarations inside the component function `Fn` calls register
 // against a fresh `ComponentInstance`, then ties that instance's lifetime to the
@@ -302,7 +309,7 @@ Iris::Component MountComponentInstance(Callable&& Fn) {
         Detail::ScopedComponentInstance Guard(Instance.get());
         return Fn();
     }();
-    Result.Instance = std::move(Instance);
+    AdoptResultInstance(Result, std::move(Instance));
     return Result;
 }
 
@@ -337,7 +344,7 @@ Iris::Component ReloadComponentInstance(std::shared_ptr<ComponentInstance> Prior
         return Fn();
     }();
     const ComponentReloadTier Tier = Prior->EndReloadReplay();
-    Result.Instance = Prior;
+    AdoptResultInstance(Result, Prior);
     Result.ReloadTier = Tier;
     return Result;
 }

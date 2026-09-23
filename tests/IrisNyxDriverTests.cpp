@@ -1394,3 +1394,159 @@ DESCRIBE("IrisNyxDriver", {
         ASSERT_TRUE(SlotClass(Reloaded.Root) == "v2-ticked");
     });
 });
+
+namespace {
+
+constexpr std::string_view CrumbChildSource = "void Child(Array<Crumb> crumbs) {\n"
+                                              "    render {\n"
+                                              "        <Frame>\n"
+                                              "            <Slot>\n"
+                                              "                !{() -> crumbs.Map((Crumb c) -> <Frame class={c.Name} />)}\n"
+                                              "            </Slot>\n"
+                                              "        </Frame>\n"
+                                              "    }\n"
+                                              "}\n";
+
+constexpr std::string_view CrumbBuilderSource = "class Crumb { string Name = \"\"; }\n"
+                                                "Array<Crumb> BuildCrumbs(int count) {\n"
+                                                "    Array<Crumb> result = [];\n"
+                                                "    for (int i = 0; i < count; i++) {\n"
+                                                "        Crumb c = new Crumb();\n"
+                                                "        c.Name = `crumb-${i}`;\n"
+                                                "        result.Add(c);\n"
+                                                "    }\n"
+                                                "    return result;\n"
+                                                "}\n";
+
+void MountAndExpectCrumbs(IrisNyxDriver& Driver, const std::string& EntryPath, const std::string& EntryName) {
+    const Component RootNode = Driver.MountRoot(EntryPath, EntryName);
+    REQUIRE_TRUE(Driver.Errors().empty());
+
+    iris::MountFn                   Mount = TestMounter();
+    std::unique_ptr<Umbra::IWidget> Root  = Mount(RootNode);
+    auto                            Slots = iris::ResolveSlots(*Root, RootNode, Mount);
+    REQUIRE_TRUE(Driver.Errors().empty());
+
+    REQUIRE_EQUAL(Root->GetChildCount(), static_cast<std::size_t>(2));
+    ASSERT_TRUE(dynamic_cast<MockWidget*>(Root->GetChildAt(0))->ClassName == "crumb-0");
+    ASSERT_TRUE(dynamic_cast<MockWidget*>(Root->GetChildAt(1))->ClassName == "crumb-1");
+}
+
+} // namespace
+
+DESCRIBE("IrisNyxDriver component whose render root is another component invocation", {
+    IT("keeps the inner component's <Slot> scope alive after the outer instance is attached", {
+           TempProject Project;
+           Project.Write("Child.irisx",
+                         "void Child(Array<string> names) {\n"
+                         "    render {\n"
+                         "        <Frame>\n"
+                         "            <Slot>\n"
+                         "                !{() -> names.Map((string n) -> <Frame class={n} />)}\n"
+                         "            </Slot>\n"
+                         "        </Frame>\n"
+                         "    }\n"
+                         "}\n");
+           const std::string AppPath = Project.Write("App.irisx",
+                                                      "import Child\n"
+                                                      "void App() {\n"
+                                                      "    render {\n"
+                                                      "        <Child names={[\"crumb-0\", \"crumb-1\"]} />\n"
+                                                      "    }\n"
+                                                      "}\n");
+           IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+           MountAndExpectCrumbs(Driver, AppPath, "App");
+       });
+
+    IT("keeps the freshly re-invoked inner component's <Slot> scope alive across ReloadRoot", {
+        TempProject Project;
+        Project.Write("Child.irisx",
+                      "void Child(Array<string> names) {\n"
+                      "    render {\n"
+                      "        <Frame>\n"
+                      "            <Slot>\n"
+                      "                !{() -> names.Map((string n) -> <Frame class={n} />)}\n"
+                      "            </Slot>\n"
+                      "        </Frame>\n"
+                      "    }\n"
+                      "}\n");
+        const std::string AppPath = Project.Write("App.irisx",
+                                                   "import Child\n"
+                                                   "void App() {\n"
+                                                   "    render {\n"
+                                                   "        <Child names={[\"crumb-0\", \"crumb-1\"]} />\n"
+                                                   "    }\n"
+                                                   "}\n");
+        IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+        auto Original = std::make_unique<Component>(Driver.MountRoot(AppPath, "App"));
+        REQUIRE_TRUE(Driver.Errors().empty());
+
+        const IrisNyxReloadResult Reloaded = Driver.ReloadRoot(AppPath, "App", {}, *Original);
+        REQUIRE_TRUE(Driver.Errors().empty());
+        Original.reset();
+
+        const Component& Slot = Reloaded.Root.Children.at(0);
+        const std::vector<Component> SlotOutput =
+            std::get<std::function<std::vector<Component>()>>(Slot.SlotCallable->Callable)();
+        REQUIRE_EQUAL(SlotOutput.size(), static_cast<std::size_t>(2));
+        ASSERT_TRUE(std::get<std::string>(SlotOutput[1].Props.at("class")) == "crumb-1");
+    });
+
+    IT("an Array<CustomClass> built by an imported file's free function reaches the inner component's "
+       "<Slot> Map() intact",
+       {
+           TempProject Project;
+           Project.Write("Helper.irisx",
+                         std::string(CrumbBuilderSource) + "void Helper() {\n    render {\n        <Frame />\n    }\n}\n");
+           Project.Write("Child.irisx", CrumbChildSource);
+           const std::string AppPath = Project.Write("App.irisx",
+                                                      "import Helper\n"
+                                                      "import Child\n"
+                                                      "void App() {\n"
+                                                      "    render {\n"
+                                                      "        <Child crumbs={BuildCrumbs(2)} />\n"
+                                                      "    }\n"
+                                                      "}\n");
+
+           IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+           MountAndExpectCrumbs(Driver, AppPath, "App");
+       });
+});
+
+DESCRIBE("IrisNyxDriver component invocation returned from a <Slot>", {
+    IT("an Array<CustomClass> built by an imported file's free function reaches a Slot-mounted "
+       "component's own <Slot> Map() intact",
+       {
+           TempProject Project;
+           Project.Write("Helper.irisx",
+                         std::string(CrumbBuilderSource) + "void Helper() {\n    render {\n        <Frame />\n    }\n}\n");
+           Project.Write("Child.irisx", CrumbChildSource);
+           const std::string AppPath = Project.Write("App.irisx",
+                                                      "import Helper\n"
+                                                      "import Child\n"
+                                                      "void App() {\n"
+                                                      "    render {\n"
+                                                      "        <Frame>\n"
+                                                      "            <Slot>\n"
+                                                      "                !{() -> <Child crumbs={BuildCrumbs(2)} />}\n"
+                                                      "            </Slot>\n"
+                                                      "        </Frame>\n"
+                                                      "    }\n"
+                                                      "}\n");
+
+           IrisNyxDriver Driver(UmbraConfig(), Project.RootPath());
+           const Component RootNode = Driver.MountRoot(AppPath, "App");
+           REQUIRE_TRUE(Driver.Errors().empty());
+
+           iris::MountFn                   Mount = TestMounter();
+           std::unique_ptr<Umbra::IWidget> Root  = Mount(RootNode);
+           auto                            Slots = iris::ResolveSlots(*Root, RootNode, Mount);
+           REQUIRE_TRUE(Driver.Errors().empty());
+
+           REQUIRE_EQUAL(Root->GetChildCount(), static_cast<std::size_t>(1));
+           MockWidget* ChildRoot = dynamic_cast<MockWidget*>(Root->GetChildAt(0));
+           REQUIRE_EQUAL(ChildRoot->GetChildCount(), static_cast<std::size_t>(2));
+           ASSERT_TRUE(dynamic_cast<MockWidget*>(ChildRoot->GetChildAt(0))->ClassName == "crumb-0");
+           ASSERT_TRUE(dynamic_cast<MockWidget*>(ChildRoot->GetChildAt(1))->ClassName == "crumb-1");
+       });
+});

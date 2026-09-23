@@ -550,7 +550,7 @@ Iris::Component IrisNyxDriver::InvokeComponent(const std::string& ResolvedPath, 
 
     const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, NewState->RenderScope, Marker_, ChildInvoker, &Errors_, MakeNativeBuilderLookup());
     Iris::Component    Result = ConvertIrElement(Block->Root, Eval, &Errors_);
-    Result.Instance = Previous->Instance;
+    iris::AdoptResultInstance(Result, Previous->Instance);
     Result.ReloadTier = Tier;
     return Result;
 }
@@ -732,7 +732,7 @@ Iris::Component IrisNyxDriver::InvokeClassComponent(const IrisIrDocument& Docume
 
     const NyxEvaluator Eval = MakeNyxEvaluator(Runtime_, NewState->RenderScope, Marker_, ChildInvoker, &Errors_, MakeNativeBuilderLookup());
     Iris::Component    Result = ConvertIrElement(Block.Root, Eval, &Errors_);
-    Result.Instance = Previous->Instance;
+    iris::AdoptResultInstance(Result, Previous->Instance);
     Result.ReloadTier = Tier;
     return Result;
 }
