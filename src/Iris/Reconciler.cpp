@@ -269,6 +269,9 @@ PortalProperties ReadPortalProperties(const IrisProps& Props) {
         const auto It = Props.find(Name);
         return It == Props.end() ? nullptr : std::get_if<T>(&It->second);
     };
+    for (const char* Name : {"x", "y", "width", "height"}) {
+        if (Read.operator()<float>(Name) != nullptr) Result.HasPlacement = true;
+    }
     if (const auto* Value = Read.operator()<float>("x")) Result.X = *Value;
     if (const auto* Value = Read.operator()<float>("y")) Result.Y = *Value;
     if (const auto* Value = Read.operator()<float>("width")) Result.Width = *Value;

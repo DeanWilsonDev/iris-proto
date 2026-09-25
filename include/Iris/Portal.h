@@ -8,9 +8,8 @@
 
 namespace Iris {
 
-// The backend-neutral state carried by a <Portal>. Coordinates and dimensions are
-// logical units interpreted by the selected backend. Missing props use these defaults.
 struct PortalProperties {
+    bool                  HasPlacement{false};
     float                 X{0.0f};
     float                 Y{0.0f};
     float                 Width{0.0f};

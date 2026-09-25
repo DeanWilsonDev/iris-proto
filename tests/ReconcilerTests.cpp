@@ -310,6 +310,7 @@ DESCRIBE("Reconciler", {
         iris::ReconcileWidget(Widget, Old, New, Mount);
 
         Portal = dynamic_cast<MockPortalTarget*>(Widget.get());
+        ASSERT_TRUE(Portal->Properties.HasPlacement);
         ASSERT_TRUE(Portal->Properties.X == 9.0f && Portal->Properties.Width == 80.0f);
         ASSERT_EQUAL(dynamic_cast<MockWidget*>(Portal->GetChildAt(0))->Id, ChildId);
         ASSERT_EQUAL(dynamic_cast<MockWidget*>(Portal->GetChildAt(0))->Text, "new");
@@ -331,6 +332,7 @@ DESCRIBE("Reconciler", {
         iris::ReconcileWidget(Widget, Old, New, Mount);
 
         auto* Portal = dynamic_cast<MockPortalTarget*>(Widget.get());
+        ASSERT_FALSE(Portal->Properties.HasPlacement);
         ASSERT_TRUE(Portal->Properties.X == 0.0f);
         ASSERT_FALSE(Portal->Properties.DismissOnOutsideClick);
         ASSERT_FALSE(static_cast<bool>(Portal->Properties.OnDismiss));
