@@ -151,7 +151,9 @@ mount nothing." Anything else (multiple children, non-callable) is a
 from `<Text>`), `<Grid>` (**stubbed** — maps to a plain `Box`, no real
 grid layout yet), `<Image src="...">`, `<Icon icon="..." size={...}>`,
 `<Scroll wheelStep={...}>`, `<Input text="..." preferredWidth={...}
-onTextChange={...}>`, `<Text>` (**no `font` prop** — compile error, styling
+onTextChange={...}>`, `<TextArea text="..." preferredWidth={...}
+wheelStep={...} onTextChange={...}>` (multi-line, word-wrapping, scrolls
+vertically; size its height from Lustre `height`), `<Text>` (**no `font` prop** — compile error, styling
 comes from a paired Lustre stylesheet), `<Slot>`. Shared event props:
 `onPress`, `onRelease`, `onHover`, `onFocus`, `onChange` — all zero-argument
 `std::function<void()>` (except `<Input>`'s `onTextChange`, which carries the

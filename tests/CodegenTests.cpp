@@ -108,6 +108,20 @@ DESCRIBE("Codegen", {
         ASSERT_FALSE(Result.Errors.empty()); // <Input> (a leaf) with a child is a codegen error
     });
 
+    IT("TextArea with text, preferredWidth and wheelStep props codegens with no errors", {
+        const auto Result =
+            Generate(R"(render { <TextArea text="line one" preferredWidth={320.0f} wheelStep={24.0f} /> })");
+        ASSERT_TRUE(Result.Errors.empty());
+        ASSERT_TRUE(Contains(Result.Source, "Iris::IrisElementTag::TextArea"));
+        ASSERT_TRUE(Contains(Result.Source, "std::in_place_type<std::string>, \"line one\""));
+        ASSERT_TRUE(Contains(Result.Source, "std::in_place_type<float>, 320.0f"));
+    });
+
+    IT("TextArea with a child is an error", {
+        const auto Result = Generate(R"(render { <TextArea text="hello"><Frame /></TextArea> })");
+        ASSERT_FALSE(Result.Errors.empty());
+    });
+
     IT("Frame with a literal-text child is an error", {
         const auto Result = Generate(R"(render { <Frame>hello</Frame> })");
         ASSERT_FALSE(Result.Errors.empty()); // <Frame> with a literal-text child is a codegen error

@@ -178,6 +178,19 @@ DESCRIBE("IrisIrRuntime", {
         ASSERT_FALSE(Errors.empty());
     });
 
+    IT("converts a .irisx TextArea to the TextArea tag and rejects children on it", {
+        IrElementNode Node = MakeElement("TextArea", {MakeExprProp("wheelStep", "24.0")});
+        std::vector<IrisIrRuntimeError> Errors;
+        Component Result = ConvertIrElement(Node, MakeEvaluator(), &Errors);
+        ASSERT_TRUE(Errors.empty());
+        ASSERT_TRUE(Result.Tag == IrisElementTag::TextArea);
+
+        IrElementNode WithChild = MakeElement("TextArea", {}, {MakeElementChild(MakeElement("Frame"))});
+        std::vector<IrisIrRuntimeError> ChildErrors;
+        ConvertIrElement(WithChild, MakeEvaluator(), &ChildErrors);
+        ASSERT_FALSE(ChildErrors.empty());
+    });
+
     IT("<Split> requires exactly two children", {
         IrElementNode Node = MakeElement("Split", {}, {MakeElementChild(MakeElement("Frame"))});
         std::vector<IrisIrRuntimeError> Errors;

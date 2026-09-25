@@ -24,12 +24,10 @@ Iris::IrisElementTag TagNameToElementTag(const std::string& Tag) {
         {"Grid", Iris::IrisElementTag::Grid},     {"Image", Iris::IrisElementTag::Image},
         {"Icon", Iris::IrisElementTag::Icon},     {"Text", Iris::IrisElementTag::Text},
         {"Scroll", Iris::IrisElementTag::Scroll}, {"Input", Iris::IrisElementTag::Input},
+        {"TextArea", Iris::IrisElementTag::TextArea},
         {"Slot", Iris::IrisElementTag::Slot},     {"Native", Iris::IrisElementTag::Native},
         {"Portal", Iris::IrisElementTag::Portal}, {"Split", Iris::IrisElementTag::Split},
     };
-    // Only ever called for a Tag already found in CorePrimitiveTagNames() -- the Frame
-    // fallback is unreachable in practice, kept only so this has a defined return on every
-    // path rather than UB from an unchecked Map.at().
     const auto It = Map.find(Tag);
     return It != Map.end() ? It->second : Iris::IrisElementTag::Frame;
 }
@@ -99,13 +97,10 @@ Iris::IrisProps ConvertPrimitiveProps(const IrElementNode& Node, const NyxEvalua
     return Result;
 }
 
-// `<Frame>`/`<Grid>`/`<Scroll>`/`<Split>`: element children only. `<Inline>`: any mix of
-// element, text, and interpolated (`nyx_expression`) children. `<Image>`/`<Icon>`/`<Input>`:
-// no children at all -- mirrors `Codegen.cpp`'s `EmitChildrenList` exactly.
 std::vector<Iris::Component> ConvertChildrenList(const IrElementNode& Node, const NyxEvaluator& Evaluator,
                                                     std::vector<IrisIrRuntimeError>* Errors) {
     const bool AllowsText = Node.Tag == "Inline";
-    const bool AllowsAny  = Node.Tag != "Image" && Node.Tag != "Icon" && Node.Tag != "Input";
+    const bool AllowsAny  = Node.Tag != "Image" && Node.Tag != "Icon" && Node.Tag != "Input" && Node.Tag != "TextArea";
 
     std::vector<Iris::Component> Result;
     for (const IrElementChild& Child : Node.Children) {

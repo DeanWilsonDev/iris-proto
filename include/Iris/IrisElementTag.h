@@ -38,13 +38,8 @@ enum class IrisElementTag {
     // (float) is its one dedicated prop (logical pixels scrolled per wheel notch);
     // everything else (class, event props) is the shared set every primitive gets.
     Scroll,
-    // Single-line text entry (docs/
-    // penumbra_iris_lustre_componentization_gaps_requirements.md §3) — a leaf, same as
-    // `<Icon>`/`<Image>`: no children. `text` (its initial value, reusing `<Text>`'s own
-    // prop name) and `preferredWidth` (float, a field-width hint) are its dedicated
-    // props; focus/clipboard/caret are entirely backend-side state this tag carries no
-    // opinion about.
     Input,
+    TextArea,
     Slot,
     // An opaque escape-hatch node (docs/archive/iris_next_steps_resolved.md, "No way to declare a custom
     // widget/imperative-draw node as an Iris element") — its single `build` prop is a

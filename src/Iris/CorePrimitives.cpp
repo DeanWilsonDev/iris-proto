@@ -5,7 +5,8 @@ namespace Iris {
 const std::unordered_set<std::string>& CorePrimitiveTagNames() {
     static const std::unordered_set<std::string> Names = {"Frame",  "Inline", "Grid",   "Image",
                                                            "Icon",   "Text",   "Scroll", "Input",
-                                                           "Slot",   "Native", "Portal", "Split"};
+                                                           "TextArea", "Slot", "Native", "Portal",
+                                                           "Split"};
     return Names;
 }
 
