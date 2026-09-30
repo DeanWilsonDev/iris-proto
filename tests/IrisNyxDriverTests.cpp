@@ -1393,6 +1393,61 @@ DESCRIBE("IrisNyxDriver", {
         Reloaded.Root.Instance->Lifecycle->OnTick(Umbra::TickInfo{0.5f});
         ASSERT_TRUE(SlotClass(Reloaded.Root) == "v2-ticked");
     });
+
+    IT("an event handler that raises a Nyx error records it in Errors(), at the handler's own location", {
+        TempProject       Project;
+        const std::string AppPath = Project.Write("BrokenButton.irisx",
+                                                    "void Explode() {\n"
+                                                    "    string s = \"text\";\n"
+                                                    "    bool b = !s;\n"
+                                                    "}\n"
+                                                    "\n"
+                                                    "void BrokenButton() {\n"
+                                                    "    @signal int count = 0;\n"
+                                                    "\n"
+                                                    "    render {\n"
+                                                    "        <Frame>\n"
+                                                    "            <Frame onPress={() -> { count = count + 1; }} />\n"
+                                                    "            <Frame onRelease={() -> Explode()} />\n"
+                                                    "        </Frame>\n"
+                                                    "    }\n"
+                                                    "}\n");
+
+        IrisNyxDriver     Driver(UmbraConfig(), Project.RootPath());
+        const Component Root = Driver.MountRoot(AppPath, "BrokenButton");
+        REQUIRE_TRUE(Driver.Errors().empty());
+        REQUIRE_EQUAL(Root.Children.size(), static_cast<std::size_t>(2));
+
+        std::get<std::function<void()>>(Root.Children[0].Props.at("onPress"))();
+        ASSERT_TRUE(Driver.Errors().empty());
+
+        std::get<std::function<void()>>(Root.Children[1].Props.at("onRelease"))();
+        REQUIRE_EQUAL(Driver.Errors().size(), static_cast<std::size_t>(1));
+        ASSERT_TRUE(Driver.Errors()[0].Message.find("bool") != std::string::npos);
+        ASSERT_EQUAL(Driver.Errors()[0].Location.Line, static_cast<std::uint32_t>(12));
+    });
+
+    IT("an onTextChange handler that raises a Nyx error records it in Errors()", {
+        TempProject       Project;
+        const std::string AppPath = Project.Write("BrokenField.irisx",
+                                                    "void Explode(string text) {\n"
+                                                    "    bool b = !text;\n"
+                                                    "}\n"
+                                                    "\n"
+                                                    "void BrokenField() {\n"
+                                                    "    render {\n"
+                                                    "        <Input onTextChange={(string text) -> Explode(text)} />\n"
+                                                    "    }\n"
+                                                    "}\n");
+
+        IrisNyxDriver     Driver(UmbraConfig(), Project.RootPath());
+        const Component Root = Driver.MountRoot(AppPath, "BrokenField");
+        REQUIRE_TRUE(Driver.Errors().empty());
+
+        std::get<std::function<void(std::string)>>(Root.Props.at("onTextChange"))("typed");
+        REQUIRE_EQUAL(Driver.Errors().size(), static_cast<std::size_t>(1));
+        ASSERT_TRUE(Driver.Errors()[0].Message.find("bool") != std::string::npos);
+    });
 });
 
 namespace {

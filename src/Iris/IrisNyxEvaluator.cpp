@@ -364,15 +364,22 @@ NyxEvaluator MakeNyxEvaluator(nyx::host::NyxRuntime& Runtime, nyx::host::NyxRunt
                                              const std::string& ExpectedTypeName) -> Iris::IrisPropValue {
         if (ExpectedTypeName == "std::function<void()>") {
             std::string Source = Node.Source();
-            return Iris::IrisPropValue{std::function<void()>([&Runtime, &Scope, Source]() {
-                InvokeAsLambda(Runtime, Scope, Source, {});
-            })};
+            return Iris::IrisPropValue{
+                std::function<void()>([&Runtime, &Scope, Errors, Source, Location = Node.Location]() {
+                    const Value Result = InvokeAsLambda(Runtime, Scope, Source, {});
+                    if (Scope.interpreter->IsErrorValue(Result)) {
+                        AddError(Errors, DescribeNyxError(Result), Location);
+                    }
+                })};
         }
         if (ExpectedTypeName == "std::function<void(std::string)>") {
             std::string Source = Node.Source();
-            return Iris::IrisPropValue{
-                std::function<void(std::string)>([&Runtime, &Scope, Source](std::string Arg) {
-                    InvokeAsLambda(Runtime, Scope, Source, {QuoteNyxStringLiteral(Arg)});
+            return Iris::IrisPropValue{std::function<void(std::string)>(
+                [&Runtime, &Scope, Errors, Source, Location = Node.Location](std::string Arg) {
+                    const Value Result = InvokeAsLambda(Runtime, Scope, Source, {QuoteNyxStringLiteral(Arg)});
+                    if (Scope.interpreter->IsErrorValue(Result)) {
+                        AddError(Errors, DescribeNyxError(Result), Location);
+                    }
                 })};
         }
         const Value Result = Runtime.EvaluateInScope(Scope, Node.Source());
