@@ -171,6 +171,19 @@ DESCRIBE("Reconciler", {
         ASSERT_TRUE(Diff.Text.has_value() && *Diff.Text == "hello"); // a new/changed prop value is included
     });
 
+    IT("ComputePropDiff includes an <Icon>'s changed icon name and omits an unchanged one", {
+        Iris::IrisProps Old;
+        Old["icon"] = Iris::IrisPropValue{std::string("bolt")};
+        Iris::IrisProps Same;
+        Same["icon"] = Iris::IrisPropValue{std::string("bolt")};
+        Iris::IrisProps Changed;
+        Changed["icon"] = Iris::IrisPropValue{std::string("layers")};
+
+        ASSERT_FALSE(iris::ComputePropDiff(Old, Same).Icon.has_value());
+        const auto Diff = iris::ComputePropDiff(Old, Changed);
+        ASSERT_TRUE(Diff.Icon.has_value() && *Diff.Icon == "layers");
+    });
+
     IT("ComputePropDiff always includes event props when present", {
         Iris::IrisProps New;
         New["onPress"] = Iris::IrisPropValue{std::function<void()>([]() {})};

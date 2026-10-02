@@ -290,6 +290,7 @@ Umbra::IrisPropDiff ComputePropDiff(const Iris::IrisProps& Old, const Iris::Iris
     DiffField(Diff.ClassName, Old, New, "class");
     DiffField(Diff.Text, Old, New, "text");
     DiffField(Diff.Src, Old, New, "src");
+    DiffField(Diff.Icon, Old, New, "icon");
     DiffField(Diff.Checked, Old, New, "checked");
     DiffHandleField(Diff.Handle, New, "handle");
     DiffEventField(Diff.OnPress, New, "onPress");
